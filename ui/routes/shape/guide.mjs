@@ -8,7 +8,7 @@ import { listModels, modelCostConfig, modelLabelOf } from '../../../src/core/con
 import { budgetStatus, recordUtilityCost } from '../../../src/core/cost-budget.mjs';
 import { requireFlag } from '../../../src/core/flags.mjs';
 import { resolveGuideModel } from '../../../src/core/guide-model.mjs';
-import { checkPrompt, claimGuideCheck, guideCheckModel, releaseGuideCheck } from '../../../src/core/prompt-check/grade.mjs';
+import { allowGuideCall, checkPrompt, claimGuideCheck, guideCheckModel, releaseGuideCheck } from '../../../src/core/prompt-check/grade.mjs';
 import { writeOutPrompt } from '../../../src/core/prompt-check/write.mjs';
 import { guidePrefsFor, setGuidePrefsFor } from '../../../src/core/settings.mjs';
 import { assertGuideCheckInput, guideRegister } from '../../../src/shared/prompt-check/assessment.mjs';
@@ -39,7 +39,8 @@ export function register(app) {
     }
   });
 
-  // Gates in order: flag, input, the viewer's Guide switch, the cost limit, the model pick, the slot, then the call.
+  // Gates in order: flag, input, the viewer's Guide switch, the cost limit, the model pick, the viewer's rate, the slot,
+  // then the call.
   app.post('/api/shape/guide/check', gate, async (req, res) => {
     try {
       let input;
@@ -53,6 +54,7 @@ export function register(app) {
       const { model, effort } = await guideCheckModel();
       if (!model) return refuse(res, 503, 'GUIDE_NO_MODEL', 'Guide has no model to run on.');
       const key = viewer ?? 'local';
+      if (!allowGuideCall(key)) return refuse(res, 429, 'GUIDE_RATE_LIMITED', 'Guide has had many prompts in a short time; try again in a moment.');
       const ctl = claimGuideCheck(key);
       if (!ctl) return refuse(res, 429, 'GUIDE_BUSY', 'Guide is busy; try again in a moment.');
       const closed = new AbortController();
@@ -76,7 +78,8 @@ export function register(app) {
     }
   });
 
-  // The write: the check's gates in the check's order, and the check's slot (a newer check or write supersedes it).
+  // The write: the check's gates in the check's order, the check's rate count and the check's slot (a newer check or
+  // write supersedes it).
   app.post('/api/shape/guide/write', gate, async (req, res) => {
     try {
       let input;
@@ -90,6 +93,7 @@ export function register(app) {
       const { model, effort } = await guideCheckModel();
       if (!model) return refuse(res, 503, 'GUIDE_NO_MODEL', 'Guide has no model to run on.');
       const key = viewer ?? 'local';
+      if (!allowGuideCall(key)) return refuse(res, 429, 'GUIDE_RATE_LIMITED', 'Guide has had many prompts in a short time; try again in a moment.');
       const ctl = claimGuideCheck(key);
       if (!ctl) return refuse(res, 429, 'GUIDE_BUSY', 'Guide is busy; try again in a moment.');
       const closed = new AbortController();

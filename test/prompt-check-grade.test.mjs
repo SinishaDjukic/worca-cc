@@ -12,9 +12,9 @@ const { worcaHome } = await import('../src/core/projects.mjs');
 const { runClaude } = await import('../src/core/claude-runner.mjs');
 const { GUIDE_CHECK_LABELS, GUIDE_DEFAULT_QUESTIONS } = await import('../src/shared/prompt-check/assessment.mjs');
 const {
-  GUIDE_CHECK_TIMEOUT_MS, GUIDE_CHECK_MAX_INFLIGHT, GUIDE_CALL_OPTS, PROMPT_DELIMITERS, quotePromptText,
+  GUIDE_CHECK_TIMEOUT_MS, GUIDE_CHECK_MAX_INFLIGHT, GUIDE_RATE_PER_MIN, GUIDE_CALL_OPTS, PROMPT_DELIMITERS, quotePromptText,
   guideCheckPrompt, parseCheckReply, mockCheck, guideRunner, claimGuideCheck, releaseGuideCheck, _setGuideCheckForTest,
-  checkPrompt,
+  checkPrompt, allowGuideCall,
 } = await import('../src/core/prompt-check/grade.mjs');
 
 const IDS = ['who', 'what', 'trigger', 'limits', 'done'];
@@ -47,7 +47,7 @@ test('the limits: 20 s per check, at most 4 in flight, and the frozen lockdown s
   assert.ok(Object.isFrozen(GUIDE_CALL_OPTS));
   assert.deepEqual(GUIDE_CALL_OPTS, {
     tools: [], strictMcpConfig: true, settingSources: ['project'], disableSlashCommands: true,
-    envScrub: true, envAllowlist: [], permissionMode: 'dontAsk',
+    envScrub: true, envAllowlist: [], permissionMode: 'dontAsk', noSessionPersistence: true,
   });
 });
 
@@ -64,6 +64,7 @@ test('R-sec-2: the runner gets the given model and effort, the whole lockdown se
   assert.equal(o.model, MODEL);
   assert.equal(o.effort, 'high');
   for (const [k, v] of Object.entries(GUIDE_CALL_OPTS)) assert.deepEqual(o[k], v, k);
+  assert.equal(o.noSessionPersistence, true, 'the call runs without a stored CLI session');
   assert.deepEqual(o.allowedTools, []);
   assert.equal(o.engine, undefined, 'Claude only');
   assert.ok(o.cwd.startsWith(join(worcaHome(), 'tmp', 'guide-check') + sep), o.cwd);
@@ -277,4 +278,22 @@ test('slots: one per person, a cap overall', (t) => {
   _setGuideCheckForTest({ maxInflight: 1 });
   assert.ok(claimGuideCheck('p'));
   assert.equal(claimGuideCheck('q'), null, 'maxInflight sets the cap');
+});
+
+test('the rate: 30 calls a minute per person, counted apart per person, refilled with time', (t) => {
+  assert.equal(GUIDE_RATE_PER_MIN, 30);
+  let clock = 1_000_000;
+  _setGuideCheckForTest({ now: () => clock });
+  t.after(() => _setGuideCheckForTest(null));
+  for (let i = 0; i < 30; i += 1) assert.equal(allowGuideCall('first'), true, `call ${i + 1}`);
+  assert.equal(allowGuideCall('first'), false, 'the 31st within the minute');
+  assert.equal(allowGuideCall('second'), true, 'another person has their own count');
+  clock += 2_000;
+  assert.equal(allowGuideCall('first'), true, 'one more after 2 s');
+  assert.equal(allowGuideCall('first'), false);
+  clock += 60_000;
+  for (let i = 0; i < 30; i += 1) assert.equal(allowGuideCall('first'), true, `after a minute, call ${i + 1}`);
+  assert.equal(allowGuideCall('first'), false);
+  _setGuideCheckForTest({ ratePerMin: 2, now: () => clock });
+  assert.deepEqual([allowGuideCall('first'), allowGuideCall('first'), allowGuideCall('first')], [true, true, false], 'the seam sets the rate and starts afresh');
 });

@@ -633,7 +633,7 @@ role, and with no role the message is sent as before. The Shaper card reads the 
 **Guide checks.** With Guide on and the Shaper pinned, the composer checks the prompt 2 seconds after you stop typing,
 once it has 12 characters or more (spaces around it do not count) and has changed since the last check. The check
 carries the role you picked, so its wording is plain or technical. It is never on send: Enter, Send and the send
-itself stop a pending check, and at most one check is out at a time. An answer for text you have since changed is
+itself stop a pending check, and at most one check is out at a time, 30 checks and writes a minute per person. An answer for text you have since changed is
 dropped. The Guide line reads "Checking your prompt…" while the first check runs, then the result: with a gap open a
 fold such as "Prompt 2/5 · 3 gaps", with none the size in words: "Prompt 5/5 · Large: several runs",
 "Prompt 5/5 · Medium: a few runs" or "Clear enough · Small: one run". A re-check keeps the last result with a quiet

@@ -237,6 +237,8 @@ export async function auxTextCall({ systemPrompt, prompt, model, engine = null }
       settingSources: opts.settingSources,
       disableSlashCommands: opts.disableSlashCommands,
       mcpConfigPath: opts.mcpConfigPath,
+      // true ⇒ Claude Code keeps no session transcript of this call (Guide's check of a draft). Undefined for every other caller.
+      noSessionPersistence: opts.noSessionPersistence,
       // Every priced result is real spend (a 429 retry spawns again): hand it to the caller to book.
       onEvent: normalizingOnEvent((e) => {
         // A locked-down chat's helper call on an engine that reports no cost: priced from its tokens with the chat's

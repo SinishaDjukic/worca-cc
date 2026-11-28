@@ -5,6 +5,7 @@
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { auxTextCall } from '../title.mjs';
+import { TokenBucket } from '../chat/rate-limiter.mjs';
 import { runClaude, mockEnabled } from '../claude-runner.mjs';
 import { worcaHome } from '../projects.mjs';
 import { listModels, modelCostConfig } from '../config.mjs';
@@ -15,7 +16,10 @@ import {
 
 export const GUIDE_CHECK_TIMEOUT_MS = 20_000;
 export const GUIDE_CHECK_MAX_INFLIGHT = 4;
-/** The chat suggestion's lockdown set: no tools, no MCP, project settings only, no slash commands, a scrubbed env. */
+/** Check and write calls one person may start in a minute (the composer checks at most once per 2 s of typing). */
+export const GUIDE_RATE_PER_MIN = 30;
+/** The chat suggestion's lockdown set: no tools, no MCP, project settings only, no slash commands, a scrubbed env;
+ *  and no stored CLI session, so a draft is kept nowhere after the call. */
 export const GUIDE_CALL_OPTS = Object.freeze({
   tools: Object.freeze([]),
   strictMcpConfig: true,
@@ -24,6 +28,7 @@ export const GUIDE_CALL_OPTS = Object.freeze({
   envScrub: true,
   envAllowlist: Object.freeze([]),
   permissionMode: 'dontAsk',
+  noSessionPersistence: true,
 });
 export const PROMPT_DELIMITERS = Object.freeze({ begin: '=====BEGIN PROMPT TEXT=====', end: '=====END PROMPT TEXT=====' });
 
@@ -31,12 +36,19 @@ let testRun = null;
 let testPickModel = null;
 let maxInflight = GUIDE_CHECK_MAX_INFLIGHT;
 const inflight = new Map();   // person key → AbortController
+let ratePerMin = GUIDE_RATE_PER_MIN;
+let rateNow;
+const buckets = new Map();    // person key → TokenBucket
 
-/** Test seam: `run` replaces the runner, `pickModel` the model pick, `maxInflight` the cap. null restores all and clears the slots. */
+/** Test seam: `run` replaces the runner, `pickModel` the model pick, `maxInflight` the cap, `ratePerMin` and `now` the
+ *  per-person rate and its clock. null restores all and clears the slots. Every call starts the rate counts afresh. */
 export function _setGuideCheckForTest(o) {
   testRun = o && typeof o.run === 'function' ? o.run : null;
   testPickModel = o && typeof o.pickModel === 'function' ? o.pickModel : null;
   maxInflight = o && Number.isInteger(o.maxInflight) && o.maxInflight > 0 ? o.maxInflight : GUIDE_CHECK_MAX_INFLIGHT;
+  ratePerMin = o && Number.isInteger(o.ratePerMin) && o.ratePerMin > 0 ? o.ratePerMin : GUIDE_RATE_PER_MIN;
+  rateNow = o && typeof o.now === 'function' ? o.now : undefined;
+  buckets.clear();
   if (!o) inflight.clear();
 }
 
@@ -131,6 +143,13 @@ export function guideRunner(mock = mockRun) {
 export async function guideCheckModel() {
   if (testPickModel) return testPickModel();
   return resolveGuideModel(await listModels(''), modelCostConfig);
+}
+
+/** Counts one check or write call of the person; false once they have started GUIDE_RATE_PER_MIN within a minute. */
+export function allowGuideCall(key) {
+  let b = buckets.get(key);
+  if (!b) { b = new TokenBucket(ratePerMin, rateNow ? { now: rateNow } : {}); buckets.set(key, b); }
+  return b.tryConsume();
 }
 
 /** One check per person: a newer claim aborts the older one. A new person past the cap gets null. */

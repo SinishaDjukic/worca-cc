@@ -773,3 +773,33 @@ test('a write and a refused write leave settings.json byte-identical', on(async 
   assert.equal((await writeOut({ prompt: PROMPT, role: 'admin', gaps: ASKED })).status, 400);
   assert.equal(settingsBytes(), was);
 }));
+
+test('the rate: each viewer may start a set number of check and write calls a minute; past it 429 GUIDE_RATE_LIMITED with no model call and no slot taken', on(async () => {
+  seed({ answererProfiles: {} });
+  const RATE = ['GUIDE_RATE_LIMITED', 'Guide has had many prompts in a short time; try again in a moment.'];
+  await withIdentity(async () => {
+    let clock = 1_000_000;
+    const held = holding();
+    const calls = await stubModel((o) => (o.prompt.includes('HOLDMARK') ? held.answer(o)
+      : Promise.resolve({ text: o.prompt.includes('"fills"') ? WRITE_REPLY : REPLY })), { ratePerMin: 3, now: () => clock });
+    const first = as('first@example.com');
+    const second = as('second@example.com');
+    assert.equal((await check({ prompt: PROMPT }, first)).status, 200);
+    assert.equal((await writeOut({ prompt: PROMPT, gaps: ASKED }, first)).status, 200, 'a write counts with the checks');
+    // refusals before the rate gate count nothing
+    assert.equal((await check({}, first)).status, 400);
+    assert.equal((await writeOut({ prompt: PROMPT }, first)).status, 400);
+    const running = check({ prompt: `HOLDMARK ${PROMPT}` }, first);
+    await held.reached(running);
+    assert.equal(calls.length, 3);
+    await refused(await check({ prompt: PROMPT }, first), 429, ...RATE, 'the 4th call of the minute');
+    await refused(await writeOut({ prompt: PROMPT, gaps: ASKED }, first), 429, ...RATE, 'a write past the rate');
+    assert.equal(calls.length, 3, 'no model call past the rate');
+    held.release();
+    assert.equal((await running).status, 200, 'the refused calls did not replace the running check');
+    assert.equal((await check({ prompt: PROMPT }, second)).status, 200, 'another viewer has their own count');
+    clock += 20_000;
+    assert.equal((await check({ prompt: PROMPT }, first)).status, 200, 'the count refills with time');
+    await refused(await check({ prompt: PROMPT }, first), 429, ...RATE);
+  });
+}));

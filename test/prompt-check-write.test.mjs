@@ -94,6 +94,7 @@ test('R-sec-2: writeOutPrompt runs the given model and effort with the whole loc
   assert.equal(o.model, MODEL);
   assert.equal(o.effort, 'high');
   for (const [k, v] of Object.entries(GUIDE_CALL_OPTS)) assert.deepEqual(o[k], v, k);
+  assert.equal(o.noSessionPersistence, true, 'the call runs without a stored CLI session');
   assert.deepEqual(o.allowedTools, []);
   assert.equal(o.engine, undefined, 'Claude only');
   assert.ok(o.cwd.startsWith(join(worcaHome(), 'tmp') + sep), o.cwd);
