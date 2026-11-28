@@ -545,6 +545,13 @@ Shaper's Requirements step is a hold, like the plan approval, and it has its own
   **Run as is**, with the facts line and the perspective chips. A card proposed directly as Shaper gets the same
   sentence and **Shape requirements** when medium or large, and it has no **Run as is**; a small or unsized one keeps
   its fields and **Start planning**, with the facts line.
+- **With `shaperSmallRuns` on**, the Shaper card asks no role sentence. Under the facts line it shows two fact rows:
+  `Your role` and `Supported by`. A message sent with a role (see Who is asking under Small runs) shows that role as
+  plain text in the `Your role` row, and the supporters picker is the card's only control; the card reads no profile
+  and that role stays the card's lead for its whole life. With no role sent, the `Your role` row holds the lead picker,
+  preset to the role you used last time. **Shape requirements** never waits for a role: started with no pick, the run
+  leads as your saved lead, else Product. A pick on the card is remembered when you click it. You can also set or clear
+  the role in Settings › Chat, in the `Your role` row (Advanced and up); a card built earlier keeps its role.
 - **The Requirements card.** `3 decisions need you · as Product`, then the decisions the perspectives could not settle,
   then the agreed requirements folded away, then the foot. Each decision is one question with its answers stacked under
   it, Worca's pick already chosen and marked `recommended`; change any of them. An answer a perspective asked for says who
@@ -616,6 +623,52 @@ requirement change on a feature that "has no runs that own its requirements", or
 because "the Shaper Labs switch is off". With the flag off, a marked feature's Ship dialog keeps its old One reason, and
 a stored old outcome reads "each run of this feature ships its own pull request".
 
+**Who is asking.** With the Shaper pinned in the Chat composer, a small role button sits right after the pin and asks
+who is asking: one of the seven roles (Product, Engineering, Design, QA, Security, DevOps, Compliance) or "No role". The
+pick is remembered in the person's answerer profile; "No role" clears it. The role rides the sent Shaper message as one
+line after the Shaper lead, for the model only: the bubble and the chat title never show it. Sending never needs a
+role, and with no role the message is sent as before. The Shaper card reads the role sent with the message (see
+[Requirements first](#requirements-first)), and Settings › Chat › Your role sets or clears it.
+
+**Guide checks.** With Guide on and the Shaper pinned, the composer checks the prompt 2 seconds after you stop typing,
+once it has 12 characters or more (spaces around it do not count) and has changed since the last check. The check
+carries the role you picked, so its wording is plain or technical. Picking another role while a result shows checks
+the prompt again at once for that role, and so does switching Guide back on over a prompt of 12 characters or more. It
+is never on send: Enter, Send and the send itself stop a pending check, and at most one check is out at a time, 30
+checks and writes a minute per person. An answer for text you have since changed is dropped. The Guide line reads "Checking your prompt…" while the first check runs, then the result: with a gap open a
+fold such as "Prompt 2/5 · 3 gaps", with none the size in words: "Prompt 5/5 · Large: several runs",
+"Prompt 5/5 · Medium: a few runs" or "Clear enough · Small: one run". A re-check keeps the last result with a quiet
+"checking…" after it. When Guide has no model the line reads "Guide has no model to run on." with an Open Models
+button that opens Models › Jobs › Helper jobs. Any other failed check reads "Guide is not answering right now." with
+a Try again button that checks the prompt once more at once. Sending works as it is in every case. Each new result is
+announced once to a screen reader, as in "Prompt 2 of 5, 3 gaps"; the same result again is not. The check sends the
+draft text to the Guide model set in Models › Jobs before you press Send; switch Guide off to keep drafts local
+until Send.
+
+**Guide rows.** The fold opens onto the five checks. They are shut by default and no result opens or shuts them; once
+you open them, your next prompts show them open, and that choice is kept for you alone. An open gap has a hollow mark,
+its label, the model's question only where it adds to the label, and an Add button; a covered point has a tick and its
+label. Add opens one field under its row. Your answer joins the end of the prompt on its own line, after the question
+the row shows without its question mark ("Who receives the emails: customers who reset a password or sign up"), or
+after the label when the row shows none: "Who is it for: people on the team". Your own words stay as they are, and the
+point counts as covered at once. Enter moves on to the next open gap's field, or back to the prompt when none is left;
+Escape closes the field and returns to the prompt. A check result that lands while a field is open waits until it
+closes. A draft closed without Add (Escape, typing in the prompt, shutting the rows, Send) is dropped. Add is not
+announced: the moved focus and the fold's new words are its only confirmation. Send works as it is with a field open.
+
+**Write it out.** While a result has a gap open, the line ends in one quiet "Write it out" button. It sends your draft
+to the Guide model, which fills only the open gaps; the line reads "Writing it out…" with "Stop". Stop, or typing in the
+prompt, ends it at once and keeps your words exactly as you left them, the typed letter included. When it lands, your
+text stays word for word at the start of the prompt and each filled gap follows on its own line, ending in
+"(suggested)": plain text you keep, change or delete. The caret goes right after the first "(suggested)". The line then
+reads "Guide filled 4 gaps · check them" with the size words and "Undo", which puts your text from before the write back
+exactly, line breaks and spaces included. Undo lasts until your first edit; after that the line shows the result again
+and the browser's own undo (Cmd/Ctrl+Z) undoes your edits. Send works as it is in both states: while writing it sends
+what you typed, and once written it sends the prompt as you see it. A failed write leaves the prompt untouched and
+says so on the line as a failed check does: "Guide is not answering right now." with a Try again button that writes
+once more, or the no-model line with Open Models. It stays until your next edit or the next result, which bring
+"Write it out" back. On a narrow composer the written line drops its size words whole rather than cutting them.
+
 ### The card's steps
 
 The feature has one card, and its step heads read as the card shows them:
@@ -660,6 +713,10 @@ your choice ("Worca recommended …"). Care is fixed after Start: pausing and re
 `Care: Balanced · Worca's pick`, shown on the Ship card, in each PR body and in the feature page's Decisions. Once the
 feature is finished, the line adds the outcome (requirements met, gaps found at the end, changes after ship). Without a
 finished outcome, no figures are shown.
+
+Start's Size row reads, for example, `Large · about 16 requirements · about 8 runs`: the run count at Worca's pick
+(`· one run` for one), which stays put while you try another position. It is the one place a number of runs is shown, so
+the pick's reason leaves the requirement count to it, and the composer says the size in words only.
 
 ### Owned and confirmed requirements
 

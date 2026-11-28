@@ -48,6 +48,10 @@ export const SMALL_RUN_LABELS = Object.freeze({
   confirmRole: 'Every confirmation names an allowed role',
 });
 const careOf = (care) => (Object.hasOwn(RUN_REQUIREMENTS_MAX, care) ? care : 'balanced');
+/** The runs a Care position takes for `requirements`: ceil over its per-run cap (an unknown position uses Balanced's),
+ *  or null without a positive integer count. The one place the formula lives: careEstimates and the Start card share it. */
+export const careRunCount = (requirements, position) => (Number.isInteger(requirements) && requirements > 0
+  ? Math.ceil(requirements / RUN_REQUIREMENTS_MAX[careOf(position)]) : null);
 
 const str = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 const strList = (v, max = 12, len = 300) => (Array.isArray(v) ? v : []).map((s) => str(s, len)).filter(Boolean).slice(0, max);

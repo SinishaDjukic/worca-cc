@@ -37,7 +37,7 @@ const QUICK_STEP_KEYS = new Set(['memoryDefragmenter']);
 export const SLOT_ROLES = Object.freeze({
   'nightMode.deciderModel': 'deep', designLead: 'deep',
   askModels: 'everyday', agentGenModel: 'everyday', requirementsInterview: 'everyday', autoWorkflowModel: 'everyday', designBuilder: 'everyday',
-  titleModel: 'quick', namingModel: 'quick', commandSummaryModel: 'quick', prDescriptionModel: 'quick',
+  titleModel: 'quick', namingModel: 'quick', commandSummaryModel: 'quick', guideModel: 'quick', prDescriptionModel: 'quick',
   memoryDefrag: 'quick', workspaceScan: 'everyday',
 });
 
@@ -65,7 +65,7 @@ const CLAUDE_JOB_KEYS = Object.freeze({
 });
 // Jobs with one key whatever the engine (user-only, Claude-only slots).
 const ENGINE_FREE_JOB_KEYS = Object.freeze({
-  agentGen: 'agentGenModel', naming: 'namingModel', commandSummary: 'commandSummaryModel', requirementsInterview: 'requirementsInterview',
+  agentGen: 'agentGenModel', naming: 'namingModel', commandSummary: 'commandSummaryModel', guide: 'guideModel', requirementsInterview: 'requirementsInterview',
 });
 
 /** The settings slot a Models-page helper job reads on `engine` (engine-settings-view.mjs JOB_LABELS keys). */

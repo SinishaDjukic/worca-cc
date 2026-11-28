@@ -2,11 +2,16 @@
 // Pure DOM renderers for the Settings "Chat notifications" card
 // (chat-connectivity-design.md §4.8). Same contract as plugins-view.mjs:
 // detached elements, no fetch, no listeners — app.js owns I/O and mounting;
-// node:test drives these via jsdom. (One exception: the Ask web fields keep their own
-// dirty flag with input/change listeners on their detached wrapper — no I/O.)
+// node:test drives these via jsdom. (Two exceptions: the Ask web fields keep their own
+// dirty flag with input/change listeners on their detached wrapper — no I/O; and
+// mountRoleSetting's "Your role" row listens to the flag and to the composer's role
+// controller, whose own loader and saver do the I/O.)
 
 import { makeSwitch } from './switch.mjs';
-import { chip } from './flags.mjs';
+import { chip, flagOn as liveFlagOn, onFlagChange as liveOnFlagChange } from './flags.mjs';
+import { icon } from './icons.mjs';
+import { leadLabel } from './answerer.mjs';
+import { ROLE_ICONS, NO_ROLE_ICON } from './chat/role-picker.mjs';
 
 function h(doc, tag, cls, text) {
   const n = doc.createElement(tag);
@@ -225,5 +230,56 @@ export function collectAskWebFields(root) {
     anyHost: !!q('askWebAnyHost')?.checked,
     allowedDomains: (q('askWebDomains')?.value || '').split('\n').map((x) => x.trim()).filter(Boolean),
     search: url ? { url, key: val('askWebSearchKey'), keyHeader: val('askWebSearchHeader'), keyPrefix: q('askWebSearchPrefix') ? q('askWebSearchPrefix').value : '' } : null,
+  };
+}
+
+const ROLE_FLAG = 'shaperSmallRuns';
+export const ROLE_PICK_ID = 'chatRolePick';
+
+/**
+ * Settings › Chat "Your role" (Shaper ask screens): the control of one settings row. The page's markup holds the row
+ * as its neighbours are built (the label "Your role", its Labs chip and info tip); `host` is the row's control, and
+ * this puts the role button in it, which opens the composer picker's own menu (`picker.openMenu`) and saves on pick.
+ * With the flag off the host stays empty and nothing is read; the button follows the flag both ways.
+ * @param {HTMLElement} host
+ * @param {{ role(): string|null, openMenu(o: object): object, refresh(): void, onChange(fn: Function): () => void }} picker
+ * @returns {{ refresh(): void, destroy(): void }}
+ */
+export function mountRoleSetting(host, picker, { doc = globalThis.document, flagOn = (k) => liveFlagOn(k, doc), onFlagChange = liveOnFlagChange } = {}) {
+  let btn = null;
+  let offPicker = null;
+  function paint() {
+    if (!btn) return;
+    const role = picker.role();
+    const name = role ? leadLabel(role) : null;
+    btn.replaceChildren(icon(doc, role ? ROLE_ICONS[role] || NO_ROLE_ICON : NO_ROLE_ICON, 14),
+      h(doc, 'span', 'ask-asker-l', name || 'No role'), icon(doc, 'chevron-down', 12, 'ic ask-asker-arrow'));
+    btn.setAttribute('aria-label', `Your role: ${name || 'not picked'}`);
+  }
+  function show() {
+    if (btn || !host) return;
+    btn = h(doc, 'button', 'btn btn-sm btn-quiet shape-lead-pick ask-asker-pick');
+    btn.type = 'button';
+    btn.setAttribute('aria-haspopup', 'menu');
+    btn.setAttribute('aria-expanded', 'false');
+    const own = btn;
+    btn.addEventListener('click', () => picker.openMenu({ doc, anchor: own, returnFocus: own }));
+    btn.id = ROLE_PICK_ID;   // the row's <label for>
+    host.replaceChildren(btn);
+    paint();
+    offPicker = picker.onChange(paint);
+    picker.refresh();
+  }
+  function hide() {
+    if (offPicker) { offPicker(); offPicker = null; }
+    btn = null;
+    if (host) host.replaceChildren();
+  }
+  const decide = () => { if (flagOn(ROLE_FLAG) === true) show(); else hide(); };
+  const offFlag = onFlagChange(ROLE_FLAG, decide);
+  decide();
+  return {
+    refresh() { if (btn) picker.refresh(); },
+    destroy() { offFlag(); hide(); },
   };
 }

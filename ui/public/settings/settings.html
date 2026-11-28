@@ -973,6 +973,20 @@
               </div>
               </div>
             </section>
+            <!-- Shaper ask screens: who is asking, one row as on the Worca root folder card: the label with its Labs chip
+                 and info tip, and in the control the composer role picker's own menu (the button is painted by
+                 mountRoleSetting under the flag only; saves on pick). -->
+            <section class="card settings-card" id="chat-role-card" data-min-level="simple" data-flag="shaperSmallRuns">
+              <div class="drows">
+              <div class="field drow">
+                <div class="label-row drow-label">
+                  <label for="chatRolePick" data-flag-chip="shaperSmallRuns">Your role</label>
+                  <button type="button" class="info-tip" aria-label="About your role">i<span class="tip-content hidden">Who is asking in the Shaper. Worca words its questions for you.</span></button>
+                </div>
+                <span class="drow-control" id="chatRoleHost"></span>
+              </div>
+              </div>
+            </section>
             <!-- Ask Worca (ask-worca-design §6.9): per-turn guards for the
                  assistant chat. Read fresh on every turn (D12); a stored null
                  budget means "no cap". Posted ALONE — never with root/budget keys. -->

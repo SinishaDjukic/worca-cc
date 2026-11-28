@@ -64,7 +64,7 @@ import { icon, ICONS as ICON_NAMES } from './icons.mjs';
 import { withoutChips } from './ask-page-chips.mjs';
 import { sideSuggestions } from './ask-side-suggest.mjs';
 import { makeSwitch } from './switch.mjs';
-import { shapeCardExtras, shapeWhatHappens, shapeAdvancedSummary } from './shape/proposal.mjs';
+import { shapeCardExtras, shapeWhatHappens, shapeAdvancedSummary, sentShapeRole } from './shape/proposal.mjs';
 import { createAskComposerCards, ASK_COMPOSER_CARD_TYPES } from './ask-composer-cards.mjs';
 import { cardKit, scriptApprovalCardView } from './workflows/card-views.mjs';
 import { applyPresetStart } from '../../src/shared/run-presets.mjs';
@@ -6053,7 +6053,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     head.appendChild(tagRow);
     if (typeof card.note === 'string' && card.note) head.appendChild(make('p', 'ask-rp-why', card.note));
     // A shaped card follows card.shape; the nudge is advisory.
-    const shapeUi = card.shape || card.nudge ? shapeCardExtras(doc, card, { fetch }) : null;
+    const shapeUi = card.shape || card.nudge
+      ? shapeCardExtras(doc, card, { fetch, sentRole: sentShapeRole(st.model ? st.model.messages() : [], block.id) }) : null;
     local.shapeUi = shapeUi;
     // A direct Shaper card on the requirements workflow: Shape requirements is its only start button.
     const direct = !!(card.shape && shapeUi && shapeUi.requirements);

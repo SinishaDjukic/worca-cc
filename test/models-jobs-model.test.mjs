@@ -176,6 +176,29 @@ test('6. helper jobs follow flags and today\'s default words', () => {
   assert.equal(rowOf(codex, 'Run overview').text, 'GPT-6.1 Sol');
 });
 
+test('6b. R-qa-13: Guide is a helper job only with shaperSmallRuns, names its default model and saves guideModel', () => {
+  const id = 'models.claude.utility.guide';
+  const guideOf = (settings, flags, { draft = {}, engine = 'claude' } = {}) =>
+    rowOf(sectionOf(build(settings, engine, { flags, draft, view: showAll(engine, 'helpers') }), 'helpers'), 'Guide');
+  assert.equal(guideOf(SETTINGS, {}), undefined, 'flag off: no row');
+  assert.equal(guideOf(SETTINGS, { shaperSmallRuns: false, commandSummaries: true }), undefined);
+  assert.equal(guideOf(SETTINGS, { shaperSmallRuns: true }, { engine: 'codex' }), undefined, 'Claude only');
+  const auto = { ...SETTINGS, guideModel: { model: null, effort: null },
+    guideModelEffective: { model: 'claude-haiku-4-5', effort: 'medium', source: 'auto' } };
+  const row = guideOf(auto, { shaperSmallRuns: true });
+  assert.ok(row, 'flag on: the Guide row');
+  assert.deepEqual([row.id, row.text, row.effort], [id, 'Haiku 4.5 (default)', '']);
+  const named = { ...SETTINGS, guideModelEffective: { model: 'claude-haiku-4-5', effort: 'medium', source: 'settings' } };
+  assert.equal(guideOf(named, { shaperSmallRuns: true }).text, 'The default model');
+  assert.doesNotMatch(rowOf(sectionOf(buildJobs({ ...DATA(BASE55), catalog: CAT55, flags: { shaperSmallRuns: true } }, {},
+    showAll('claude', 'helpers')), 'helpers'), 'Guide').text, /Worca default/, 'unset, it runs on the cheapest ready model');
+  // The pick: stored under guideModel, posted under guideModel.
+  const saved = { 'models.claude.utility.guide': { model: 'claude-opus-5-5' } };
+  assert.deepEqual(jobsSaved({ guideModel: { model: 'claude-opus-5-5', effort: null } }), saved);
+  assert.deepEqual(jobsSaveBody({ [id]: { model: 'claude-opus-5-5' } }, {}), { guideModel: { model: 'claude-opus-5-5', effort: '' } });
+  assert.deepEqual(jobsSaveBody({ [id]: null }, saved), { guideModel: null });
+});
+
 test('7. Requirements interview keeps today\'s words', () => {
   const settings = { ...SETTINGS, modelRoles: { claude: { deep: { model: 'claude-opus-5-5', effort: 'xhigh' }, everyday: { model: 'claude-haiku-4-5' } } },
     requirementsInterviewDefault: { model: 'claude-opus-5-5', effort: 'medium' } };

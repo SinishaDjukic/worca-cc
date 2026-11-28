@@ -504,6 +504,39 @@ button keeps its `aria-label` and has no `title`, so the browser's own tooltip n
 above the button on hover or keyboard focus after .3s, and never while a menu of the row is open. Only the
 composer row draws it (the rule is scoped to that row). A tip is `display:none` at rest, never a box laid out at
 opacity 0.
+The lead row above the field holds the intent pin; with the Shaper pinned (and the `shaperSmallRuns` flag on) the role picker sits
+right after it: a `btn btn-sm btn-quiet` with the role's 14px icon, its name and a 12px `chevron-down`, opening the
+app menu. When the lead row would wrap, it folds to its icon and arrow (`.is-folded`); its name stays in `aria-label` and `title`.
+After the role picker sits the Guide switch (the app's switch, `.ask-guide-sw`, labelled "Guide"; its tooltip names the
+Guide model). The picker folds whenever the switch would sit on a second line, so pin, picker and switch share one line.
+Between the field and the bar sits one Guide line (`.ask-guide`, its words in `.ask-guide-t`): 32px plus its 1px
+`--line` divider (40px plus the divider on a coarse pointer), `--fs-meta` in `--ink-2`. It never wraps; its words end
+in an ellipsis. Its title reads "Sending works as it is." The first time, while the prompt is empty, it reads "New: Guide
+checks your idea for gaps before you send. Switch it off any time."; otherwise it is empty and keeps its height. With
+Guide switched off there is no line at all.
+While the first check runs the line reads "Checking your prompt…". A result is the app's fold
+(`button.btn.plan-fold.ask-guide-fold`, built with `fold()`, shut by default): a bold `--ink` head (`.ask-guide-head`,
+"Prompt 2/5"), the rest (`.ask-guide-rest`, " · 3 gaps" or the size words "Large: several runs" or "Medium: a few runs") and a 12px `chevron-down` that turns on
+`aria-expanded="true"` with no transition. Small with no gap is plain words (`.ask-guide-sum`, "Clear enough · Small:
+one run"). A re-check adds a quiet `.ask-guide-q` "checking…" after it. On a narrow line the size words give way first:
+only `.ask-guide-rest` ends in an ellipsis; the head, the chevron and "checking…" never shrink.
+A failed check is the words and one action, a `.btn.btn-sm.btn-quiet` (`.ask-guide-act`), with no icon and no red or
+amber: "Guide is not answering right now." with "Try again", or "Guide has no model to run on." with "Open Models". The
+sentence shrinks first and carries its own title, so a cut one can still be read.
+The Guide rows pattern: the fold opens `.ask-guide-rows.srows`, a sibling right under the line (never inside it, so the
+line keeps its height), holding one `.plan-checks` of rows built by `buildCheckRows`. A gap has `checkMark('wait')`
+(the grey ring) with `role="img"` named `open`, never a cross; a covered check has the tick in `--ink-2` with
+`role="img"` named `covered`, and its label only. The model's question is the row's detail, as text. A gap ends in a
+`btn btn-sm btn-quiet` "Add" named from its label (`Add: who is it for`). Add puts `.ask-guide-ans` in its place: an
+`.input.input-sm` ("Your answer", named by the question) and a `btn btn-sm` "Add". The row then wraps, so the field sits
+under its label; on a narrow line the question also wraps under its label.
+Write it out, Stop and Undo are the line's three `.ask-guide-do` buttons, each a `btn btn-sm btn-quiet` with no icon,
+at the line's right end after the flexible `.ask-guide-sp` spacer; they never shrink. "Write it out" follows a result
+with a gap open (and "checking…"); "Writing it out…" in `.ask-guide-t` takes "Stop"; the written words take "Undo":
+`.ask-guide-sum` holding the bold `.ask-guide-head` "Guide filled 4 gaps", a `.ask-guide-mid` " · check them" that never
+shrinks, and `.ask-guide-rest` with the size words, which give way first: the written run (`.ask-guide-filled`) wraps
+inside one line's height, so words that do not fit leave whole and are never cut. A failed write takes the failure
+pattern above, in the same line. The rows leave while writing and written out, and the line keeps its height. "(suggested)" is plain text in the field, never a chip.
 #### Lock tip
 A locked small-runs **Create N PRs** says why in `.rd-tip` (`role="tooltip"`, named by the button's
 `aria-describedby`), never a native `title`, which opens over the status line. It has the Composer bar tip's look

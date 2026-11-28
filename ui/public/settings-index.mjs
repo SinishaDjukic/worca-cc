@@ -51,6 +51,7 @@ export const CARDS = Object.freeze([
   card('runs', 'e2b-settings-card', 'Execution environment', { min: 'expert', alts: ['e2b', 'docker', 'local sandbox', 'sandbox', 'remote', 'cloud', 'runs in', 'memory', 'cpus', 'runtime'] }),
   card('ask', 'ask-engine-card', 'Engine & models', { alts: ['engine', 'model', 'claude', 'codex', 'llm'] }),
   card('ask', 'chat-links-card', 'Links in answers', { flag: 'toolPanel', alts: ['links', 'file paths', 'web links', 'panel'] }),
+  card('ask', 'chat-role-card', 'Your role', { flag: 'shaperSmallRuns', alts: ['role', 'who is asking', 'shaper', 'lead'] }),
   card('ask', 'ask-settings-card', 'Limits & access', { alts: ['limits', 'access', 'tools', 'spend', 'read only'] }),
 ]);
 

@@ -234,7 +234,7 @@ import { renderCatalogue, renderModelPanel } from './models/catalogue-view.mjs';
 import { buildJobs, jobsSaved, jobsSaveBody, jobsDirty } from './models/jobs-model.mjs';
 import { renderJobs, openOverrideMenu } from './models/jobs-view.mjs';
 import { openModelPicker } from './models/model-picker.mjs';
-import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
+import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields, collectAskWebFields, mountRoleSetting } from './chat-settings-view.mjs';
 import { renderCredentials } from './credentials-view.mjs';
 import { renderExtensionPairings, browserLabel, formatPairCode, renderExtensionInstall, selectInstallBrowser, detectBrowser } from './extension-settings-view.mjs';
 import { mountNetworkProxyCard } from './settings-network-proxy.mjs';
@@ -384,6 +384,8 @@ import { pageTitle } from './topnav.mjs';
 import { activityCounts } from './activity-model.mjs';
 import { createChatHome, findFollowingThread } from './chat/home.mjs';
 import { installIntentAddon } from './chat/intent.mjs';
+import { installRolePicker } from './chat/role-picker.mjs';
+import { installGuideLine, refreshGuideLine } from './chat/guide-line.mjs';
 import { needsYouItems as chatNeedsYouItems } from './runs-list.mjs';
 import { createActivityMenu } from './activity-menu.mjs';
 import { createAwayScreensaver } from './away-screensaver.mjs';
@@ -20936,7 +20938,7 @@ function jobsData() {
   }
   return {
     settings: j.settings || {}, steps: j.config?.steps || [], catalog: j.config?.catalog || [], engines: j.engines, locks: addEngineLocks(),
-    flags: { requirements: flagOn('requirements'), design: flagOn('design'), smartRunNaming: flagOn('smartRunNaming'), commandSummaries: flagOn('commandSummaries') },
+    flags: { requirements: flagOn('requirements'), design: flagOn('design'), smartRunNaming: flagOn('smartRunNaming'), commandSummaries: flagOn('commandSummaries'), shaperSmallRuns: flagOn('shaperSmallRuns') },
     testable,
   };
 }
@@ -21092,6 +21094,7 @@ async function saveJobs(btn) {
   syncRunEngine(j.settings);
   reportStatus(el.modelsJobsMsg, 'form-msg', 'Saved.', 'ok');
   renderJobsTab();
+  refreshGuideLine();   // the composer's Guide tooltip names the model just picked
 }
 
 /** The tab's clicks (one delegate on #jobs-root): the harness tiles, Default for new runs, the role tiles and row
@@ -36982,6 +36985,7 @@ function smallRunsOf(f) { return !!(f && f.ship && f.ship.smallRuns); }
 function stackedOnlyOf(f) { return smallRunsOf(f) && !flagOn('shaperSmallRuns'); }
 // A Labs toggle on an open feature page: the ship line follows at once.
 onFlagChange('shaperSmallRuns', () => {
+  repaintJobs();   // Models › Jobs › Helper jobs lists Guide only while the flag is on
   if (GROUP_PAGE.route !== 'feature' || !GROUP_PAGE.feature) return;
   const so = stackedOnlyOf(GROUP_PAGE.feature);
   if (so !== GROUP_PAGE.stackedOnly) { GROUP_PAGE.stackedOnly = so; scheduleGroupPagePaint(); }
@@ -42887,6 +42891,7 @@ function showSettingsTab(param = '') {
   if (tab === 'presets') void loadPresetsView();
   if (tab === 'automations') void loadAutomationsView();
   if (tab === 'ask') void paintAskMcpBlock(document.getElementById('ask-mcp-host'), { api: mcpApi });
+  if (tab === 'ask') chatRoleRow.refresh();
   if (tab === 'guardrails') loadGuardrailsView(sub);
   if (tab === 'memory') loadMemoryTab(sub);
   if (tab === 'experimental') loadFlagsTab(sub);
@@ -44685,7 +44690,7 @@ registerFilesCard();
 // A send from the home arms the hero → dock glide (chatHome.armFlip). The home itself mounts right after the page
 // (mountChatHome, below P1's mount); every function it uses is a hoisted declaration in this block.
 let chatHome = null;
-// The home's and the intent chip's timers: app.js's own setInterval / setTimeout — the page's in a browser; Node's under
+// The home's, the intent chip's and the Guide check's timers: app.js's own setInterval / setTimeout — the page's in a browser; Node's under
 // the jsdom tests, unref'd like _timerTick, since a jsdom window's interval would keep a test process alive for ever.
 const chatHomeTimers = {
   setInterval: (fn, ms) => { const t = setInterval(fn, ms); if (t && typeof t.unref === 'function') t.unref(); return t; },
@@ -44694,6 +44699,9 @@ const chatHomeTimers = {
   clearTimeout: (t) => clearTimeout(t),
 };
 const chatIntent = installIntentAddon({ onSend: () => { chatHome?.armFlip(); } });
+const chatRole = installRolePicker({ intent: chatIntent });
+installGuideLine({ intent: chatIntent, role: () => chatRole.role(), onRoleChange: (fn) => chatRole.onChange(fn), timers: chatHomeTimers });
+const chatRoleRow = mountRoleSetting(document.getElementById('chatRoleHost'), chatRole, { doc: document });
 
 // ── Chat home (worca Chat P6) ──────────────────────────────────────────────────────────────────────────────
 // The hero, quick actions, Needs you / Running / Recent chats / Workflows and the promos, inside the Chat page's

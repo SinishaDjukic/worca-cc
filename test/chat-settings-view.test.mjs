@@ -7,6 +7,13 @@ import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, colle
 import { applyFlags } from '../ui/public/flags.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
+// A namespace read, so a missing new export (mountRoleSetting) fails only its own tests.
+import * as chatSettings from '../ui/public/chat-settings-view.mjs';
+import { createRolePicker } from '../ui/public/chat/role-picker.mjs';
+import { _resetAnswerer, saveAnswerer } from '../ui/public/answerer.mjs';
+import { CARDS } from '../ui/public/settings-index.mjs';
+import { icon } from '../ui/public/icons.mjs';
+import { closeMenus } from '../ui/public/workflows/menu.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 
@@ -183,4 +190,185 @@ test('Summarise commands: on by default, a Beta chip, collects its value (#911)'
   assert.deepEqual(collectSummariesToggle(host), { summariseCommands: false });
   host.replaceChildren(renderSummariesToggle({ prefs: { summariseCommands: false } }, { doc }));
   assert.equal(host.querySelector('input.ask-summaries').checked, false);
+});
+
+// ── Shaper ask screens, slice 2: Settings › Chat "Your role" (flag shaperSmallRuns) ──
+// One settings row, as its neighbours: the page's markup holds the label "Your role" with its Labs chip and info tip,
+// and mountRoleSetting puts the role button in the row's control; it opens the composer's menu on the composer's
+// controller. The card has no heading of its own.
+const WHY = 'Who is asking in the Shaper. Worca words its questions for you.';
+const ROLE_LABELS = ['Product', 'Engineering', 'Design', 'QA', 'Security', 'DevOps', 'Compliance', 'No role'];
+const settleRole = async () => { for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0)); };
+/** What a person reads in `node`: its text without the closed info tips. */
+const shownText = (node) => { const c = node.cloneNode(true); c.querySelectorAll('.tip-content').forEach((n) => n.remove()); return c.textContent; };
+const timesSaid = (node, words) => shownText(node).split(words).length - 1;
+const menuRows = (d) => [...d.querySelectorAll('.wfv-menu [role^="menuitem"]')];
+const menuRow = (d, label) => menuRows(d).find((r) => r.querySelector('.wfv-menu-l').textContent === label);
+const noIntent = { current: () => null, onChange: () => () => {} };
+const glyphOf = (d, name) => icon(d, name).querySelector('svg').innerHTML;
+const mountRole = (...a) => {
+  assert.equal(typeof chatSettings.mountRoleSetting, 'function', 'chat-settings-view.mjs exports mountRoleSetting');
+  return chatSettings.mountRoleSetting(...a);
+};
+/** `run` with a fresh page and a stand-in for GET/PUT /api/answerer behind the app's own loader and saver. */
+async function withProfile(lead, run) {
+  const realFetch = globalThis.fetch;
+  const profile = { lead, requests: [] };
+  globalThis.fetch = async (url, init) => {
+    const method = init?.method || 'GET';
+    profile.requests.push(method === 'PUT' ? `PUT ${url} ${init.body}` : `${method} ${url}`);
+    if (method === 'PUT') profile.lead = JSON.parse(init.body).lead;
+    return { ok: true, status: 200, json: async () => ({ lead: profile.lead }) };
+  };
+  _resetAnswerer();
+  const dom = new JSDOM('<!doctype html><body><div class="drows"><div class="field drow"><span class="drow-control" id="chatRoleHost"></span></div></div></body>');
+  const d = dom.window.document;
+  try {
+    await run({ d, win: dom.window, host: d.getElementById('chatRoleHost'), profile });
+  } finally {
+    closeMenus();
+    globalThis.fetch = realFetch;
+    _resetAnswerer();
+  }
+}
+const flagHooks = (state) => ({
+  flagOn: (k) => k === 'shaperSmallRuns' && state.on,
+  onFlagChange: (k, fn) => { assert.equal(k, 'shaperSmallRuns'); state.subs.add(fn); return () => { state.subs.delete(fn); }; },
+});
+const flip = (state, on) => { state.on = on; for (const fn of [...state.subs]) fn(on); };
+
+test('Your role row: the control holds only the role button, the label\'s target; the menu is the composer\'s; a pick saves at once', async () => {
+  await withProfile(null, async ({ d, win, host, profile }) => {
+    const state = { on: true, subs: new Set() };
+    const picker = createRolePicker({ intent: noIntent, ...flagHooks(state) });
+    mountRole(host, picker, { doc: d, ...flagHooks(state) });
+    await settleRole();
+    assert.deepEqual(profile.requests, ['GET /api/answerer']);
+    assert.deepEqual([...host.children], [host.querySelector('button')], 'the control holds the button and nothing else');
+    assert.equal(host.querySelector('button').id, 'chatRolePick', 'the row label\'s target');
+    assert.equal(chatSettings.ROLE_PICK_ID, 'chatRolePick');
+    assert.equal(host.querySelectorAll('button').length, 1, 'no Save');
+    assert.equal(host.querySelector('.drow-label, .drow-help, small, .hint, p'), null, 'no label and no grey help line');
+    const btn = () => host.querySelector('button');
+    assert.ok(btn().matches('.drow .drow-control > button.btn.btn-sm.btn-quiet.shape-lead-pick.ask-asker-pick'), 'the composer\'s button');
+    assert.equal(btn().type, 'button');
+    assert.equal(btn().getAttribute('aria-haspopup'), 'menu');
+    assert.equal(btn().getAttribute('aria-label'), 'Your role: not picked');
+    assert.equal(timesSaid(host, 'Your role'), 0, 'the card heading names it, once');
+    assert.notEqual(btn().textContent.trim(), '', 'the button reads something with no role');
+    assert.equal(btn().querySelector('svg').innerHTML, glyphOf(d, 'person'));
+    assert.equal(btn().querySelectorAll('svg')[1]?.innerHTML, glyphOf(d, 'chevron-down'));
+
+    btn().focus();
+    btn().click();
+    assert.deepEqual(menuRows(d).map((r) => r.querySelector('.wfv-menu-l').textContent), ROLE_LABELS, '7 roles, then No role');
+    assert.equal(d.querySelectorAll('.wfv-menu .menu-sep').length, 1);
+    assert.ok(menuRows(d).every((r) => r.querySelector('.wfv-menu-ic svg')), 'an icon on every row');
+    menuRow(d, 'Compliance').click();
+    await settleRole();
+    assert.equal(profile.requests.at(-1), 'PUT /api/answerer {"lead":"compliance"}');
+    assert.equal(btn().textContent, 'Compliance');
+    assert.equal(btn().getAttribute('aria-label'), 'Your role: Compliance');
+    assert.equal(btn().querySelector('svg').innerHTML, glyphOf(d, 'scale'));
+    assert.equal(d.activeElement, btn(), 'focus is back on the button');
+
+    btn().click();
+    menuRow(d, 'No role').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+    await settleRole();
+    assert.equal(profile.requests.at(-1), 'PUT /api/answerer {"lead":null}');
+    assert.equal(btn().getAttribute('aria-label'), 'Your role: not picked');
+    assert.equal(timesSaid(host, 'Your role'), 0);
+    assert.equal(host.querySelectorAll('button').length, 1);
+
+    btn().click();
+    d.querySelector('.wfv-menu').dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    assert.equal(d.querySelector('.wfv-menu'), null);
+    assert.equal(d.activeElement, btn(), 'Escape returns focus too');
+  });
+});
+
+test('Your role row: refresh() reads the profile again and repaints, following a role saved elsewhere', async () => {
+  await withProfile('compliance', async ({ d, host }) => {
+    const state = { on: true, subs: new Set() };
+    const picker = createRolePicker({ intent: noIntent, ...flagHooks(state) });
+    const setting = mountRole(host, picker, { doc: d, ...flagHooks(state) });
+    await settleRole();
+    assert.equal(host.querySelector('button').textContent, 'Compliance');
+    await saveAnswerer('qa');                 // the Shaper card's write
+    setting.refresh();
+    await settleRole();
+    assert.equal(host.querySelector('button').textContent, 'QA');
+    assert.equal(host.querySelectorAll('button').length, 1);
+  });
+});
+
+test('R-arch-11 Your role row: flag off, an empty host and no read; on, it paints; off again, empty; destroy() lets go', () => {
+  const d = new JSDOM('<!doctype html><body><div id="chatRoleHost"></div></body>').window.document;
+  const host = d.getElementById('chatRoleHost');
+  const calls = { refresh: 0 };
+  const listeners = new Set();
+  const picker = {
+    role: () => 'qa', choose: () => {}, openMenu: () => ({ close() {} }),
+    refresh: () => { calls.refresh += 1; },
+    onChange: (fn) => { listeners.add(fn); return () => { listeners.delete(fn); }; },
+  };
+  const state = { on: false, subs: new Set() };
+  const setting = mountRole(host, picker, { doc: d, ...flagHooks(state) });
+  assert.equal(host.childNodes.length, 0, 'flag off: nothing in the host');
+  setting.refresh();
+  assert.equal(calls.refresh, 0, 'flag off: the profile is never asked for');
+  assert.equal(listeners.size, 0);
+  flip(state, true);
+  assert.equal(host.querySelectorAll('button').length, 1);
+  assert.equal(host.querySelector('button').textContent, 'QA');
+  assert.ok(calls.refresh >= 1, 'painted, then read');
+  assert.equal(listeners.size, 1);
+  const read = calls.refresh;
+  setting.refresh();
+  assert.equal(calls.refresh, read + 1);
+  flip(state, false);
+  assert.equal(host.childNodes.length, 0, 'off again: empty');
+  assert.equal(listeners.size, 0, 'and no longer listening to the picker');
+  setting.refresh();
+  assert.equal(calls.refresh, read + 1);
+  flip(state, true);
+  assert.equal(host.querySelectorAll('button').length, 1, 'on again: one row');
+  setting.destroy();
+  assert.equal(state.subs.size, 0);
+  assert.equal(listeners.size, 0);
+});
+
+test('Settings › Chat markup: the "Your role" card sits between Links in answers and Limits & access, flag-gated: one row of label, Labs chip, info tip and control, no heading and no Save', () => {
+  const page = new JSDOM(readIndexHtml()).window.document;
+  const card = page.getElementById('chat-role-card');
+  assert.ok(card, '#chat-role-card');
+  assert.equal(card.closest('.settings-pane').dataset.tab, 'ask', 'the Chat tab');
+  assert.ok(card.matches('section.card.settings-card'));
+  assert.equal(card.dataset.flag, 'shaperSmallRuns');
+  assert.equal('flagChip' in card.dataset, false, 'the Labs chip sits with the row label, not under the card');
+  assert.equal(card.dataset.minLevel, 'simple');
+  assert.equal(card.previousElementSibling?.id, 'chat-links-card');
+  assert.equal(card.nextElementSibling?.id, 'ask-settings-card');
+  assert.equal(card.querySelector('.card-head, h2'), null, 'one row and nothing above it, as the Worca root folder card');
+  assert.deepEqual([...card.children].map((n) => n.className), ['drows']);
+  const rows = [...card.querySelectorAll('.drows > *')];
+  assert.equal(rows.length, 1, 'one row');
+  assert.ok(rows[0].matches('div.field.drow'), 'the settings row its neighbours use');
+  assert.deepEqual([...rows[0].children].map((n) => n.className), ['label-row drow-label', 'drow-control'], 'the label, then the control, on one row');
+  const label = rows[0].querySelector('.drow-label > label');
+  assert.equal(label?.textContent.trim(), 'Your role');
+  assert.equal(label.getAttribute('for'), chatSettings.ROLE_PICK_ID, 'the label names the role button');
+  assert.equal(label.dataset.flagChip, 'shaperSmallRuns', 'the Labs chip goes right after the label');
+  const tip = rows[0].querySelector('.drow-label > button.info-tip');
+  assert.ok(tip?.getAttribute('aria-label'), 'the explanation goes into an info tip, as on Turn limit');
+  assert.equal(tip.querySelector('.tip-content.hidden')?.textContent.trim(), WHY);
+  const host = card.querySelector('#chatRoleHost');
+  assert.ok(host?.matches('.drow > span.drow-control'));
+  assert.equal(host.children.length, 0, 'painted by mountRoleSetting, under the flag only');
+  assert.equal(card.querySelector('.drow-help, .hint, small'), null, 'no grey help line');
+  assert.equal(card.querySelector('.btn-primary'), null, 'saves on pick');
+  assert.equal(timesSaid(card, 'Your role'), 1);
+  const entry = CARDS.find((c) => c.id === 'chat-role-card');
+  assert.ok(entry, 'the settings search catalogues the card');
+  assert.deepEqual([entry.tab, entry.title, entry.flag, entry.min], ['ask', 'Your role', 'shaperSmallRuns', 'simple']);
 });
