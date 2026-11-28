@@ -252,11 +252,11 @@ export function outsideWarning(ctx, paths) {
 
 /**
  * Append one manifest line for a spawn attempt: prompt hashes, CLI version, model and effort,
- * the settings in force, the memory files loaded, and the outside paths: `outside` the notable ones,
- * `outsideExpected` the expected ones (each with its `why`), so nothing is lost.
+ * the settings in force, the memory files loaded, the model add-on, and the outside paths: `outside` the notable
+ * ones, `outsideExpected` the expected ones (each with its `why`), so nothing is lost.
  */
 export async function writeExecManifest(ctx, { opts = {}, prompt, systemPrompt, sessionId = null, initModel = null,
-  startedAt, outcome = 'ok', error = null, outside = [], outsideExpected = [] } = {}) {
+  startedAt, outcome = 'ok', error = null, outside = [], outsideExpected = [], addon = null } = {}) {
   const dir = ctx?.runCtx?.pipelineDir || ctx?.pipelineDir;
   if (!dir) return;
   const cwd = opts.cwd || ctx?.runRoot || ctx?.projectDir || null;
@@ -276,6 +276,10 @@ export async function writeExecManifest(ctx, { opts = {}, prompt, systemPrompt, 
         extraSettings: opts.extraSettings ?? null, disallowedTools: opts.disallowedTools ?? null, settingSources: opts.settingSources ?? null })),
     },
     memory: memoryRecord(ctx),
+    // The prompt add-on the spawn carried (model-addons.mjs), without its text: the sha256 names it. A v1 pin (stored
+    // before the harness layer) has no engine or harness: both are recorded as null.
+    addon: addon ? { engine: addon.engine ?? null, harness: addon.harness ?? null, family: addon.family, mode: addon.mode,
+      files: addon.files, sha256: addon.sha256, ...(addon.inherited ? { inherited: true } : {}) } : null,
     outside, outsideExpected,
     outcome, ...(error ? { error: String(error?.code || error?.message || error).slice(0, 300) } : {}),
   };

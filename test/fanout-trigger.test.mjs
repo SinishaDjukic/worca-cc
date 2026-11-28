@@ -48,3 +48,16 @@ test('the fan-out directive is emitted only when on, and reaches the clarify pro
     } },
   ]);
 });
+
+test('the built-in agent bodies name no Claude-only sub-agent tool: the Fan-out block names the engine\'s own', async () => {
+  const { readdirSync, readFileSync } = await import('node:fs');
+  const dir = new URL('../agents/', import.meta.url);
+  const bodies = readdirSync(dir).filter((f) => f.endsWith('.md'));
+  assert.ok(bodies.length > 10);
+  for (const file of bodies) {
+    const body = readFileSync(new URL(file, dir), 'utf8');
+    for (const token of ['subagent_type', 'run_in_background', 'Task tool', 'Task/Agent', '"general-purpose"', '"Explore"']) {
+      assert.equal(body.includes(token), false, `agents/${file} names ${token}`);
+    }
+  }
+});

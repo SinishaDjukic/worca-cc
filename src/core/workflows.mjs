@@ -53,6 +53,7 @@ export { GRAPH_DEFAULT_WORKFLOW, GRAPH_LEAN_WORKFLOW, LEAN_WORKFLOW_ID, AUTO_WOR
 import { registryPortsFn } from './graph/registry-ports.mjs';
 import { resolveRolePick, resolveRoleModel, roleOf, MODEL_ROLES } from './model-roles.mjs';
 import { roleDefaultFor } from './role-defaults.mjs';
+import { intentEffortFor } from './effort-intents.mjs';
 import { parseFrontmatter } from './frontmatter.mjs';
 
 /**
@@ -613,7 +614,8 @@ export async function deleteWorkflow(id) {
  * @param {string} workflowId
  * @param {Record<string,object>} registry  loadAgentRegistry() output
  * @param {string} [agentsDir]  override for tests; defaults to ../../agents
- * @param {{ isWorkspace?: boolean, overlay?: {nodes?: object, wires?: object}, ignoreProjectOverrides?: boolean }} [opts]  workspace-mode resolve options
+ * @param {{ isWorkspace?: boolean, overlay?: {nodes?: object, wires?: object}, ignoreProjectOverrides?: boolean, fillIntents?: boolean }} [opts]  workspace-mode resolve options;
+ *   `fillIntents: true` (run starts only) fills each unset effort from the step's effort intent (effort-intents.mjs)
  * @returns {Promise<object>} ExecutablePlan
  * @throws {Error} when the workflow id is unknown, or a node resolves the off-pipeline scanner
  */
@@ -823,10 +825,10 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
   const factorySource = isReservedWorkflowId(stored.id) ? 'template' : 'default';
   const secondOpinionSlot = ignore ? null : cleanPick(utilityModelFor(engine, 'secondOpinion', { projectDir: projectDir || null }));
   let catalogRows = null;
-  const effortsOf = async (model) => {
+  const effortsOf = async (model, harness = engine) => {
     catalogRows ||= await listModels(projectDir || '');
     const row = model ? catalogRows.find((m) => m.id === model) : null;
-    return Array.isArray(row?.efforts) && row.efforts.length ? row.efforts : effortsForEngine(engine);
+    return Array.isArray(row?.efforts) && row.efforts.length ? row.efforts : effortsForEngine(harness);
   };
   const named = (v) => typeof v === 'string' && v.trim() !== '';
   const factoryNotes = [];
@@ -963,14 +965,20 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
     const nodeModel = pair ? pair.model : (roleP.model ?? baseModel);
     // An effort-only layer's effort rides the role's model when that model offers it, else the role's own effort.
     const layerEffortOnRole = roleP.model && baseEffort !== undefined ? owned({ model: roleP.model, effort: baseEffort }).pick.effort : undefined;
-    let nodeEffort = pair ? pair.effort : (roleP.model ? (layerEffortOnRole ?? roleP.effort) : baseEffort);
+    let explicitEffort = pair ? pair.effort : (roleP.model ? (layerEffortOnRole ?? roleP.effort) : baseEffort);
     // The node's harness: the winning layer's (baseModel's order) when it pinned one, else the run's. A pinned pair and a
     // role's model run on the run's harness.
     const won = fillCli ? null : [selP, legacyP, team, fillP, cfgP].find((p) => p && p.model !== undefined) || null;
     const nodeEngine = pair || roleP.model ? engine : (won?.engine || engine);
     const pinned = !pair && !roleP.model && !!won?.engine;
     // An effort-only layer in the default harness's vocabulary riding a pinned model: that harness's nearest one.
-    if (nodeEngine !== engine) nodeEffort = effortOn(nodeEffort, nodeEngine) || undefined;
+    if (nodeEngine !== engine) explicitEffort = effortOn(explicitEffort, nodeEngine) || undefined;
+    // Effort intents (effort-intents.mjs): a run start (fillIntents) fills an unset effort from the step's intent for its
+    // model's family on the node's harness, clamped to that model's efforts. A named effort always wins; a pinned pair
+    // carries its own effort. The catalog is read only for a mapped family.
+    const nodeEffort = explicitEffort !== undefined || pair || opts.fillIntents !== true ? explicitEffort
+      : ((await intentEffortFor({ agentKey: authored, name: meta?.displayName || '', model: nodeModel ?? runModel, engine: nodeEngine,
+        efforts: () => effortsOf(nodeModel ?? runModel, nodeEngine) })) ?? undefined);
     if (nodeDefaultWanted) factoryNotes.at(-1).used = { model: nodeModel ?? runModel, effort: nodeEffort ?? null };
     if (fillDropped) fillDropped.used = { model: nodeModel ?? runModel, effort: nodeEffort ?? null };
     // A role-review node's per-role picks (run overlay > project > helper job > template); a pinned agentPair runs every

@@ -29,7 +29,7 @@ The checker command line contains the literal token `<OUT>`. Replace `<OUT>` wit
 ## What to do
 
 1. **EVERY member gets one investigator** — every member the brief lists, in the brief's order (a failed one is re-dispatched once, alone — step 4). Never skip a member, never merge two members into one investigator.
-2. **Dispatch in waves of at most 8.** Send up to 8 investigator dispatches in ONE message, wait until every one of them has returned, then send the next wave — until every member has been investigated. Dispatch normally and wait for every result: worca runs every dispatch in the foreground, which is what holds each wave to 8. Use the `subagent_type` and the `model` exactly as the task prompt's Fan-out block says.
+2. **Dispatch in waves of at most 8.** Send up to 8 investigator dispatches in ONE message, wait until every one of them has returned, then send the next wave — until every member has been investigated. Dispatch normally and wait for every result: worca runs every dispatch in the foreground, which is what holds each wave to 8. Use the sub-agent type and the model exactly as the task prompt's Fan-out block says.
 3. **Brief each investigator** with this text, filled in for its member:
 
    > You are checking ONE project of a multi-project workspace, read-only. Project `<key>` ("<name>"), checkout `<absolute dir>`. Read only inside that directory. Never edit, write, commit or branch anything, and never dispatch sub-agents of your own.
