@@ -12,6 +12,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _resetForTests } from '../src/core/db.mjs';
+import { readServerSource } from '../src/core/read-server-source.mjs';
 
 let home, srv, base, prev;
 
@@ -309,7 +310,7 @@ test('R-qa-7 / R-arch-2: check: flag off is 404', async () => {
     assert.equal((await check({ prompt: PROMPT })).status, 200, 'registered: the 404 above is the flag\'s');
   });
   // R-arch-7: the route lives in the Guide route module, not in the main server file.
-  assert.doesNotMatch(readFileSync(new URL('../ui/server.mjs', import.meta.url), 'utf8'), /guide\/check/);
+  assert.doesNotMatch(readServerSource(undefined, { routes: false }), /guide\/check/);
 });
 
 test('R-qa-8 / R-arch-2 example: no-model and model-failure are distinct', on(async () => {
@@ -575,7 +576,7 @@ test('R-qa-7 / R-arch-7: write: flag off is 404 with no model call', async () =>
   await withFlags('shaperSmallRuns', async () => {
     assert.equal((await writeOut({ prompt: PROMPT, gaps: ASKED })).status, 200, 'registered: the 404 above is the flag\'s');
   });
-  assert.doesNotMatch(readFileSync(new URL('../ui/server.mjs', import.meta.url), 'utf8'), /guide\/write/);
+  assert.doesNotMatch(readServerSource(undefined, { routes: false }), /guide\/write/);
 });
 
 test('R-qa-7 / R-sec-1: write refusals (role, prompt, gaps) never pick or call the model', on(async () => {

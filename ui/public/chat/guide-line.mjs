@@ -55,7 +55,7 @@ const FLAG = 'shaperSmallRuns';
 
 /** The switch's tooltip, naming the Guide model (or saying there is none yet). */
 export function guideTip(label) {
-  return label ? `${TIP_HEAD} ${label} (change it in Settings › Models).` : `${TIP_HEAD} no model yet (pick one in Settings › Models).`;
+  return label ? `${TIP_HEAD} ${label} (change it in Models › Jobs).` : `${TIP_HEAD} no model yet (pick one in Models › Jobs).`;
 }
 
 /** The line's words: null with Guide off (no line), the offer the first time while the prompt is empty, else ''. */

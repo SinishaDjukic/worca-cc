@@ -34,8 +34,8 @@ import { _resetAnswerer } from '../ui/public/answerer.mjs';
 
 const TIP = 'Guide: a quick model check of your prompt for gaps, before you send. It can write the prompt out. Runs on';
 const OFFER = 'New: Guide checks your idea for gaps before you send. Switch it off any time.';
-const tipFor = (label) => `${TIP} ${label} (change it in Settings › Models).`;
-const NO_MODEL_TIP = `${TIP} no model yet (pick one in Settings › Models).`;
+const tipFor = (label) => `${TIP} ${label} (change it in Models › Jobs).`;
+const NO_MODEL_TIP = `${TIP} no model yet (pick one in Models › Jobs).`;
 const PREFS = Object.freeze({ model: { id: 'claude-haiku-5-5', label: 'Haiku 5.5' }, on: true, offerSeen: false, rowsOpen: false });
 
 const saved = {};
