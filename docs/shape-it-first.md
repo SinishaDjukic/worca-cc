@@ -637,7 +637,10 @@ itself stop a pending check, and at most one check is out at a time. An answer f
 dropped. The Guide line reads "Checking your prompt…" while the first check runs, then the result: with a gap open a
 fold such as "Prompt 2/5 · 3 gaps", with none the size in words: "Prompt 5/5 · Large: several runs",
 "Prompt 5/5 · Medium: a few runs" or "Clear enough · Small: one run". A re-check keeps the last result with a quiet
-"checking…" after it. A check that fails leaves the line empty, and sending works as it is. The check sends the
+"checking…" after it. When Guide has no model the line reads "Guide has no model to run on." with an Open Models
+button that opens Settings › Models › Helper jobs. Any other failed check reads "Guide is not answering right now." with
+a Try again button that checks the prompt once more at once. Sending works as it is in every case. Each new result is
+announced once to a screen reader, as in "Prompt 2 of 5, 3 gaps"; the same result again is not. The check sends the
 draft text to the Guide model set in Settings › Models before you press Send; switch Guide off to keep drafts local
 until Send.
 

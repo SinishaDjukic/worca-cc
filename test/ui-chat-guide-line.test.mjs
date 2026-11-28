@@ -6,7 +6,8 @@
 // holds or rewords a send.
 // The check: 2 seconds after the person types a changed prompt of 12 or more characters, one POST
 // /api/shape/guide/check (never on send, one in flight, a stale answer dropped). The line reads "Checking your prompt…",
-// then the result: a fold button "Prompt 2/5 · 3 gaps", or with no gap the size in words. A failed check leaves it empty.
+// then the result: a fold button "Prompt 2/5 · 3 gaps", or with no gap the size in words. A failed check says so with one
+// action: "Try again", or "Open Models" when Guide has no model. Each new result is spoken once through ctx.announce.
 // Every test injects the timer and the check, so nothing waits and no route is called.
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -202,13 +203,20 @@ function setup({ flag = true, prefs = {}, load = null, save = null, pin = null, 
   const refuse = async (n, code) => { checks.calls[n].resolve({ ok: false, code }); await settle(); };
   const fold = () => p.doc.querySelector('.ask-guide .ask-guide-fold');
   const quiet = () => p.doc.querySelector('.ask-guide .ask-guide-q');
-  return { ...p, state, calls, stored, intent, intentHandle, ctl, handle, setFlag, shaper, timers, checks: checks.calls, wait, reply, refuse, fold, quiet };
+  const act = () => p.doc.querySelector('.ask-guide .ask-guide-act');
+  /** What Guide announced: the shared spy also hears the intent chip say "Shaper" when the pin is set. */
+  const spoken = () => p.said.filter((t) => t !== 'Shaper');
+  return { ...p, state, calls, stored, intent, intentHandle, ctl, handle, setFlag, shaper, timers, checks: checks.calls, wait, reply, refuse, fold, quiet, act, spoken };
 }
 
 const PROMPT = 'Export runs as CSV';
 const LONGER = 'Export runs as CSV or JSON';
 const CHECKING = 'Checking your prompt…';
 const GAPS = 'Prompt 2/5 · 3 gaps';
+const FAIL = 'Guide is not answering right now.';
+const NO_MODEL = 'Guide has no model to run on.';
+const SPOKEN = 'Prompt 2 of 5, 3 gaps';
+const MODELS = '#models/jobs/helpers';
 
 /** A Shaper composer showing the result of one check of PROMPT. */
 async function withResult(body = answer(), opts = {}) {
@@ -495,6 +503,15 @@ test('R-ux-2: the line\'s height is the same with the offer shown and with nothi
   assert.equal(s.fold()?.textContent, GAPS);
   assert.equal(height(), '33px', 'a result');
   assert.equal(s.line(), line, 'the same element');
+  // Both failures: still the same element at the same height.
+  for (const [n, code, words, state] of [[1, 'GUIDE_MODEL_FAILED', FAIL, 'failed'], [2, 'GUIDE_NO_MODEL', NO_MODEL, 'no-model']]) {
+    s.type(`${PROMPT} ${n}`);
+    await s.wait();
+    await s.refuse(n, code);
+    assert.equal(s.text(), words, state);
+    assert.equal(height(), '33px', state);
+    assert.equal(s.line(), line, `${state}: the same element`);
+  }
 });
 
 test('R-qa-8: switching Guide off removes the line, keeps the picker and saves on:false with the offer that was on screen', async () => {
@@ -764,25 +781,33 @@ test('resultWords: null for a body that is not five checks and a known size', ()
   ]) assert.equal(guide.resultWords(body), null, name);
 });
 
-test('lineState, first match: a result (with "checking…" on a re-check), the first check, the offer, else empty; off is off', () => {
-  const base = { on: true, offerSeen: false, offerGone: false, prompt: '', result: null, checking: false };
+test('lineState, first match over result, checking, failure, offer and empty (off is off)', () => {
+  // `base` is offer-eligible: Guide on, the offer unseen, the prompt empty.
+  const base = { on: true, offerSeen: false, offerGone: false, prompt: '', result: null, checking: false, failure: null };
   const result = answer();
-  const kind = (over) => guide.lineState({ ...base, ...over }).kind;
-  assert.equal(kind({ on: false, result, checking: true }), 'off');
-  const shown = guide.lineState({ ...base, prompt: PROMPT, result });
-  assert.equal(shown.kind, 'result');
-  assert.deepEqual(shown.words, guide.resultWords(result));
-  assert.ok(!shown.recheck);
-  const again = guide.lineState({ ...base, prompt: PROMPT, result, checking: true });
-  assert.equal(again.kind, 'result', 'a result outranks checking');
-  assert.equal(again.recheck, true);
-  assert.equal(kind({ result }), 'result', 'a result outranks the offer');
-  assert.equal(kind({ prompt: PROMPT, checking: true }), 'checking');
-  assert.equal(kind({ checking: true }), 'checking', 'checking outranks the offer');
-  assert.equal(kind({}), 'offer');
-  assert.equal(kind({ offerSeen: true }), 'empty');
-  assert.equal(kind({ offerGone: true }), 'empty');
-  assert.equal(kind({ prompt: PROMPT }), 'empty');
+  const typed = { prompt: PROMPT };
+  for (const [row, over, kind, more = {}] of [
+    ['off outranks everything', { on: false, result, checking: true, failure: 'failed' }, 'off'],
+    ['result over checking and failure', { ...typed, result, checking: true, failure: 'failed' }, 'result', { recheck: true }],
+    ['result over failure', { ...typed, result, failure: 'failed' }, 'result', { recheck: false }],
+    ['a result alone', { ...typed, result }, 'result', { recheck: false }],
+    ['result over the offer', { result }, 'result', { recheck: false }],
+    ['checking over failure', { ...typed, checking: true, failure: 'failed' }, 'checking'],
+    ['checking over the offer', { checking: true }, 'checking'],
+    ['failure over the offer', { failure: 'failed' }, 'failure', { failure: 'failed' }],
+    ['no model over the offer', { failure: 'no-model' }, 'failure', { failure: 'no-model' }],
+    ['failure with a typed prompt', { ...typed, failure: 'failed' }, 'failure', { failure: 'failed' }],
+    ['the offer', {}, 'offer'],
+    ['no failure given at all', { failure: undefined }, 'offer'],
+    ['nothing: the offer seen', { offerSeen: true }, 'empty'],
+    ['nothing: the offer gone', { offerGone: true }, 'empty'],
+    ['nothing: a typed prompt', typed, 'empty'],
+  ]) {
+    const got = guide.lineState({ ...base, ...over });
+    assert.equal(got.kind, kind, row);
+    for (const [key, value] of Object.entries(more)) assert.equal(got[key], value, `${row}: ${key}`);
+  }
+  assert.deepEqual(guide.lineState({ ...base, ...typed, result }).words, guide.resultWords(result));
 });
 
 test('checkGuide: one POST /api/shape/guide/check with the prompt, the role (null for none) and the signal', async () => {
@@ -818,6 +843,22 @@ test('checkGuide never rejects: every route code, an abort, a network error and 
   const unparsable = async () => { throw new SyntaxError('Unexpected token <'); };
   assert.deepEqual(await run(async () => ({ ok: true, status: 200, json: unparsable })), { ok: false, code: 'BAD_REPLY' });
   assert.deepEqual(await run(async () => ({ ok: false, status: 502, json: unparsable })), { ok: false, code: 'BAD_REPLY' });
+});
+
+// ── the failure words and which line a code gets ──
+test('failureKind maps every route code and client code: no model, nothing, or "failed"', () => {
+  const wanted = { GUIDE_NO_MODEL: 'no-model', GUIDE_OFF: null, GUIDE_SUPERSEDED: null, ABORTED: null };
+  const codes = [...ROUTE_CODES.map(([code]) => code), 'NETWORK', 'BAD_REPLY', 'ABORTED', 'SOMETHING_NEW'];
+  assert.equal(codes.length, 14);
+  for (const code of codes) assert.equal(guide.failureKind(code), Object.hasOwn(wanted, code) ? wanted[code] : 'failed', code);
+});
+
+test('the failure words, their actions and the Models address are the module\'s constants', () => {
+  assert.equal(guide.FAIL_TEXT, FAIL);
+  assert.equal(guide.NO_MODEL_TEXT, NO_MODEL);
+  assert.equal(guide.TRY_AGAIN, 'Try again');
+  assert.equal(guide.OPEN_MODELS, 'Open Models');
+  assert.equal(guide.MODELS_HREF, MODELS);
 });
 
 // ── the check: the debounce, the single flight and the stale drop ──
@@ -1337,7 +1378,26 @@ const FAILURES = [
   ['a 200 with a body that is no result', { ok: true, check: {} }],
 ];
 
-test('a failed first check, whatever its code, returns the line to empty and never sticks at "Checking your prompt…"', async () => {
+/** The line a `FAILURES` row ends in: `[sentence, action]`, or null for an empty line (Guide off elsewhere). */
+const failureLine = (name) => {
+  if (name === 'GUIDE_OFF') return null;
+  return name === 'GUIDE_NO_MODEL' ? [NO_MODEL, 'Open Models'] : [FAIL, 'Try again'];
+};
+
+/** The failure line is exactly its words and its one quiet button; with `wanted` null the line is empty. */
+function failedLine(s, wanted, why) {
+  if (!wanted) { emptyLine(s, why); assert.equal(s.act(), null, why); return; }
+  const [words, label] = wanted;
+  assert.equal(s.text(), words, why);
+  const b = s.act();
+  assert.ok(b, `${why}: the action`);
+  assert.ok(b.matches('button.btn.btn-sm.btn-quiet.ask-guide-act[type="button"]'), `${why}: the app's quiet small button`);
+  assert.equal(b.textContent, label, why);
+  assert.equal(b.disabled, false, why);
+  assert.deepEqual([...s.line().children], [s.line().querySelector('.ask-guide-t'), b], `${why}: the words, then the action, and nothing else`);
+}
+
+test('a failed first check shows its line and its one action, and never sticks at "Checking your prompt…"', async () => {
   for (const [name, failure] of FAILURES) {
     const s = setup();
     await s.shaper();
@@ -1346,15 +1406,16 @@ test('a failed first check, whatever its code, returns the line to empty and nev
     assert.equal(s.text(), CHECKING, name);
     s.checks[0].resolve(failure);
     await settle();
-    emptyLine(s, name);
+    failedLine(s, failureLine(name), name);
     s.type(PROMPT);
     await s.wait();
     assert.equal(s.checks.length, 1, `${name}: unchanged text is not asked again`);
+    failedLine(s, failureLine(name), `${name}, after the same text`);
     s.handle.destroy();
   }
 });
 
-test('a failed re-check empties the line too', async () => {
+test('a failed re-check shows the failure with no "checking…" and no older result', async () => {
   for (const [name, failure] of FAILURES) {
     const s = await withResult();
     s.type(LONGER);
@@ -1362,21 +1423,337 @@ test('a failed re-check empties the line too', async () => {
     assert.ok(s.quiet(), name);
     s.checks[1].resolve(failure);
     await settle();
-    emptyLine(s, name);
+    failedLine(s, failureLine(name), name);
     assert.equal(s.quiet(), null, name);
+    assert.equal(s.fold(), null, name);
     s.handle.destroy();
   }
+});
+
+test('the next check after a failure reads "Checking your prompt…" with no action, and its answer replaces the failure', async () => {
+  const s = setup();
+  await s.shaper();
+  s.type(PROMPT);
+  await s.wait();
+  await s.refuse(0, 'GUIDE_MODEL_FAILED');
+  assert.equal(s.text(), FAIL);
+  s.type(LONGER);
+  await s.wait();
+  assert.equal(s.text(), CHECKING, 'checking outranks the failure');
+  assert.equal(s.act(), null);
+  await s.reply(1);
+  assert.equal(s.fold()?.textContent, GAPS);
+  assert.equal(s.act(), null);
+  assert.equal(s.line().textContent, GAPS, 'nothing of the failure stays');
 });
 
 test('model text is set as text: markup in a reply creates no element', async () => {
   const markup = '<img src=x onerror=alert(1)>';
   const bad = await withResult({ ...answer(), size: markup });
-  emptyLine(bad, 'a size that is markup is no result');
+  failedLine(bad, [FAIL, 'Try again'], 'a size that is markup is no result');
   assert.equal(bad.doc.querySelector('img'), null);
   const body = answer();
   const s = await withResult({ ...body, checks: body.checks.map((c) => ({ ...c, label: markup, question: markup })) });
   assert.equal(s.fold()?.textContent, GAPS);
   assert.equal(s.doc.querySelector('img'), null);
+});
+
+// ── the failure line: its title, Try again, Open Models, and what clears it ──
+/** A Shaper composer showing the failure line for one check of PROMPT that answered `code`. */
+async function withFailure(code = 'GUIDE_MODEL_FAILED', opts = {}) {
+  const s = setup(opts);
+  await s.shaper();
+  s.type(PROMPT);
+  await s.wait();
+  await s.refuse(0, code);
+  assert.equal(s.text(), code === 'GUIDE_NO_MODEL' ? NO_MODEL : FAIL, `the ${code} line`);
+  assert.ok(s.act(), `the ${code} action`);
+  return s;
+}
+
+test('a failure sentence carries its own title, and no other state of the words has one', async () => {
+  for (const [code, words] of [['GUIDE_MODEL_FAILED', FAIL], ['GUIDE_NO_MODEL', NO_MODEL]]) {
+    const s = setup();
+    await s.shaper();
+    const span = s.line().querySelector('.ask-guide-t');
+    assert.equal(span.hasAttribute('title'), false, 'the offer');
+    s.type(PROMPT);
+    await s.wait();
+    assert.equal(span.hasAttribute('title'), false, 'checking');
+    await s.refuse(0, code);
+    assert.equal(s.line().querySelector('.ask-guide-t'), span);
+    assert.equal(span.getAttribute('title'), words);
+    assert.equal(s.line().title, 'Sending works as it is.', 'the line\'s own title stays');
+    s.type(LONGER);
+    await s.wait();
+    assert.equal(span.hasAttribute('title'), false, 'checking again');
+    await s.reply(1);
+    assert.equal(span.hasAttribute('title'), false, 'a result');
+    s.type(PROMPT);
+    await s.wait();
+    await s.refuse(2, code);
+    assert.equal(span.getAttribute('title'), words, 'failed again');
+    s.type('Export');
+    await settle();
+    assert.equal(span.textContent, '');
+    assert.equal(span.hasAttribute('title'), false, 'empty');
+    s.handle.destroy();
+  }
+});
+
+test('Try again makes exactly one new check call, at once, and returns focus to the prompt', async () => {
+  const s = await withFailure('GUIDE_MODEL_FAILED', { value: '', role: 'product' });
+  const b = s.act();
+  b.focus();
+  assert.equal(s.doc.activeElement, b);
+  b.click();
+  b.click();                           // a second click before the check resolves
+  assert.equal(s.checks.length, 2, 'one new call, with no pause');
+  assert.deepEqual(s.checks[1].body, { prompt: PROMPT, role: 'product' });
+  assert.equal(s.checks[1].signal.aborted, false);
+  assert.equal(s.doc.activeElement, s.input, 'focus is in the prompt field');
+  assert.equal(s.text(), CHECKING);
+  assert.equal(s.act(), null, 'the button left the line');
+  await s.wait(5000);
+  assert.equal(s.checks.length, 2, 'and nothing more later');
+  await s.reply(1);
+  assert.equal(s.fold()?.textContent, GAPS);
+});
+
+test('Try again that fails again shows the same calm line, and its button makes one more call', async () => {
+  const s = await withFailure('GUIDE_COST_LIMIT');
+  s.act().click();
+  assert.equal(s.checks.length, 2);
+  await s.refuse(1, 'GUIDE_BUSY');
+  assert.equal(s.text(), FAIL);
+  assert.equal(s.act()?.textContent, 'Try again');
+  s.act().click();
+  assert.equal(s.checks.length, 3);
+});
+
+test('Try again during the pause after an edit checks the new text once: the pause is cleared', async () => {
+  const s = await withFailure();
+  s.type(`  ${LONGER}  `);
+  await s.wait(500);
+  assert.equal(s.act()?.textContent, 'Try again', 'the failure stays during the pause');
+  s.act().click();
+  assert.equal(s.checks.length, 2);
+  assert.equal(s.checks[1].body.prompt, LONGER, 'the trimmed text the field holds');
+  await s.wait(5000);
+  assert.equal(s.checks.length, 2);
+});
+
+test('a Try again button no longer shown makes no call: Guide off', async () => {
+  const s = await withFailure();
+  const b = s.act();
+  s.swInput().click();
+  await settle();
+  assert.equal(s.line(), null);
+  b.click();
+  await s.wait(3000);
+  assert.equal(s.checks.length, 1);
+});
+
+test('Open Models goes to #models/jobs/helpers and starts no check', async () => {
+  const s = await withFailure('GUIDE_NO_MODEL');
+  assert.equal(s.act().textContent, 'Open Models');
+  assert.equal(s.win.location.hash, '');
+  s.act().click();
+  assert.equal(s.win.location.hash, MODELS);
+  await s.wait(5000);
+  assert.equal(s.checks.length, 1);
+});
+
+test('a Models save that brings a model drops the no-model line; only the next typing checks again', async () => {
+  const s = await withFailure('GUIDE_NO_MODEL');
+  s.ctl.refresh();
+  await settle();
+  assert.equal(s.calls.load, 2);
+  assert.equal(s.text(), '');
+  assert.equal(s.act(), null);
+  await s.wait(5000);
+  assert.equal(s.checks.length, 1, 'no check starts by itself');
+  s.type(PROMPT);
+  await s.wait();
+  assert.equal(s.checks.length, 2, 'the same text is asked again');
+});
+
+test('a read that still has no model keeps the no-model line, and any read keeps a "not answering" line', async () => {
+  const still = await withFailure('GUIDE_NO_MODEL', { load: () => Promise.resolve({ ...PREFS, model: null }) });
+  still.ctl.refresh();
+  await settle();
+  assert.equal(still.text(), NO_MODEL);
+  assert.equal(still.act()?.textContent, 'Open Models');
+  const failed = await withFailure('GUIDE_MODEL_FAILED');
+  failed.ctl.refresh();
+  await settle();
+  assert.equal(failed.text(), FAIL);
+  assert.equal(failed.act()?.textContent, 'Try again');
+});
+
+test('a short prompt, a send and Guide off each clear the failure', async () => {
+  const short = await withFailure();
+  short.type('Export');
+  await settle();
+  emptyLine(short, 'a short prompt');
+  assert.equal(short.act(), null);
+
+  const sent = await withFailure('GUIDE_NO_MODEL');
+  sent.intentHandle.transformSend(sent.input.value);
+  sent.handle.update(null);
+  await settle();
+  assert.equal(sent.act(), null, 'a send');
+  assert.doesNotMatch(sent.line()?.textContent ?? '', /not answering|no model/i);
+
+  const off = await withFailure();
+  off.swInput().click();
+  await settle();
+  assert.equal(off.line(), null, 'Guide off removes the line');
+  off.swInput().click();
+  await settle();
+  emptyLine(off, 'Guide on again');
+  assert.equal(off.act(), null);
+});
+
+test('the failure line has no cross, no red or amber and no toast, and is no live region', async () => {
+  const BANNED = /(^|-)(danger|error|warn|red|amber|toast)(-|$)/;
+  for (const code of ['GUIDE_MODEL_FAILED', 'GUIDE_NO_MODEL']) {
+    const s = await withFailure(code);
+    const all = [s.line(), ...s.line().querySelectorAll('*')];
+    assert.equal(s.line().querySelectorAll('svg').length, 0, `${code}: no icon`);
+    assert.doesNotMatch(s.line().textContent, /[×✕✖✗✘]/, `${code}: no cross character`);
+    for (const el of all) {
+      assert.deepEqual([...el.classList].filter((c) => BANNED.test(c)), [], `${code}: ${el.outerHTML}`);
+      assert.equal(el.getAttribute('style'), null, `${code}: no inline colour`);
+      assert.equal(el.hasAttribute('aria-live'), false, `${code}: no aria-live`);
+      assert.ok(!['status', 'alert'].includes(el.getAttribute('role')), `${code}: no status or alert role`);
+    }
+    assert.equal(s.doc.querySelectorAll('.toast, [class*="toast"], [id*="toast"], [role="alert"]').length, 0, `${code}: no toast`);
+    assert.equal(s.doc.querySelector('.ask-send').disabled, false, `${code}: Send stays on`);
+    assert.equal(s.handle.beforeSend, undefined);
+    assert.equal(s.handle.transformSend, undefined);
+    s.handle.destroy();
+  }
+});
+
+// ── the announcement: each new result once, through the composer's announce ──
+test('resultSpeech reads n/5 as "n of 5" and the dot as a comma; null for a body that is no result', () => {
+  for (const [body, words] of [
+    [answer(2), SPOKEN], [answer(2, 'small'), SPOKEN], [answer(4), 'Prompt 4 of 5, 1 gap'],
+    [answer(5, 'large'), 'Prompt 5 of 5, Large: several runs'], [answer(5, 'medium'), 'Prompt 5 of 5, Medium: a few runs'],
+    [answer(5, 'small'), 'Clear enough, Small: one run'],
+  ]) assert.equal(guide.resultSpeech(body), words);
+  for (const body of [null, undefined, {}, { ...answer(), size: '<img src=x onerror=alert(1)>' }]) assert.equal(guide.resultSpeech(body), null);
+});
+
+test('announce: a new result once, the same result again never, a changed result once more', async () => {
+  const s = setup();
+  await s.shaper();
+  s.type(PROMPT);
+  await s.wait();
+  assert.deepEqual(s.spoken(), [], 'checking says nothing');
+  await s.reply(0);
+  assert.deepEqual(s.spoken(), [SPOKEN]);
+  s.handle.update(null);
+  s.handle.update(null);
+  await settle();
+  assert.deepEqual(s.spoken(), [SPOKEN], 'a repaint says nothing');
+  s.type(LONGER);
+  await s.wait();
+  await s.reply(1);
+  assert.deepEqual(s.spoken(), [SPOKEN], 'the same result again');
+  s.type(PROMPT);
+  await s.wait();
+  await s.reply(2, answer(2, 'small', 'plain'));
+  assert.deepEqual(s.spoken(), [SPOKEN], 'other labels and size, the same words');
+  s.type(LONGER);
+  await s.wait();
+  await s.reply(3, answer(4));
+  assert.deepEqual(s.spoken(), [SPOKEN, 'Prompt 4 of 5, 1 gap']);
+});
+
+test('R-qa-5 example: a re-check that returns the same "Prompt 3/5 · 2 gaps" makes no second announcement', async () => {
+  const s = await withResult(answer(3));
+  assert.equal(s.fold()?.textContent, 'Prompt 3/5 · 2 gaps');
+  assert.deepEqual(s.spoken(), ['Prompt 3 of 5, 2 gaps']);
+  s.type(LONGER);
+  await s.wait();
+  await s.reply(1, answer(3));
+  assert.equal(s.fold()?.textContent, 'Prompt 3/5 · 2 gaps');
+  assert.equal(s.spoken().length, 1);
+});
+
+test('R-ux-3 example: a re-check keeps "Prompt 3/5 · 2 gaps" in place with "checking…" after it', async () => {
+  const s = await withResult(answer(3));
+  const b = s.fold();
+  s.type(LONGER);
+  await s.wait();
+  assert.equal(s.fold(), b);
+  assert.equal(b.textContent, 'Prompt 3/5 · 2 gaps');
+  assert.equal(b.nextElementSibling, s.quiet());
+  assert.equal(s.quiet()?.textContent, 'checking…');
+});
+
+test('announce: failure, checking and an aborted re-check say nothing; a result after a failure is spoken again', async () => {
+  const first = await withFailure();
+  assert.deepEqual(first.spoken(), [], 'a failure is not spoken');
+  const noModel = await withFailure('GUIDE_NO_MODEL');
+  assert.deepEqual(noModel.spoken(), []);
+  for (const code of ['ABORTED', 'GUIDE_SUPERSEDED']) {
+    const s = await withResult();
+    s.type(LONGER);
+    await s.wait();
+    await s.refuse(1, code);
+    assert.deepEqual(s.spoken(), [SPOKEN], code);
+    s.type(LONGER);
+    await s.wait();
+    await s.reply(2);
+    assert.deepEqual(s.spoken(), [SPOKEN], `${code}, then the same result: still the shown words`);
+    s.handle.destroy();
+  }
+  for (const failure of [{ ok: false, code: 'GUIDE_MODEL_FAILED' }, { ok: false, code: 'GUIDE_NO_MODEL' }, { ok: true, check: {} }]) {
+    const s = await withResult();
+    s.type(LONGER);
+    await s.wait();
+    s.checks[1].resolve(failure);
+    await settle();
+    assert.deepEqual(s.spoken(), [SPOKEN], 'the failed re-check says nothing');
+    s.type(PROMPT);
+    await s.wait();
+    await s.reply(2);
+    assert.deepEqual(s.spoken(), [SPOKEN, SPOKEN], `after ${failure.code || 'a body that is no result'} the result is new`);
+    s.handle.destroy();
+  }
+});
+
+test('announce: a result after a short prompt or a send is new, and is spoken again', async () => {
+  for (const [name, clear] of [
+    ['a short prompt', (s) => s.type('Export')],
+    ['a send', (s) => { s.intentHandle.transformSend(s.input.value); s.handle.update(null); }],
+  ]) {
+    const s = await withResult();
+    clear(s);
+    await settle();
+    s.type(PROMPT);
+    await s.wait();
+    await s.reply(1);
+    assert.deepEqual(s.spoken(), [SPOKEN, SPOKEN], name);
+    s.handle.destroy();
+  }
+});
+
+test('announce: an answer for text the field no longer holds is not spoken', async () => {
+  const s = setup();
+  await s.shaper();
+  s.type(PROMPT);
+  await s.wait();
+  s.input.value = LONGER;              // a recall, a code write: no input event
+  await s.reply(0, answer(4));
+  assert.deepEqual(s.spoken(), []);
+  s.type(LONGER);
+  await s.wait();
+  await s.reply(1);
+  assert.deepEqual(s.spoken(), [SPOKEN], 'the control: the answer that is shown is spoken');
 });
 
 test('a result, checking and re-checking leave Send on and give the add-on no say in a send', async () => {
@@ -1437,6 +1814,13 @@ test('R-arch-12: the new rules use tokens only: no colour literal, no animation,
     assert.doesNotMatch(r.body, /#[0-9a-f]{3,8}\b|\brgba?\(|\bhsla?\(|violet/i, r.sel);
     assert.doesNotMatch(r.body, /animation|transition/, r.sel);
   }
+});
+
+test('Guide\'s rules name no red, amber, danger or warning token', () => {
+  const { base, coarse } = cssParts();
+  const rules = [...base, ...coarse].filter((r) => r.sel.includes('.ask-guide'));
+  assert.ok(rules.length, 'the stylesheet has Guide rules');
+  for (const r of rules) assert.doesNotMatch(r.body, /--(red|amber|danger|warn)/, r.sel);
 });
 
 /** Every declaration the base rules give a selector ending in `last` (a comma list counts each of its selectors). */

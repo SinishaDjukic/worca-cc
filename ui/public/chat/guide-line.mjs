@@ -7,7 +7,8 @@
 // The check: 2 seconds after the person types a changed prompt of 12 or more characters, one POST
 // /api/shape/guide/check with the role the composer carries. Never on send, at most one in flight, and an answer for
 // text that has since changed is dropped. The line reads "Checking your prompt…", then the result: a fold
-// "Prompt 2/5 · 3 gaps", or with no gap the size in words. A failed check leaves the line empty.
+// "Prompt 2/5 · 3 gaps", or with no gap the size in words. A failed check says so calmly with one quiet action: "Try
+// again", or "Open Models" when Guide has no model. Each new result is spoken once through the composer's announce.
 import { registerComposerAddon } from './extensions.mjs';
 import { makeSwitch } from '../switch.mjs';
 import { flagOn as liveFlagOn, onFlagChange as liveOnFlagChange } from '../flags.mjs';
@@ -26,6 +27,11 @@ export const CHECKING_TEXT = 'Checking your prompt…';
 export const RECHECK_TEXT = 'checking…';
 /** The size in words, shown only when no gap is open: never a number of runs. */
 export const SIZE_WORDS = Object.freeze({ small: 'Small: one run', medium: 'Medium: a few runs', large: 'Large: several runs' });
+export const FAIL_TEXT = 'Guide is not answering right now.';
+export const NO_MODEL_TEXT = 'Guide has no model to run on.';
+export const TRY_AGAIN = 'Try again';
+export const OPEN_MODELS = 'Open Models';
+export const MODELS_HREF = '#models/jobs/helpers';
 
 const FLAG = 'shaperSmallRuns';
 
@@ -53,12 +59,29 @@ export function resultWords(check) {
   return check.size === 'small' ? { fold: false, head: 'Clear enough', rest } : { fold: true, head: `Prompt ${total}/${total}`, rest };
 }
 
-/** What the line shows, first match: off, a result (with "checking…" on a re-check), the first check, the offer, empty. */
-export function lineState({ on, offerSeen, offerGone, prompt, result, checking }) {
+/** The words a screen reader hears for a result: "Prompt 2 of 5, 3 gaps", or null for a body that is no result. */
+export function resultSpeech(check) {
+  const w = resultWords(check);
+  if (!w) return null;
+  return `${w.head.replace(/(\d+)\/(\d+)/, '$1 of $2')}${w.rest.replace(/^ · /, ', ')}`;
+}
+
+/** Which failure line a check's code gets: 'no-model', null (no line: Guide off elsewhere, an abort, a superseded
+ *  check), or 'failed' for every other code. */
+export function failureKind(code) {
+  if (code === 'GUIDE_NO_MODEL') return 'no-model';
+  if (code === 'GUIDE_OFF' || code === 'ABORTED' || code === 'GUIDE_SUPERSEDED') return null;
+  return 'failed';
+}
+
+/** What the line shows, first match: off, a result (with "checking…" on a re-check), the first check, a failure, the
+ *  offer, empty. */
+export function lineState({ on, offerSeen, offerGone, prompt, result, checking, failure = null }) {
   if (!on) return { kind: 'off' };
   const words = result ? resultWords(result) : null;
   if (words) return { kind: 'result', words, recheck: checking === true };
   if (checking) return { kind: 'checking' };
+  if (failure) return { kind: 'failure', failure };
   return lineText({ on, offerSeen, offerGone, prompt }) === OFFER_TEXT ? { kind: 'offer' } : { kind: 'empty' };
 }
 
@@ -140,6 +163,8 @@ export function createGuideLine({
     let inflight = null;    // { ctl, text } of the one check out
     let result = null;      // { text, check } of the shown result
     let dropped = null;     // the trimmed text a superseded or aborted answer was for: the repaint does not ask for it again
+    let failure = null;     // null | 'failed' | 'no-model': the shown failure
+    let said = null;        // the result words last announced
 
     const sw = makeSwitch(doc, { label: 'Guide', rowClass: 'ask-guide-sw', inputClass: 'ask-guide-sw-input' });
     const line = doc.createElement('div');
@@ -175,6 +200,17 @@ export function createGuideLine({
     const quiet = doc.createElement('span');
     quiet.className = 'ask-guide-q';
     quiet.textContent = RECHECK_TEXT;
+    // The failure's one action, built once per mount: the app's quiet small button.
+    const action = (label, onClick) => {
+      const b = doc.createElement('button');
+      b.type = 'button';
+      b.className = 'btn btn-sm btn-quiet ask-guide-act';
+      b.textContent = label;
+      b.addEventListener('click', onClick);
+      return b;
+    };
+    const retryBtn = action(TRY_AGAIN, () => retry());
+    const modelsBtn = action(OPEN_MODELS, () => { const win = doc.defaultView; if (win) win.location.hash = MODELS_HREF; });
 
     const queue = (patch) => {
       const p = chain.then(() => save(patch));
@@ -192,7 +228,7 @@ export function createGuideLine({
       }
       const prompt = field ? field.value : '';
       const state = lineState({
-        on: prefs.on, offerSeen: prefs.offerSeen, offerGone, prompt, result: result ? result.check : null, checking: inflight !== null,
+        on: prefs.on, offerSeen: prefs.offerSeen, offerGone, prompt, result: result ? result.check : null, checking: inflight !== null, failure,
       });
       const bar = box ? box.querySelector(':scope > .ask-composer-row') : null;
       if (state.kind === 'off' || !bar) {
@@ -208,9 +244,17 @@ export function createGuideLine({
         (folds ? rest : sumRest).textContent = r;
         const want = state.recheck ? [shownEl, quiet] : [shownEl];
         if (line.children.length !== want.length || want.some((el, i) => line.children[i] !== el)) line.replaceChildren(...want);
+        words.removeAttribute('title');
+      } else if (state.kind === 'failure') {
+        const noModel = state.failure === 'no-model';
+        const want = [words, noModel ? modelsBtn : retryBtn];
+        if (line.children.length !== 2 || want.some((el, i) => line.children[i] !== el)) line.replaceChildren(...want);
+        words.textContent = noModel ? NO_MODEL_TEXT : FAIL_TEXT;
+        words.title = words.textContent;   // a sentence cut on a narrow screen can still be read in full
       } else {
         if (line.children.length !== 1 || line.firstChild !== words) line.replaceChildren(words);
         words.textContent = state.kind === 'checking' ? CHECKING_TEXT : state.kind === 'offer' ? OFFER_TEXT : '';
+        words.removeAttribute('title');
       }
       if (state.kind === 'offer') { offerOnScreen = true; return; }
       if (offerOnScreen) {
@@ -246,6 +290,8 @@ export function createGuideLine({
       result = null;
       asked = null;
       dropped = null;
+      failure = null;
+      said = null;
     }
     const checkable = (text) => text.length >= CHECK_MIN_CHARS && text.length <= GUIDE_PROMPT_MAX;
     /** The field's input event: the only thing that arms the pause. */
@@ -272,21 +318,40 @@ export function createGuideLine({
       out.then((o) => land(req, o), () => land(req, { ok: false, code: 'NETWORK' }));
       paintLine();
     }
+    /** Try again: one check of the field's text at once, then focus back in the prompt. Never while one is out. */
+    function retry() {
+      if (destroyed || !shown || !prefs.on || !field || inflight) return;
+      clearPending();
+      asked = null;
+      failure = null;
+      fire();
+      if (typeof ctx.focus === 'function') ctx.focus();
+    }
     /** An ended request: applied only while it is the latest and the field still holds the text it was asked for. */
     function land(req, out) {
       if (inflight !== req) return;
       inflight = null;
+      let speak = null;
       if (!field || field.value.trim() !== req.text) {
         asked = null;
-      } else if (out && out.ok === true) {
-        result = resultWords(out.check) ? { text: req.text, check: out.check } : null;
-      } else if (out && (out.code === 'ABORTED' || out.code === 'GUIDE_SUPERSEDED')) {
+      } else if (out && out.ok === true && resultWords(out.check)) {
+        result = { text: req.text, check: out.check };
+        failure = null;
+        speak = resultSpeech(out.check);
+      } else if (out && out.ok !== true && (out.code === 'ABORTED' || out.code === 'GUIDE_SUPERSEDED')) {
         asked = null;    // what was shown before the check stays; the next input asks again
         dropped = req.text;
       } else {
-        result = null;   // a failure: the line is empty
+        // A failure (a 200 that is no result counts as one): the older result was for other text, so it goes.
+        result = null;
+        failure = out && out.ok !== true ? failureKind(out.code) : 'failed';
+        said = null;
       }
       paintLine();
+      if (speak && speak !== said) {
+        said = speak;
+        if (typeof ctx.announce === 'function') ctx.announce(speak);
+      }
     }
     function detach() {
       reset();
@@ -310,6 +375,8 @@ export function createGuideLine({
           if (gen !== gens) return;
           reading = false;
           apply(p);
+          // A Models save that brings a model: the no-model line goes, and the next input checks again.
+          if (failure === 'no-model' && prefs.model) { failure = null; asked = null; }
           landed = true;
           decide();
         }, () => {

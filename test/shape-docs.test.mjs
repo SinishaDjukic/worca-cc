@@ -665,3 +665,17 @@ test('slice 5: the design system\'s Composer bar part describes the result fold,
   assert.deepEqual(missing(bar, ['.ask-guide-fold', /give way first/i]), []);
   assert.doesNotMatch(bar, HOME_PATH);
 });
+
+// Shaper ask screens, slice 6: what the Guide line says when a check fails, and the one announcement.
+test('slice 6: Guide checks names both failure lines and their actions, and the once-per-result announcement', () => {
+  const failures = ['Guide is not answering right now.', 'Try again', 'Guide has no model to run on.', 'Open Models'];
+  const small = section(read('shape-it-first.md'), 'Small runs (`shaperSmallRuns`)');
+  const checks = flat(small.split(/\n\s*\n/).map((p) => p.trim()).find((p) => p.startsWith('**Guide checks.**')) || '');
+  assert.deepEqual(missing(checks, [...failures, /announced once/i]), []);
+  assert.doesNotMatch(checks, /leaves the line empty/);
+  assert.doesNotMatch(checks, HOME_PATH);
+  const bar = designPart('Composer bar');
+  // `.btn.btn-sm.btn-quiet` is the failure action's own spelling: the part already names the role picker's button.
+  assert.deepEqual(missing(bar, ['Guide is not answering right now.', 'Guide has no model to run on.', '.btn.btn-sm.btn-quiet']), []);
+  assert.doesNotMatch(bar, HOME_PATH);
+});

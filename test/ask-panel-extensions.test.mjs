@@ -347,8 +347,8 @@ const SHAPER_TEXT = 'Uploads fail on large files';
 
 const GUIDE_READ = Object.freeze({ model: { id: 'claude-haiku-5-5', label: 'Haiku 5.5' }, on: true, offerSeen: false, rowsOpen: false });
 // The Guide switch and line (ui/public/chat/guide-line.mjs) are registered after the picker; their requests are recorded.
-// The check (POST /api/shape/guide/check) answers CHECK_REPLY, or waits for ever once holdChecks() is called, and the
-// 2-second pause runs on a timer the test drives (wait).
+// The check (POST /api/shape/guide/check) answers CHECK_REPLY, refuses with a code once failChecks(code) is called, or
+// waits for ever once holdChecks() is called, and the 2-second pause runs on a timer the test drives (wait).
 const CHECK_REPLY = Object.freeze({
   register: 'technical', size: 'large', model: GUIDE_READ.model,
   checks: ['who', 'what', 'trigger', 'limits', 'done'].map((id, i) => ({ id, label: id, covered: i < 2, question: i < 2 ? '' : 'q' })),
@@ -368,7 +368,7 @@ function manualTimers() {
     },
   };
 }
-async function composer(t, { lead = null, flag = true, picker = true, guide = picker, pin = 'shape', guideOn = true } = {}) {
+async function composer(t, { lead = null, flag = true, picker = true, guide = picker, pin = 'shape', guideOn = true, model = GUIDE_READ.model } = {}) {
   _resetChatExtensions();
   _resetAnswerer();
   const rec = {};
@@ -383,6 +383,7 @@ async function composer(t, { lead = null, flag = true, picker = true, guide = pi
   const timers = manualTimers();
   const checks = [];       // the bodies of the check requests
   let holding = false;
+  let failing = null;      // the error code the check refuses with
   let roles = null;
   if (picker) {
     const { installRolePicker } = await import('../ui/public/chat/role-picker.mjs');
@@ -397,9 +398,13 @@ async function composer(t, { lead = null, flag = true, picker = true, guide = pi
         if (holding) {
           return new Promise((_, reject) => init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))));
         }
+        if (failing) {
+          const status = failing === 'GUIDE_NO_MODEL' ? 503 : 502;
+          return { ok: false, status, json: async () => ({ error: { code: failing } }) };
+        }
         return { ok: true, status: 200, json: async () => CHECK_REPLY };
       }
-      return { ok: true, status: 200, json: async () => ({ ...GUIDE_READ, on: guideOn }) };
+      return { ok: true, status: 200, json: async () => ({ ...GUIDE_READ, model, on: guideOn }) };
     };
     installGuideLine({
       intent, flagOn: () => flag, onFlagChange: () => () => {}, load: () => loadGuide(record), save: (patch) => saveGuidePrefs(patch, record),
@@ -439,8 +444,9 @@ async function composer(t, { lead = null, flag = true, picker = true, guide = pi
   /** Let `ms` pass on Guide's timer, then let the panel settle. */
   const wait = async (ms = 2000) => { timers.advance(ms); await settle(); };
   const holdChecks = () => { holding = true; };
+  const failChecks = (code) => { failing = code; };
   const line = () => ctx.doc.querySelector('.ask-guide');
-  return { ...ctx, rec, requests, intent, lead: lead0, send, settle, type, wait, checks, holdChecks, line };
+  return { ...ctx, rec, requests, intent, lead: lead0, send, settle, type, wait, checks, holdChecks, failChecks, line };
 }
 
 for (const [row, saved, want] of [
@@ -601,17 +607,27 @@ for (const [name, press] of [
   });
 }
 
+/** The line reads a failure: its sentence and its one action. */
+const failurePainted = (sentence, action) => (c) => {
+  assert.equal(c.line().querySelector('.ask-guide-t')?.textContent, sentence);
+  assert.equal(c.line().querySelector('.ask-guide-act')?.textContent, action);
+};
+const failedCheck = (code) => async (c) => { c.failChecks(code); c.type(SHAPER_TEXT); await c.wait(); };
+
 // The Send table: every state the check can put the line in keeps Send on and sends the person's text.
-for (const [row, arrange, painted] of [
+for (const [row, arrange, painted, opts = {}] of [
   ['checking', async (c) => { c.holdChecks(); c.type(SHAPER_TEXT); await c.wait(); },
     (c) => assert.equal(c.line().querySelector('.ask-guide-t')?.textContent, 'Checking your prompt…')],
   ['re-checking', async (c) => { c.type('Uploads fail on big'); await c.wait(); c.holdChecks(); c.type(SHAPER_TEXT); await c.wait(); },
     (c) => { assert.equal(foldText(c), GAPS); assert.equal(c.line().querySelector('.ask-guide-q')?.textContent, 'checking…'); }],
   ['result', async (c) => { c.type(SHAPER_TEXT); await c.wait(); },
     (c) => { assert.equal(foldText(c), GAPS); assert.equal(c.line().querySelector('.ask-guide-q'), null); }],
+  ['failure', failedCheck('GUIDE_MODEL_FAILED'), failurePainted('Guide is not answering right now.', 'Try again')],
+  // R-ux-4's example: with the Guide model unset, the line offers "Open Models" and Send still works.
+  ['no model', failedCheck('GUIDE_NO_MODEL'), failurePainted('Guide has no model to run on.', 'Open Models'), { model: null }],
 ]) {
   test(`the Send table, ${row}: Send stays on, one message goes out with the person's words, and no check follows`, async (t) => {
-    const c = await composer(t, {});
+    const c = await composer(t, opts);
     await arrange(c);
     painted(c);
     const before = c.checks.length;
@@ -621,6 +637,6 @@ for (const [row, arrange, painted] of [
     assert.equal(c.doc.querySelector('.ask-user-bubble').textContent, SHAPER_TEXT);
     await c.wait(3000);
     assert.equal(c.checks.length, before);
-    assert.doesNotMatch(c.line()?.textContent ?? '', /Prompt|checking/i, 'nothing of the sent prompt stays on the line');
+    assert.doesNotMatch(c.line()?.textContent ?? '', /Prompt|checking|not answering|no model/i, 'nothing of the sent prompt stays on the line');
   });
 }

@@ -520,6 +520,9 @@ While the first check runs the line reads "Checking your prompt…". A result is
 `aria-expanded="true"` with no transition. Small with no gap is plain words (`.ask-guide-sum`, "Clear enough · Small:
 one run"). A re-check adds a quiet `.ask-guide-q` "checking…" after it. On a narrow line the size words give way first:
 only `.ask-guide-rest` ends in an ellipsis; the head, the chevron and "checking…" never shrink.
+A failed check is the words and one action, a `.btn.btn-sm.btn-quiet` (`.ask-guide-act`), with no icon and no red or
+amber: "Guide is not answering right now." with "Try again", or "Guide has no model to run on." with "Open Models". The
+sentence shrinks first and carries its own title, so a cut one can still be read.
 #### Lock tip
 A locked small-runs **Create N PRs** says why in `.rd-tip` (`role="tooltip"`, named by the button's
 `aria-describedby`), never a native `title`, which opens over the status line. It has the Composer bar tip's look
