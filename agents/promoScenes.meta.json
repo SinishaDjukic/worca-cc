@@ -27,7 +27,7 @@
       "required": false,
       "loop": true,
       "as": "fix-review",
-      "directive": "## Fix cycle\n\nAddress EVERY critical and major finding in the review named below. Change only the scene files those findings name; keep every other scene byte-identical; rebuild data.js, re-run snap and fluency, and list what changed under \"Changed this cycle\" in your report."
+      "directive": "## Fix cycle\n\nAddress EVERY critical and major finding in the review named below. Fix each finding's defect in every scene that has it; keep every other scene byte-identical; rebuild data.js, re-run snap and fluency, and list what changed under \"Changed this cycle\" in your report."
     }
   ],
   "outputs": [

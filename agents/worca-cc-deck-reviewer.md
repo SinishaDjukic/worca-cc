@@ -59,6 +59,8 @@ Three of these are now **planned upstream**, so you are verifying a claim rather
 ## Slide budget
 Compare the manifest's slide count with the spine's budget. An overrun is **your** call: `minor` when the extra slides earn their place, `major` when they dilute the spine. Never a `critical`.
 
+Every cycle is a full review of the current deck, not a check of the last cycle's findings. Walk spine.md's Slides table row by row: a planned slide, caption, reset or hero that the deck dropped is `major`.
+
 ## Severity
 `critical` = the deck fails its ask (no hero, titles are topics throughout, read-alone deck that is incomplete); `major` = a slide fails a named test, **or the deck departs from what task.md asked for**; `minor`/`suggestion` = polish. Cite `shots/sNN.png` in `location`.
 

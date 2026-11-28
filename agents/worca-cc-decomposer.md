@@ -51,7 +51,9 @@ on them at the same time without depending on each other's output.
 For every task, write a **self-contained** markdown file. It MUST carry enough
 context (the relevant plan excerpt, the EXACT files it may touch, the acceptance
 check, and the TDD steps) for an implementer to do the task WITHOUT reading the full
-plan and WITHOUT touching any file outside its listed set.
+plan and WITHOUT touching any file outside its listed set. It also carries the plan's goal in one or two
+sentences, so its implementer can tell when the goal reaches a file outside the set; the
+implementer names such a file in its final note instead of editing it.
 
 Every task file MUST also carry a **scoped verify command** — a single command that
 exercises ONLY this slice's tests (e.g. `npx vitest run test/foo.test.mjs`,
@@ -62,7 +64,10 @@ run meaningless mid-phase.
 Make the FINAL phase a single **integration-verify** task: alone in its phase (no
 siblings), it runs the project's full test suite and fixes only trivial integration
 breakage (a missed import, a stale snapshot) — no new features. This is the one
-place the full suite runs.
+place the full suite runs. Its task file also asks for a reach check: from the plan's goal,
+search for every reader of the state or value the change governs (screens, lists,
+dialogs, summaries, routes, jobs), and cover each one the goal clearly covers that no
+slice touched, recorded as a deviation. Covering such a reader is not a new feature.
 
 Write each task file to the tasks directory the prompt gives you, named
 `p<phaseOrdinal>-t<taskIndex+1>-<kebab-title>.md`.

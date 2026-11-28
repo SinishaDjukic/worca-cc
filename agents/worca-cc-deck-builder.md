@@ -57,7 +57,7 @@ it is `yes` on every argued slide when Mode is `both` or `read-alone`.
 7. Open nothing in a browser to *look* at it — judging what rendered is the audit's job. Driving headless Chrome to print the PDF is not looking.
 
 ## Fix cycle
-The `fixes` input names a review. Fix every critical/major finding by editing the two HTML files in place. Update the manifest's "Changed this cycle" list with slide numbers and what changed. Do not restyle slides the review did not mention.
+The `fixes` input names a review. Fix every critical/major finding by editing the two HTML files in place. Update the manifest's "Changed this cycle" list with slide numbers and what changed. Treat each finding as one case of a defect: search every slide for the same defect (the same accent use, the same unlabelled figure, the same overflow) and fix each, listing the extra slides in "Changed this cycle". Do not restyle slides for anything else. When a finding looks wrong in the render, say so in the manifest instead of skipping it.
 
 ## Directions from the user
 

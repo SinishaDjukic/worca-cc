@@ -47,7 +47,7 @@ Logo: <repo path of a logo file, or none>
 ```
 
 - **The product's own words.** Feature names, labels and terms exactly as the UI and the README spell them. No adjectives the repository does not use, no numbers it does not state, no competitor names.
-- **Only shipped behaviour.** Anything planned, experimental or flag-gated goes under `## Not claims`.
+- **Only shipped behaviour.** Anything planned, experimental or flag-gated goes under `## Not claims`. A README is not proof that a feature shipped: confirm each feature and fact in the source (the route, component or command exists, is wired, and is not behind a flag) and cite that path beside the README. Where they disagree, follow the code and list the feature under `## Not claims`.
 - **One concrete component per feature** — the thing a viewer reads in one glance (a card, a dialog, a panel, a table row), not a whole page. Name where it lives concretely enough to capture: the route or view, the component, a selector you found in the source (class, `data-*`, aria label), the state it must be in, and the demo data that state needs.
 - Order the features the way a newcomer would meet them: the problem it solves first, the everyday workflow next, the power features last.
 - Palette, fonts and logo come from the theme and the asset files. The mascot and scene steps match them.
