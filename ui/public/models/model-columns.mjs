@@ -2,9 +2,10 @@
 // model, picked as harness › provider › model in three columns, with inherit on top. A value is { model, engine } or
 // null (inherit); a pick always names the harness of the column it was picked in, and effort stays with each surface.
 // The data half (harnessTree, initialColumns, selectColumn, stepColumns, columnsValue, columnsLabel, pickHarness,
-// pickEfforts, nodeModelPatch, columnHeight) is pure and loads under node; only openModelColumns touches a document,
-// the one it is given. The button that opens it is the caller's. Readiness comes in as rows (GET /api/engines, through
-// a getter the host serves) and is never fetched here.
+// pickEfforts, nodeModelPatch, columnHeight) is pure and loads under node; only openModelColumns and modelTrigger touch
+// a document, the one they are given. modelTrigger is the button that opens it on the Chat run card, New run's Agents
+// rows and the Requirements run setup; the Workflows view brings its own. Readiness comes in as rows (GET /api/engines,
+// through a getter the host serves) and is never fetched here.
 import { runsOn, harnessesOf, modelGroups, effortsOn, HARNESS_EFFORTS, SIGNIN_LABELS } from '../../../src/shared/connections.mjs';
 import { MODEL_ENGINE_NAMES, engineLabel } from '../../../src/shared/engine-switch.mjs';
 import { modelName } from './model-picker.mjs';

@@ -61,4 +61,7 @@ test('it opens on the value it holds now; Add model reaches the host; a disabled
   const d = rig({ disabled: true, title: 'Set in Settings › Memory' });
   d.btn.click();
   assert.deepEqual([d.btn.disabled, d.btn.title, d.pop()], [true, 'Set in Settings › Memory', null]);
+  // .click() on a disabled button reaches no listener; a dispatched click does, so only it shows the trigger's own guard.
+  d.btn.dispatchEvent(new d.doc.defaultView.MouseEvent('click', { bubbles: true, cancelable: true }));
+  assert.equal(d.pop(), null, 'a dispatched click on a disabled trigger opens nothing');
 });

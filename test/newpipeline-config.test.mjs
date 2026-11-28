@@ -140,6 +140,14 @@ test('renderEffortSelect lists the model\'s efforts on the row\'s harness', asyn
   assert.deepEqual([...effortSel.options].map((o) => o.value), ['', 'minimal', 'low', 'medium', 'high']);
   window.__np.renderEffortSelect(effortSel, { model: '', effort: '' });
   assert.deepEqual([effortSel.options[0].textContent, effortSel.disabled], ['(pick a model first)', true]);
+  // A model the catalog lost: its stored effort is the one option, so a save of another tunable sends it back; with
+  // none stored the select reads as it does with no model.
+  window.__np.renderEffortSelect(effortSel, { model: 'gone-9', effort: 'high' });
+  assert.deepEqual([[...effortSel.options].map((o) => [o.value, o.textContent]), effortSel.value, effortSel.disabled],
+    [[['high', 'high']], 'high', true]);
+  window.__np.renderEffortSelect(effortSel, { model: 'gone-9', effort: '', engine: 'codex' });
+  assert.deepEqual([[...effortSel.options].map((o) => [o.value, o.textContent]), effortSel.value, effortSel.disabled],
+    [[['', '(pick a model first)']], '', true]);
 });
 
 // A saved workflow served by the mocked API for the selector tests below.

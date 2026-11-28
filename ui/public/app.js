@@ -4535,16 +4535,19 @@ if (typeof window !== 'undefined') {
 function renderEffortSelect(effortSel, { model = '', effort = '', engine = '' } = {}) {
   // Filtered to the model's supported efforts. With no model (or one the catalog lost) there is no list to offer —
   // which efforts are valid is a property of the model — so the control is disabled. It SAYS so rather than just
-  // greying out, because a dead dropdown next to a live one reads as a broken UI.
+  // greying out, because a dead dropdown next to a live one reads as a broken UI. A model the catalog lost keeps its
+  // stored effort as the one option instead, so a save of another tunable sends the pick back unchanged (the server
+  // keeps that pick unchecked).
   const m = modelById(model);
+  const lostEffort = !m && model && effort ? effort : '';
   effortSel.innerHTML = '';
-  effortSel.appendChild(option('', m ? '(default effort)' : '(pick a model first)'));
+  effortSel.appendChild(lostEffort ? option(lostEffort, lostEffort) : option('', m ? '(default effort)' : '(pick a model first)'));
   // A model on two harnesses keeps its own efforts; a soft pick offers them mapped onto the run's harness (effortsOn).
   // A pinned pick offers its own efforts and the ones its harness maps (pickEffortsOn), so a stored own-only effort
   // still shows.
   const offered = m ? (engine ? pickEffortsOn(m, engine) : effortsOn(m, state.engine || 'claude')) : [];
   offered.forEach((e) => effortSel.appendChild(option(e, e)));
-  effortSel.value = effort && offered.includes(effort) ? effort : '';
+  effortSel.value = lostEffort || (effort && offered.includes(effort) ? effort : '');
   effortSel.disabled = !m;
   effortSel.title = m ? '' : 'Pick a model first. The effort levels on offer are that model’s own.';
 }
@@ -4972,10 +4975,11 @@ function paintHiddenSettings() {
 // Build the agents accordion into #agents-rows: one collapsed .agent-row per node
 // (accent + name + effective-config caption + modified dot), whose body holds the
 // same model/effort/fan-out/questions controls the old always-open .stage-cfg card
-// did — same classes and data-node-id, so the delegated change handler is unchanged
-// (newpipeline-ux-design.md §4.2). The model is the columns picker's trigger
-// (models/model-columns.mjs): it offers every harness, opens on the run's default
-// harness, and a pick names the harness it was picked on.
+// did — same classes and data-node-id, so the one delegated change handler serves
+// them (newpipeline-ux-design.md §4.2). The model is the columns picker's trigger
+// (models/model-columns.mjs), a button the handler reads in its own branch: it offers
+// every harness, opens on the run's default harness, and a pick names the harness it
+// was picked on.
 function renderAgentRows(rows) {
   const host = el.agentRows;
   if (!host) return;

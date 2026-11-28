@@ -30,7 +30,7 @@ const NODES4 = { n_plan: { model: 'claude-haiku-4-5', effort: 'medium' }, n_refi
 const preset = (over = {}) => ({ id: 'rp_aaaaaaaaaaaa', name: 'Quick fix', scope: { kind: 'global', ref: null }, updatedAt: '2026-10-16T00:00:00Z',
   setup: { workflowId: 'wf_default', guardrailsId: 'normal', humanInLoop: false, overlay: { nodes: { n_plan: { model: 'claude-haiku-4-5', effort: 'medium' } } } }, ...over });
 
-async function boot({ presets = [], check = () => ({ broken: [] }), runDefaults = null, runReply = null, wsConfigDelayMs = 0, namesDelayMs = 0, activeWorkflowId = 'wf_default' } = {}) {
+async function boot({ presets = [], check = () => ({ broken: [] }), runDefaults = null, runReply = null, wsConfigDelayMs = 0, namesDelayMs = 0, activeWorkflowId = 'wf_default', models = MODELS } = {}) {
   const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/#new' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
@@ -70,7 +70,7 @@ async function boot({ presets = [], check = () => ({ broken: [] }), runDefaults 
       return Promise.resolve(ok(runReply ? runReply(posted.length) : { runId: `run-${posted.length}` }));
     }
     if (u.includes('/api/config')) {
-      const body = ok({ config: { steps: {}, customModels: [], activeWorkflowId }, models: MODELS, efforts: ['medium', 'high'] });
+      const body = ok({ config: { steps: {}, customModels: [], activeWorkflowId }, models, efforts: ['medium', 'high'] });
       // wsConfigDelayMs: the workspace target's config load (no projectDir) answers late, after the preset's own pickers.
       const delay = method === 'GET' && !u.includes('projectDir') ? wsConfigDelayMs : 0;
       return delay ? new Promise((r) => setTimeout(() => r(body), delay)) : Promise.resolve(body);
@@ -146,6 +146,23 @@ test('pick → prompt → start sends the run-only lane and writes no project co
   for (const pick of Object.values(body.overlay.nodes)) for (const v of Object.values(pick)) assert.notEqual(v, null);
   assert.equal(typeof body.overlay.nodes.n_plan.fanOut, 'boolean');
   assert.equal(body.guardrailsId, 'normal');
+  assert.deepEqual(configWrites(ctx.calls), []);
+});
+
+test('preset mode: a save of another tunable keeps a pinned pick\'s model and harness, and writes no project config', async () => {
+  const held = preset({ setup: { workflowId: 'wf_default', guardrailsId: 'normal', humanInLoop: false,
+    overlay: { nodes: { n_plan: { model: 'gpt-5.5', effort: 'low', engine: 'codex' } } } } });
+  const ctx = await boot({ presets: [held], models: [...MODELS, { id: 'gpt-5.5', efforts: ['low', 'high'], harnesses: ['codex'] }] });
+  await pick(ctx, 'rp_aaaaaaaaaaaa');
+  const model = ctx.doc.querySelector('.agent-row[data-node-id="n_plan"] .step-model');
+  assert.deepEqual([model.value, model.dataset.engine], ['gpt-5.5', 'codex'], 'the row shows the preset\'s pinned pick');
+  const fan = ctx.doc.querySelector('.agent-row[data-node-id="n_plan"] .step-fanout');
+  const on = !fan.checked;
+  fan.checked = on;
+  fan.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+  await waitFor(() => /Modified/.test(ctx.doc.querySelector('#preset-chip').textContent));
+  const n = (await submit(ctx)).overlay.nodes.n_plan;
+  assert.deepEqual([n.model, n.effort, n.engine, n.fanOut], ['gpt-5.5', 'low', 'codex', on]);
   assert.deepEqual(configWrites(ctx.calls), []);
 });
 

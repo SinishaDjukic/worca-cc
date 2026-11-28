@@ -1043,8 +1043,11 @@ function inheritOrSubagentModel(next, prev) {
 /**
  * Set (or clear) the model + effort for one agent step. An empty model => inherit
  * the global/CLI default; an empty effort => model default. Effort must be supported
- * by the chosen model. fanOut is preserved when the caller omits it (only the toggle
- * sends it) and set when a boolean. Returns the updated legacy view.
+ * by the chosen model. A model the catalog no longer holds is refused, except the
+ * step's stored one sent back with its stored effort or none and its stored harness
+ * or none (a save of another tunable): that pick is kept unchecked. fanOut is preserved
+ * when the caller omits it (only the toggle sends it) and set when a boolean. Returns
+ * the updated legacy view.
  * @returns {Promise<{steps:object, customModels:Array}>}
  */
 export async function setStep(projectDir, step, selection = {}) {
@@ -1056,8 +1059,8 @@ export async function setStep(projectDir, step, selection = {}) {
   const cfg = readRaw(projectDir);
   const prev = cfg.steps[step] || {};
   // The harness the step's pick pins, by the absent / clear / keep rule (writtenEngine checks it, effort included).
-  const engine = writtenEngine(selection.engine, { model, effort, prevModel: prev.model, prevEngine: prev.engine, models });
-  if (!engine) assertCatalogPick(model, effort, models);
+  const engine = writtenEngine(selection.engine, { model, effort, prevModel: prev.model, prevEngine: prev.engine, prevEffort: prev.effort, models });
+  if (!engine) assertCatalogPick(model, effort, models, null, { kept: { model: prev.model, effort: prev.effort } });
 
   {
     const issue = subagentModelIssue(selection.subagentModel);
@@ -1215,10 +1218,15 @@ function storedRolePicks(text) {
 
 /** setStep's catalog rules, plus, with `engine`: a harness name (`unknown harness "<x>"`), a model beside it
  *  (`select a model before choosing a harness`), a model that runs there (`model "<m>" does not run on <Harness>`,
- *  skipped when `stored`), and an effort from pickEffortsOn(entry, engine). @throws {Error} */
-function assertCatalogPick(model, effort, models, engine = null, { stored = false } = {}) {
+ *  skipped when `stored`), and an effort from pickEffortsOn(entry, engine). A model the catalog does not hold is
+ *  `unknown model "<m>"`, except `kept.model`, the one already stored, sent back with its stored effort (`kept.effort`)
+ *  or none and its stored harness (`stored`) or none: it cannot be checked, so it is kept unchecked. @throws {Error} */
+function assertCatalogPick(model, effort, models, engine = null, { stored = false, kept = null } = {}) {
   const entry = model ? models.find((m) => m.id === model) : null;
-  if (model && !entry) throw new Error(`unknown model "${model}"`);
+  if (model && !entry) {
+    if (kept?.model === model && (engine === null || stored) && (!effort || effort === kept.effort)) return;
+    throw new Error(`unknown model "${model}"`);
+  }
   if (engine !== null) {
     if (typeof engine !== 'string') throw new Error('engine must be a string');
     if (!MODEL_ENGINE_NAMES.includes(engine)) throw new Error(`unknown harness "${engine.slice(0, 32)}"`);
@@ -1238,18 +1246,21 @@ function assertCatalogPick(model, effort, models, engine = null, { stored = fals
  *  absent: `prevEngine` when `model === prevModel`, unchecked (stored); else null.
  *  null or '': null.  Not a string: throws 'engine must be a string'.
  *  A string equal to `prevEngine` beside `model === prevModel`: kept, checked as `stored`.  Any other string: fully checked.
- *  A kept or written engine is checked with the pick's effort (assertCatalogPick); a null one is left to the caller. */
-function writtenEngine(raw, { model, effort, prevModel, prevEngine, models }) {
+ *  A kept or written engine is checked with the pick's effort (assertCatalogPick); a null one is left to the caller.
+ *  The stored pick (`prevModel`, `prevEffort`) is `kept`: a stored model the catalog lost passes with its stored
+ *  engine and effort, or none, and with no other. */
+function writtenEngine(raw, { model, effort, prevModel, prevEngine, prevEffort, models }) {
   const sameModel = !!model && model === prevModel;
   const prev = typeof prevEngine === 'string' && MODEL_ENGINE_NAMES.includes(prevEngine) ? prevEngine : null;
+  const kept = { model: prevModel, effort: prevEffort };
   if (raw === undefined) {
     if (!sameModel || !prev) return null;
-    assertCatalogPick(model, effort, models, prev, { stored: true });
+    assertCatalogPick(model, effort, models, prev, { stored: true, kept });
     return prev;
   }
   if (raw === null || raw === '') return null;
   if (typeof raw !== 'string') throw new Error('engine must be a string');
-  assertCatalogPick(model, effort, models, raw, { stored: sameModel && raw === prev });
+  assertCatalogPick(model, effort, models, raw, { stored: sameModel && raw === prev, kept });
   return raw;
 }
 
@@ -1374,8 +1385,8 @@ export async function readRunConfig(projectDir) {
  * row), set when a boolean, and cleared on an explicit null. Writes only the config_workflow_nodes table
  * (legacy view + extra untouched). Model/effort validate against the effective
  * catalog exactly like setStep (design §4.5 — the two write paths must not
- * disagree); rows persisted before this hardening are validated only when
- * next written.
+ * disagree), the stored model the catalog lost sent back unchanged included;
+ * rows persisted before this hardening are validated only when next written.
  * @param {string} projectDir
  * @param {string} workflowId
  * @param {string} nodeId
@@ -1389,10 +1400,10 @@ export async function setNodeModel(projectDir, workflowId, nodeId, selection = {
   const key = projectKey(projectDir);
   getDb();
   const prev = prepare(
-    'SELECT model, engine, fan_out, ask_questions, subagent_model, roles FROM config_workflow_nodes WHERE project_key = ? AND workflow_id = ? AND node_id = ?'
+    'SELECT model, effort, engine, fan_out, ask_questions, subagent_model, roles FROM config_workflow_nodes WHERE project_key = ? AND workflow_id = ? AND node_id = ?'
   ).get(key, workflowId, nodeId);
-  const engine = writtenEngine(selection.engine, { model, effort, prevModel: prev?.model, prevEngine: prev?.engine, models });
-  if (!engine) assertCatalogPick(model, effort, models);
+  const engine = writtenEngine(selection.engine, { model, effort, prevModel: prev?.model, prevEngine: prev?.engine, prevEffort: prev?.effort, models });
+  if (!engine) assertCatalogPick(model, effort, models, null, { kept: { model: prev?.model, effort: prev?.effort } });
   const roles = selection.roles === undefined ? undefined : cleanRolePicks(selection.roles, models);
 
   {

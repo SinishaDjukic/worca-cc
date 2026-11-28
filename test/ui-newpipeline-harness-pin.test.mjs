@@ -39,11 +39,21 @@ class WSStub {
   _message(obj) { (this._listeners.message || []).forEach((fn) => fn({ data: JSON.stringify(obj) })); }
 }
 
+/** config.mjs's catalog rule for a node write naming a model MODELS does not hold: `unknown model "<id>"`, unless it is
+ *  the stored model sent back with its stored effort or none and its stored harness or none (kept unchecked). */
+function catalogRefusal(stored, sel) {
+  if (!sel.model || MODELS.some((m) => m.id === sel.model)) return null;
+  const kept = sel.model === stored.model && (!sel.effort || sel.effort === stored.effort)
+    && (sel.engine === undefined || sel.engine === null || sel.engine === '' || sel.engine === stored.engine);
+  return kept ? null : `unknown model "${sel.model}"`;
+}
+
 /** A tiny server: the stored Settings › Memory pair, the project's run-config (PATCH applied with
- *  the setters' replace semantics for model/effort, and plan 1's absent rule for engine), and the
+ *  the setters' replace semantics for model/effort, and plan 1's absent rule for engine; a write the
+ *  catalog rule refuses is a 400 that writes nothing, kept in `refused`), and the
  *  workflow view with `template`'s keys laid into n_defrag's config. */
 function makeServer({ stored, pick = null, template = null }) {
-  const srv = { stored, writes: [], nodes: pick ? { n_defrag: { ...pick } } : {} };
+  const srv = { stored, writes: [], refused: [], nodes: pick ? { n_defrag: { ...pick } } : {} };
   srv.handle = (url, opts) => {
     const method = (opts && opts.method) || 'GET';
     const body = opts && opts.body ? JSON.parse(opts.body) : null;
@@ -60,6 +70,10 @@ function makeServer({ stored, pick = null, template = null }) {
     if (url.includes('/api/config')) {
       if (method === 'PATCH' && body && body.nodes) {
         srv.writes.push(body);
+        for (const [id, sel] of Object.entries(body.nodes)) {
+          const error = catalogRefusal(srv.nodes[id] || {}, sel);
+          if (error) { srv.refused.push(error); return Promise.resolve({ ok: false, status: 400, json: async () => ({ error }) }); }
+        }
         for (const [id, sel] of Object.entries(body.nodes)) {
           const next = { ...srv.nodes[id] };
           const before = next.model;
@@ -154,6 +168,21 @@ test('Review Focus 1: a stored model the catalog lost is shown as such and survi
   row().fan.dispatchEvent(new window.Event('change', { bubbles: true }));
   await settle(24);
   assert.equal(srv.writes.at(-1).nodes.n_defrag.model, 'gone-9');
+  assert.deepEqual([srv.refused, srv.nodes.n_defrag, row().fan.checked], [[], { model: 'gone-9', fanOut: true }, true],
+    'the server keeps the pick and saves the toggle');
+});
+test('Review Focus 1: a stored model the catalog lost keeps its stored effort, shown and sent back on a save of another tunable', async () => {
+  const srv = makeServer({ stored: null, pick: { model: 'gone-9', effort: 'high' } });
+  const { window, row } = await boot(srv);
+  const effort = () => [[...row().effort.options].map((o) => o.value), row().effort.value, row().effort.disabled];
+  assert.deepEqual(effort(), [['high'], 'high', true]);
+  row().fan.checked = true;
+  row().fan.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await settle(24);
+  const sent = srv.writes.at(-1).nodes.n_defrag;
+  assert.deepEqual([sent.model, sent.effort], ['gone-9', 'high']);
+  assert.deepEqual([srv.refused, srv.nodes.n_defrag, row().fan.checked], [[], { model: 'gone-9', effort: 'high', fanOut: true }, true]);
+  assert.deepEqual(effort(), [['high'], 'high', true], 'the save\'s re-render shows it still');
 });
 // A dispatched click, not .click(): .click() on a disabled button never reaches a listener, so only a dispatched one
 // shows the trigger's own guard.
