@@ -113,13 +113,78 @@ environment, Settings › Runs › Machine load) lowers that. Timing-budget test
 stretch their budgets by the machine's load locally (`test/helpers/load-budget.mjs`);
 CI keeps them strict.
 
-CI runs on every pull request and every push to `dev`: the fast tier always,
+CI runs on every pull request and every push to `dev`: the fast tier on every code change,
 the slow tier when the change touches what it exercises (`test/tiers.json`;
-`npm run test:fast` and `npm run test:slow` run one tier locally). It skips
-docs-only changes, and it does not run the smoke scripts. Run `npm test` (and
+`npm run test:fast` and `npm run test:slow` run one tier locally). A docs-only
+pull request runs only the `changed paths` job, the fast tier (its tests read
+pages under `docs/`) and the `CI gate` job. CI does not run the smoke scripts. Run `npm test` (and
 the relevant smoke script if you touched the engine, workspace, or plugin
 paths) locally before opening or updating a PR, and say so in the PR
-description.
+description. A failed `CI gate` lists each failing test file by shard in its job
+summary and marks `(quarantined)` the files on dev's quarantine list.
+Pull requests run the fast tier on `.nvmrc`'s Node only, pushes to `dev` run it on
+22.19.0, 24 and 26, and the `full-node-matrix` label runs all three on a PR from its next push.
+Making the full matrix permanent on PRs is one edit to the matrix expression in
+`.github/workflows/ci.yml`, together with `test/supply-chain.test.mjs`.
+
+The shards are balanced by `test/timings.json`. Each Monday the Refresh test timings
+workflow (`.github/workflows/refresh-test-timings.yml`) merges the timings of the
+newest green `dev` push run into it and opens or updates one "Refresh test timings"
+PR, which a maintainer reviews and merges like any other PR. A test file
+with no recorded time is priced at the mean recorded time, and a tier run prints
+`N test files have no recorded timing` until a refresh measures it. To refresh by
+hand: `gh run download <run-id> --pattern 'test-timings-*' --dir .test-timings`, then
+`npm run test:timings:merge -- .test-timings`.
+
+A test file, extension Playwright spec or CDP proof that fails at random can be
+quarantined: add it to `test/quarantine.json` with three fields, `path`,
+`reason` (why it is distrusted) and `exitCondition` (what lets it come back). A
+quarantined file leaves `npm test`, `npm run test:fast` and `npm run test:slow`
+(and a spec or proof leaves its CI job), but still runs when you name it
+(`node tools/test.mjs test/x.test.mjs`). The Quarantined tests workflow
+(`.github/workflows/quarantine.yml`) runs every entry on each push to `dev` and
+nightly, never blocks a merge, and lists each entry's result and pass rate over
+the last 30 runs in its job summary. Leaving quarantine is a manual PR that meets
+the `exitCondition` and deletes the entry along with the fix. Repeat offenders
+and their verdicts are kept in `docs/test-offenders.md`: a fix or quarantine of
+a listed file updates its row. Browser offenders (extension specs and CDP
+proofs) are checked by 3 loaded runs of their own harness, see
+`docs/test-offenders.md`. The repo admin makes `dev` require these checks by
+following `docs/required-checks.md`; a renamed gate, parity or Firefox job fails
+`test/required-checks.test.mjs`.
+
+CI force-closes a test file whose process lingers after its tests (a ref'd
+timer, a live server or child) and logs a `warning:` line naming the handles it
+held, so the file frees its worker at once. To measure how long such a file
+would stay up, run `node tools/test.mjs --measure-tails test/x.test.mjs`
+(forceExit off; it prints `stayed up N s outside its tests` per file). That
+figure includes the file's top-level `before`/`after` hooks, which forceExit
+cannot cut. CI's tail lengths are in the
+Quarantined tests workflow, in the `tail measure` job summary; they cover the
+fast tier only.
+
+### Checks that gate merges
+
+Three workflows decide whether a pull request into `dev` can merge; each runs on every
+pull request into `dev` with no `paths` filter, so its required check always reports.
+A fourth check, the ticket rule, judges the pull request's description instead of its code.
+Every other workflow is listed with the reason it does not gate.
+
+| Workflow | Gates merges | Required check | How, or why not |
+|---|---|---|---|
+| `ci.yml` | yes | `CI gate` | The always-running gate job; every other `ci.yml` job reports through it. |
+| `parity-docker.yml` | yes | `parity (tree against the CI image)` | Its own check, on every PR into `dev`. |
+| `firefox-e2e.yml` | yes | `Firefox e2e (Playwright Firefox, branch and split tree)` | Its own check, on every PR into `dev`. |
+| `docker-image.yml` | no | — | Reusable `workflow_call`: builds images for release tags and the weekly rebuild, never runs on a PR. |
+| `docker-rebuild.yml` | no | — | Weekly schedule and manual runs only. |
+| `release-npm-app.yml` | no | — | Runs on `worca-app-v*` tags only, after merge. |
+| `label-by-author.yml` | no | — | `pull_request_target` labelling: judges who opened the PR, not the change. |
+| `worca-metrics-pr-events.yml` | no | — | `pull_request_target` metrics recorder: writes the `worca-metrics` branch, never checks code. |
+| `pr-context.yml` | yes | `Linked issue` | The ticket rule: fails a PR whose description names no issue; the `no-issue` label is the bypass. Judges the description, not the change. |
+| `quarantine.yml` | no | — | Non-blocking: runs the quarantined tests on `dev` pushes, nightly and by hand, and reports each pass rate; never runs on a pull request. |
+| `refresh-test-timings.yml` | no | — | Weekly schedule and manual runs only: opens or updates the timings refresh PR, which then gets the three required checks like any PR. |
+
+A new workflow goes in this table; `test/ci-gating-table.test.mjs` fails until it does.
 
 While you work, `npm run test:related` runs only the test files your
 uncommitted changes can affect (`-- --base origin/dev` for everything on your
@@ -127,6 +192,27 @@ branch). It follows imports and the paths tests load by name, and falls back to
 the full suite when you change the runner, its config or `package.json`. It
 can't see every link, so run the full `npm test` once before you hand the
 change over.
+
+The suite guard (`test/suite-guard.test.mjs`, in the fast tier) keeps the suite from
+getting slower. A new test file may not boot `ui/public/app.js` inside each of its
+tests: boot it once per file with `useSharedApp` from `test/helpers/shared-app-boot.mjs`,
+which resets the app before each test. Today's per-test boot files are listed in
+`test/suite-guard-offenders.json`, which only shrinks: remove a file once you convert
+it, never add one, and convert a listed file before you rename it. Prove a converted
+file with `node tools/test.mjs FILE` (whole) and
+`node tools/test-each-alone.mjs FILE` (each test on its own; it must print
+`each alone: N/N passed`). The run-page and History helpers adapt to it with `runPageOn(app)`
+(`test/helpers/run-page-boot.mjs`) and `detailOn(app)` (`test/helpers/history-detail-boot.mjs`), and `node
+tools/ui-boot-speedup.mjs record --before A,B` froze the CI seconds before the conversions in
+`test/ui-boot-speedup.json`, which `report --after C,D [--write]` compares with two later ci.yml runs. If a converted
+file breaks, quarantine it in `test/quarantine.json` with a reason, or fix it forward; never put it back on the
+offender list, which the guard refuses. Reverting a whole batch needs the admin bypass in
+[`docs/required-checks.md`](docs/required-checks.md). A new test file
+may also cost at most 20 s, read from
+`test/timings.json` (the per-file seconds CI measures); it is judged only when its
+time is in that file, so run `npm run test:timings` and commit the result. `node
+tools/suite-guard.mjs` runs the check by hand; `--list` prints the files that boot
+per test today.
 
 ### In a container
 
@@ -194,7 +280,7 @@ graduate and remove one: [`docs/feature-flags.md`](docs/feature-flags.md).
 
 - **An issue comes first.** Every PR names the issue it belongs to in its description:
   `Closes #123`, or `Refs #123` when the issue should stay open. No issue yet? Open one
-  and say what the change is for. The **Linked issue** check fails without it; a
+  and say what the change is for. The **Linked issue** check fails without it, and it is required to merge; a
   maintainer can add the `no-issue` label for a PR that needs none (a typo fix, a release).
 - Area labels (`area:chat`, `area:runs`, `area:shaper`, …) are added automatically from the
   feature folders the PR touches. The mapping is the `AREAS` list in

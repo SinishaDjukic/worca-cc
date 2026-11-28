@@ -2,13 +2,18 @@
 // run title: the header cost's panel and the run card's cost tile (in the Overview tab), on the run page and
 // on the History run page. History boot + fixtures: helpers/history-detail-boot.mjs (its generic boot()
 // also drives the run page through the socket it captures).
-import { test } from 'node:test';
+import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { boot, settle, go, bootDetail, openDetail, DETAIL, PROJECT, secOf, click } from './helpers/history-detail-boot.mjs';
+import { settle, go, openDetail, DETAIL, PROJECT, secOf, click, detailOn, historyFetch } from './helpers/history-detail-boot.mjs';
 import { runCostBreakdown } from '../src/shared/cost/breakdown.mjs';
 import { costBreakdownEl, costSummaryText, awayTotalText } from '../ui/public/cost-breakdown.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { useSharedApp } from './helpers/shared-app-boot.mjs';
+
+const app = useSharedApp({ before, beforeEach, after }, { fetchHandler: historyFetch() });
+const boot = detailOn(app).page;
+const bootDetail = detailOn(app).detail;
 
 // Task 6's fixture: $3.3319 in all, $0.12 of it two Away mode reviews; one more review stopped (≥$0.0234)
 // and two agent turns a pause cut off (≥$0.31) — both lower bounds, apart from every total.

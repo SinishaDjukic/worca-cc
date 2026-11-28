@@ -12,7 +12,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { startFakeUpstream } from './helpers/fake-upstream-proxy.mjs';
 import { startFakeUpstream as startFakeModel, GOOD_KEY } from './helpers/fake-model-upstream.mjs';
 import { startSidecar, echoOrigin, connectVia, until, SECRET } from './helpers/egress-sidecar.mjs';
-import { saveProxyLogin, readProxyLogin, proxyLoginFile, ProxyLoginError } from '../src/core/proxy-credentials.mjs';
+import { saveProxyLogin, saveProxyLoginPlain, readProxyLogin, proxyLoginFile, ProxyLoginError } from '../src/core/proxy-credentials.mjs';
 import { moveBoxLoginToSidecar, inBoxLoginNotice, IN_BOX_LOGIN_TEXT } from '../src/core/egress-sidecar-boot.mjs';
 import { sidecarClient, sealEgressSecret, sidecarApiConfig, _resetSealedEgressSecret } from '../src/core/egress-sidecar-client.mjs';
 import { startEgressPolicy } from '../src/core/egress-policy.mjs';
@@ -37,14 +37,16 @@ async function rig(sidecarEnv) {
   return { origin, fake, s, close: async () => { await s.close(); await fake.close(); await origin.close(); } };
 }
 
-test('the box never writes proxy-login.json next to a sidecar', () => {
+test('the box never writes proxy-login.json next to a sidecar', async () => {
   const home = boxHome();
   try {
-    assert.throws(() => saveProxyLogin(LOGIN, { home, env: { WORCA_EGRESS_API_URL: 'http://egress:3129' } }),
+    await assert.rejects(saveProxyLogin(LOGIN, { home, env: { WORCA_EGRESS_API_URL: 'http://egress:3129' } }),
+      (e) => e instanceof ProxyLoginError && e.field === 'sidecar' && /egress sidecar/.test(e.message));
+    assert.throws(() => saveProxyLoginPlain(LOGIN, { home, env: { WORCA_EGRESS_API_URL: 'http://egress:3129' } }),
       (e) => e instanceof ProxyLoginError && e.field === 'sidecar' && /egress sidecar/.test(e.message));
     assert.equal(existsSync(proxyLoginFile(home)), false);
     // The native install: unchanged.
-    assert.equal(saveProxyLogin(LOGIN, { home, env: {} }).label, 'Domain\\User');
+    assert.equal((await saveProxyLogin(LOGIN, { home, env: {} })).label, 'Domain\\User');
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
 
@@ -52,7 +54,7 @@ test('one-time move: a login an older version saved in the box goes to the sidec
   const r = await rig();
   const home = boxHome();
   try {
-    saveProxyLogin(LOGIN, { home, env: {} });
+    saveProxyLoginPlain(LOGIN, { home, env: {} });
     const logs = [];
     const env = boxEnv(r.s);
     const res = await moveBoxLoginToSidecar({ env, home, client: sidecarClient(env), log: (lv, t) => logs.push(`${lv} ${t}`), delayMs: 10 });
@@ -73,7 +75,7 @@ test('the move: the sidecar keeps its own login; a box proxy setting goes along 
   const home = boxHome();
   try {
     assert.equal((await r.s.api('POST', '/v1/login', { ...LOGIN, user: 'Other' })).status, 200);
-    saveProxyLogin(LOGIN, { home, env: {} });
+    saveProxyLoginPlain(LOGIN, { home, env: {} });
     const env = boxEnv(r.s);
     const kept = await moveBoxLoginToSidecar({ env, home, client: sidecarClient(env), delayMs: 10 });
     assert.equal(kept.reason, 'sidecar has a login');
@@ -83,7 +85,7 @@ test('the move: the sidecar keeps its own login; a box proxy setting goes along 
   // A sidecar with no corporate proxy of its own: the box's networkProxy.upstream comes along, then the login.
   const r2 = await rig({});
   try {
-    saveProxyLogin(LOGIN, { home, env: {} });
+    saveProxyLoginPlain(LOGIN, { home, env: {} });
     const env = boxEnv(r2.s);
     const moved = await moveBoxLoginToSidecar({ env, home, client: sidecarClient(env), delayMs: 10,
       networkProxy: () => ({ enabled: true, upstream: `http://127.0.0.1:${r2.fake.port}`, fixedPort: 3128 }) });
@@ -92,7 +94,7 @@ test('the move: the sidecar keeps its own login; a box proxy setting goes along 
     assert.equal(st.upstream, `127.0.0.1:${r2.fake.port}`);
     assert.equal(st.settings.fixedPort, undefined);
     // A box file others can read cannot be moved safely: it is deleted, with a line saying to log in again.
-    saveProxyLogin(LOGIN, { home, env: {} });
+    saveProxyLoginPlain(LOGIN, { home, env: {} });
     chmodSync(proxyLoginFile(home), 0o644);
     const logs = [];
     const bad = await moveBoxLoginToSidecar({ env, home, client: sidecarClient(env), log: (lv, t) => logs.push(t) });
@@ -106,7 +108,7 @@ test('the move: the sidecar keeps its own login; a box proxy setting goes along 
 test('the move waits for a sidecar that is still starting, and keeps the file when it never answers', async () => {
   const home = boxHome();
   try {
-    saveProxyLogin(LOGIN, { home, env: {} });
+    saveProxyLoginPlain(LOGIN, { home, env: {} });
     const env = { WORCA_EGRESS_API_URL: 'http://127.0.0.1:1', WORCA_EGRESS_SECRET: SECRET };
     const logs = [];
     const r = await moveBoxLoginToSidecar({ env, home, client: sidecarClient(env), attempts: 2, delayMs: 10, log: (lv, t) => logs.push(t) });
@@ -121,7 +123,7 @@ test('no sidecar (raw docker compose up): the in-box login keeps working, with o
   try {
     assert.equal(inBoxLoginNotice({ env: { WORCA_CONTAINER: '1' }, home }), null, 'nothing saved, nothing to say');
     assert.equal(inBoxLoginNotice({ env: { WORCA_CONTAINER: '1', HTTPS_PROXY: 'http://ACME%5Cjdoe:pw@proxy.acme.example:8080' }, home }), IN_BOX_LOGIN_TEXT);
-    saveProxyLogin(LOGIN, { home, env: {} });
+    saveProxyLoginPlain(LOGIN, { home, env: {} });
     assert.equal(inBoxLoginNotice({ env: { WORCA_CONTAINER: '1' }, home }), IN_BOX_LOGIN_TEXT);
     assert.equal(inBoxLoginNotice({ env: { WORCA_CONTAINER: '1', WORCA_EGRESS_API_URL: 'http://egress:3129' }, home }), null);
     assert.equal(inBoxLoginNotice({ env: {}, home }), null, 'the native install');

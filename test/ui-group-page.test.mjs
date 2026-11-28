@@ -7,6 +7,7 @@ import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { groupModel } from '../src/shared/run-model.mjs';
 import { buildGroupPage, paintGroupPage, GROUP_TABS, runReceipts, groupPrList, syncRequirementsTab } from '../ui/public/group-page.mjs';
+import * as GroupPage from '../ui/public/group-page.mjs';
 import { ACTION_LABEL } from '../src/shared/run-model.mjs';
 import { RUN_STATE_ROWS, NOW, REPLAY_FRAMES } from './helpers/run-states.mjs';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -18,6 +19,9 @@ import { featureView } from '../src/core/shape/features.mjs';
 import { world, SIXTEEN_RUN_LINKS } from './helpers/shape-sixteen-runs.mjs';
 import { runStatus } from '../src/shared/shape/run-status.mjs';
 import { icon } from '../ui/public/icons.mjs';
+import { groupRow } from '../ui/public/runs-list.mjs';
+import { stopLinesOf } from '../ui/public/shape/stop-list.mjs';
+import { sixteenSlices, ORDER_STATES } from './helpers/shape-order-slices.mjs';
 
 useTempHome(after, 'worca-group-page-s4-');
 const trackDom = useDomRelease(afterEach);
@@ -438,7 +442,8 @@ test('item 8 (D11): while Ship is blocked the status line ends with the reason; 
   const [blocked, cta] = text({ ship: { n: 2, blocked: true, reason } });
   assert.equal(blocked.split(reason).length - 1, 1, blocked);
   assert.match(blocked, /^Ready to ship/);
-  assert.deepEqual(cta, { state: 'create', label: 'Create 2 PRs', disabled: true, quiet: true, title: reason });
+  // Slice 7 (D8): the lock's words travel as `tip`, so no native tooltip opens over the status line.
+  assert.deepEqual(cta, { state: 'create', label: 'Create 2 PRs', disabled: true, quiet: true, tip: reason });
   const [open, cta2] = text({ ship: { n: 2, blocked: false, reason: '' } });
   assert.equal(open, text({})[0]);
   assert.deepEqual(cta2, { state: 'create', label: 'Create 2 PRs' });
@@ -575,7 +580,7 @@ test('s7 T16 feature page: while Ship is blocked the reason still ends the state
 });
 
 // ---- Shaper small runs slice 10 (R-ux-3): "Show order" on the feature page's Runs tab ------------------------------
-const ORDER_HINT = 'A run sits to the right of every run it builds on. A line joins a run that is not done to the runs waiting for it; links that are already met are not drawn.';
+const ORDER_HINT = 'A run sits to the right of every run it builds on. While a run is held back, only the links holding it are drawn; once none is, every link is drawn faint.';
 /** featureView slice rows from `[run, buildsOn]` pairs; `done` run numbers are finished, every other run is planned. */
 const orderRows = (pairs, done = []) => pairs.map(([index, buildsOn]) => SL4(index, done.includes(index) ? 'done' : 'planned',
   { title: `Run ${index}`, buildsOn: [...buildsOn], waitsFor: done.includes(index) ? [] : buildsOn.filter((d) => !done.includes(d)) }));
@@ -768,8 +773,512 @@ test('s10 the toggle bar is right-aligned and holds only the toggle; the body ca
     const hints = p.body().querySelectorAll('p.gpage-order-hint');
     assert.equal(hints.length, 1, state);
     assert.equal(hints[0].textContent, ORDER_HINT);
+    assert.doesNotMatch(hints[0].textContent, /are not drawn/, 'met links are drawn faint once no link is open');
     assert.equal(hints[0].closest('[aria-hidden="true"]'), null, 'only the drawing is hidden from screen readers');
     assert.equal(p.root.textContent.split(ORDER_HINT).length - 1, 1, 'said once on the page');
     t.click();
   }
+});
+
+// ---- R-ux-6: pointing at or keeping a run row marks that run and its drawn links in the open map -------------------
+/** The `base` 16 runs (1 and 11 done) with runs 2 done too: a frame that redraws the map and rebuilds the rows. */
+const orderAfter2 = () => {
+  const { done, states } = ORDER_STATES.base;
+  const { 2: _two, ...rest } = states;
+  return sixteenSlices({ done: [...done, 2], states: rest });
+};
+/** Show order's page with link rows, as app.js paints a marked feature: the rows carry the status read from `order`. */
+function linkedOrderPage() {
+  const p = orderPage();
+  const runs = (slices) => { const r = s4Row(slices); p.paint({ order: slices, status: s4Status(r) }, r); };
+  runs(sixteenSlices('base'));
+  assert.equal(p.root.querySelectorAll('.gpage-runs .run-member[data-run]').length, 16, 'the fixture: 16 link rows');
+  const win = p.doc.defaultView;
+  const fire = (el, Type, name, init = {}) => el.dispatchEvent(new win[Type](name, { bubbles: true, cancelable: true, ...init }));
+  const target = (n) => p.q(`.gpage-runs .run-member[data-run="${n}"] .run-member-num`);
+  const keys = (sel) => [...p.root.querySelectorAll(sel)].map((e) => `${e.dataset.from}→${e.dataset.to}`).sort();
+  return {
+    ...p, runs,
+    over: (n) => fire(target(n), 'PointerEvent', 'pointerover'),
+    out: (n) => fire(target(n), 'PointerEvent', 'pointerout', { relatedTarget: p.doc.body }),
+    click: (n) => fire(target(n), 'MouseEvent', 'click', { button: 0 }),
+    esc: () => fire(p.doc.body, 'KeyboardEvent', 'keydown', { key: 'Escape' }),
+    /** The map's lit runs and links, and how many links are dimmed. */
+    marks: () => ({ runs: [...p.root.querySelectorAll('.rom-run.is-lit')].map((r) => Number(r.dataset.run)),
+      lit: keys('.rom path.rom-link.is-lit'), dim: p.root.querySelectorAll('.rom path.rom-link.is-dim').length }),
+    marked: () => p.root.querySelectorAll('.rom .is-lit, .rom .is-dim').length,
+  };
+}
+/** Run 3's two drawn links in `base`; the other 13 of 15 dim. */
+const ORDER_THREE = { runs: [3], lit: ['3→10', '3→4'], dim: 13 };
+
+test('Show order open: pointing at run 3\'s row lights the map\'s run 3 and its 2 drawn links', () => {
+  const p = linkedOrderPage();
+  p.toggle().click();
+  assertOpen(p, 'opened');
+  assert.equal(p.marked(), 0, 'nothing is marked before pointing');
+  p.over(3);
+  assert.deepEqual(p.marks(), ORDER_THREE);
+  p.out(3);
+  assert.equal(p.marked(), 0, 'leaving the rows clears the map');
+});
+
+test('kept run 3 stays lit after a frame that rebuilds the map', () => {
+  const p = linkedOrderPage();
+  p.toggle().click();
+  p.over(3);
+  p.click(3);
+  p.out(3);
+  assert.deepEqual(p.marks(), ORDER_THREE, 'kept after the pointer left');
+  const before = p.q('.rom');
+  p.runs(orderAfter2());
+  assert.notEqual(p.q('.rom'), before, 'run 2 done: the map is drawn again');
+  const drawn = p.root.querySelectorAll('.rom path.rom-link').length;
+  assert.deepEqual(p.marks(), { ...ORDER_THREE, dim: drawn - 2 });
+  p.esc();
+  assert.equal(p.marked(), 0, 'Esc after keep clears every mark');
+});
+
+test('kept run 3 is lit when Show order opens after the keep', () => {
+  const p = linkedOrderPage();
+  p.click(3);
+  p.out(3);
+  assertClosed(p, 'kept while closed');
+  p.toggle().click();
+  assert.deepEqual(p.marks(), ORDER_THREE, 'opened');
+  p.toggle().click();
+  p.toggle().click();
+  assert.deepEqual(p.marks(), ORDER_THREE, 'hidden and shown again');
+});
+
+test('with Show order closed, pointing changes nothing outside the rows', () => {
+  const p = linkedOrderPage();
+  assertClosed(p, 'closed');
+  const unmarked = () => {
+    const c = p.root.cloneNode(true);
+    for (const n of c.querySelectorAll('.gpage-runs [data-link]')) n.removeAttribute('data-link');
+    return c.outerHTML;
+  };
+  const before = p.root.outerHTML;
+  p.over(3);
+  assert.ok(p.root.querySelector('.gpage-runs [data-link]'), 'the rows are marked');
+  assert.equal(unmarked(), before);
+});
+
+// ── Shaper small runs slice 11 (R-ux-2): the footer's Resume is named by the host ────────────────────────────────
+test('s11: deps.resumeLabel names the footer Resume; without it, or when it is empty, it reads "Resume"', () => {
+  const doc = trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
+  const root = buildGroupPage(doc);
+  // Run 2 paused before a working run 3: the group's current member is the paused one.
+  const view = { row: liveRow([done, { status: 'paused' }, { status: 'running' }]), project: '', tab: 'runs' };
+  const resumes = () => visibleBar(root).filter((b) => b.dataset.modelAction === 'resume').map((b) => b.textContent);
+  paintGroupPage(root, view, { ...NOOP, resumeLabel: () => 'Resume after run 6' });
+  assert.deepEqual(resumes(), ['Resume after run 6']);
+  paintGroupPage(root, view, NOOP);
+  assert.deepEqual(resumes(), ['Resume'], 'no dep');
+  paintGroupPage(root, view, { ...NOOP, resumeLabel: () => 'Resume after run 6' });
+  paintGroupPage(root, view, { ...NOOP, resumeLabel: () => '' });
+  assert.deepEqual(resumes(), ['Resume'], 'an empty label');
+});
+
+// ── Feature page slice 6 (R-ux-3): the tabs Runs · Requirements · Decisions · Cost · Log, and Mark and ship ──────
+const S6_TABS = ['runs', 'requirements', 'decisions', 'cost', 'logs'];
+const s6Doc = () => trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
+const s6Root = () => { const doc = s6Doc(); const root = buildGroupPage(doc); doc.body.append(root); return { doc, root }; };
+const s6TabIds = (root) => [...root.querySelectorAll('.gpage-tabs .rd-tab')].map((t) => t.dataset.tab);
+const s6Shown = (root) => [...root.querySelectorAll('.gpage-tabs .rd-tab')].filter((t) => !t.hidden).map((t) => t.textContent);
+const s6Panel = (root, id) => root.querySelector(`.gpage-panel[data-tab="${id}"]`);
+const s6Selected = (root) => root.querySelector('.rd-tab[aria-selected="true"]').dataset.tab;
+/** The skeleton's tabs and panels, as buildGroupPage draws them. */
+const s6Shape = (root) => ({
+  tabs: [...root.querySelectorAll('.gpage-tabs .rd-tab')].map((t) => [t.dataset.tab, t.textContent, t.className, t.getAttribute('type'), t.getAttribute('role')]),
+  panels: [...root.querySelectorAll(':scope > .gpage-panel')].map((p) => [p.dataset.tab, p.className, p.getAttribute('role'), [...p.children].map((c) => c.className)]),
+});
+const S6_COST = { rows: [{ key: 'p1', num: 1, label: 'Slice 1', usd: 11.5 }], totalLabel: 'Total', totalUsd: 11.5 };
+const s6View = (more = {}) => ({ row: row(), project: 'p', tab: 'runs', overview: true, logs: true, requirements: true, expert: true, cost: S6_COST, markOpen: false, ...more });
+const s6Deps = (calls = {}) => ({ ...NOOP, mountRequirements: () => null,
+  mountOverview: (...a) => { (calls.overview ||= []).push(a); }, mountStepLog: (...a) => { (calls.steps ||= []).push(a); },
+  onMarkShip: () => { calls.mark = (calls.mark || 0) + 1; } });
+
+test('syncFeatureLayout: the tabs read Runs, Requirements, Decisions, Cost, Log, and the Overview\'s node is the first child of Requirements', () => {
+  const { root } = s6Root();
+  const overview = root.querySelector('.gpage-overview');
+  GroupPage.syncFeatureLayout(root, true);
+  GroupPage.syncFeatureLayout(root, true);
+  assert.deepEqual(s6TabIds(root), S6_TABS, 'once each');
+  assert.deepEqual([...root.querySelectorAll('.gpage-tabs .rd-tab')].map((t) => t.textContent), ['Runs', 'Requirements', 'Decisions', 'Cost', 'Log']);
+  const cost = root.querySelector('.rd-tab[data-tab="cost"]');
+  assert.ok(cost.matches('button.rd-tab.tab[type="button"][role="tab"]'));
+  assert.ok(s6Panel(root, 'cost').matches('div.gpage-panel[role="tabpanel"]'));
+  assert.equal(s6Panel(root, 'cost').previousElementSibling, s6Panel(root, 'decisions'));
+  assert.equal(s6Panel(root, 'overview'), null, 'removed, not hidden');
+  assert.equal(s6Panel(root, 'requirements').firstElementChild, overview, 'the same node, moved');
+  assert.ok(s6Panel(root, 'requirements').querySelector(':scope > .gpage-requirements'));
+  assert.equal(root.querySelectorAll('.gpage-overview').length, 1);
+  assert.equal(root.querySelectorAll('.gpage-steplog').length, 1);
+  assert.ok(s6Panel(root, 'logs').querySelector('.gpage-steplog'));
+});
+
+test('R-arch-8: the layout turned on then off leaves the tabs, panels and Overview node of a fresh page', () => {
+  const { doc, root } = s6Root();
+  const overview = root.querySelector('.gpage-overview');
+  GroupPage.syncFeatureLayout(root, true);
+  root.querySelector('ul.gpage-logs').hidden = true;
+  GroupPage.syncFeatureLayout(root, false);
+  GroupPage.syncFeatureLayout(root, false);
+  assert.deepEqual(s6TabIds(root), ['runs', 'overview', 'decisions', 'logs']);
+  assert.deepEqual(s6Shape(root), s6Shape(buildGroupPage(doc)));
+  assert.equal(s6Panel(root, 'overview').firstElementChild, overview, 'the same node, back under Overview');
+  assert.equal(root.querySelector('ul.gpage-logs').hidden, false);
+  assert.equal(root.querySelector('.gpage-steplog'), null);
+});
+
+test('a marked feature\'s page offers the five tabs; Requirements mounts the Overview view Ship first', () => {
+  const { root } = s6Root();
+  const overview = root.querySelector('.gpage-overview');
+  const calls = {};
+  paintGroupPage(root, s6View({ tab: 'requirements' }), s6Deps(calls));
+  assert.deepEqual(s6Shown(root), ['Runs', 'Requirements', 'Decisions', 'Cost', 'Log']);
+  assert.equal(s6Selected(root), 'requirements');
+  assert.equal(calls.overview.length, 1);
+  assert.equal(calls.overview[0][0], overview);
+  assert.deepEqual(calls.overview[0][1], { shipFirst: true });
+  assert.equal(s6Panel(root, 'requirements').firstElementChild, overview);
+});
+
+test('in the layout the old overview address selects Requirements; without it Overview stays', () => {
+  const { root } = s6Root();
+  paintGroupPage(root, s6View({ tab: 'overview' }), s6Deps());
+  assert.equal(s6Selected(root), 'requirements');
+  assert.equal(s6Panel(root, 'requirements').hidden, false);
+  paintGroupPage(root, s6View({ tab: 'overview', requirements: false }), s6Deps());
+  assert.equal(s6Selected(root), 'overview', 'a repaint with the layout off restores Overview');
+  assert.deepEqual(s6Shown(root), ['Runs', 'Overview', 'Decisions', 'Logs']);
+  assert.equal(root.querySelector('.rd-tab[data-tab="cost"]'), null);
+});
+
+test('the Cost tab paints the cost table in its panel', () => {
+  const { root } = s6Root();
+  paintGroupPage(root, s6View({ tab: 'cost' }), s6Deps());
+  assert.equal(s6Selected(root), 'cost');
+  assert.equal(s6Panel(root, 'cost').hidden, false);
+  assert.equal(root.querySelectorAll('.gpage-cost').length, 1);
+  assert.match(s6Panel(root, 'cost').querySelector('.gpage-cost tfoot').textContent, /Total\s*\$11\.50/);
+  paintGroupPage(root, s6View({ tab: 'cost', cost: { ...S6_COST, totalUsd: 12 } }), s6Deps());
+  assert.match(s6Panel(root, 'cost').querySelector('.gpage-cost tfoot').textContent, /\$12\.00/);
+  assert.equal(root.querySelectorAll('.gpage-cost').length, 1, 'a repaint replaces the table');
+});
+
+test('Log: the Open logs rows then the step log; below Expert the tab stays and only the Open logs rows hide', () => {
+  const { doc, root } = s6Root();
+  for (const expert of [false, true]) {
+    const calls = {};
+    const r = row();
+    paintGroupPage(root, s6View({ row: r, tab: 'logs', expert }), s6Deps(calls));
+    assert.equal(s6Selected(root), 'logs', `expert ${expert}`);
+    assert.equal(root.querySelector('.rd-tab[data-tab="logs"]').textContent, 'Log');
+    assert.equal(root.querySelector('.rd-tab[data-tab="logs"]').hidden, false);
+    const list = root.querySelector('ul.gpage-logs');
+    assert.equal(list.hidden, !expert, `expert ${expert}`);
+    assert.equal(list.querySelectorAll('li.gpage-log').length, 4);
+    assert.equal(calls.steps.length, 1);
+    const [host, passed] = calls.steps[0];
+    assert.equal(passed, r);
+    assert.ok(host.closest('.gpage-steplog'), 'the step log part');
+    assert.equal(host.closest('.gpage-panel'), s6Panel(root, 'logs'));
+    assert.ok(list.compareDocumentPosition(host) & doc.defaultView.Node.DOCUMENT_POSITION_FOLLOWING, 'the step log follows the rows');
+  }
+});
+
+test('the status line does not repeat the ship reason on the tab that shows the Ship card (Requirements in the layout)', () => {
+  const reason = 'Waiting for Compliance to confirm R-comp-4';
+  const model = groupModel({ kind: 'feature', title: 'T', members: [done, done] }, { now: NOW });
+  const ready = { ...row(), planning: null, model, members: model.members.map((m, i) => ({ position: i + 1, title: `S${i + 1}`, href: '#x', model: m })) };
+  const { root } = s6Root();
+  const status = (tab) => {
+    paintGroupPage(root, s6View({ row: ready, tab, ship: { n: 2, blocked: true, reason } }), s6Deps());
+    return root.querySelector('.gpage-card .run-status').textContent;
+  };
+  assert.ok(status('runs').includes(reason));
+  assert.equal(status('requirements').includes(reason), false);
+  assert.equal(status('overview').includes(reason), false, 'the old address shows the Ship card too');
+});
+
+test('Mark and ship: a primary button before the bar\'s actions while a mark is open; one node across repaints; removed when none is', () => {
+  const { root } = s6Root();
+  const calls = {};
+  const paint = (markOpen) => paintGroupPage(root, s6View({ markOpen }), s6Deps(calls));
+  paint(false);
+  assert.equal(root.querySelector('.gpage-markship'), null);
+  paint(true);
+  const b = root.querySelector('.gpage-bar > .gpage-markship');
+  assert.ok(b, 'in the page bar');
+  assert.ok(b.matches('button.btn.btn-primary[type="button"]'));
+  assert.equal(b.textContent, 'Mark and ship');
+  assert.equal(b.nextElementSibling, root.querySelector('.gpage-bar > .gpage-actions'));
+  for (const kept of ['.gpage-back', '.rd-crumbs', '.gpage-stop', '.gpage-more']) assert.ok(root.querySelector(`.gpage-bar > ${kept}`), `${kept} stays`);
+  b.focus();
+  paint(true);
+  assert.equal(root.querySelector('.gpage-markship'), b, 'the same node');
+  assert.equal(root.querySelectorAll('.gpage-markship').length, 1);
+  assert.equal(b.ownerDocument.activeElement, b);
+  b.click();
+  assert.equal(calls.mark, 1);
+  paint(false);
+  assert.equal(root.querySelector('.gpage-markship'), null, 'removed, not hidden');
+});
+
+test('syncMarkShip: removing the focused button moves focus to the selected tab; an unfocused one takes no focus', () => {
+  const { doc, root } = s6Root();
+  paintGroupPage(root, s6View({ tab: 'decisions' }), s6Deps());
+  GroupPage.syncMarkShip(root, true);
+  GroupPage.syncMarkShip(root, true);
+  assert.equal(root.querySelectorAll('.gpage-markship').length, 1);
+  root.querySelector('.gpage-markship').focus();
+  GroupPage.syncMarkShip(root, false);
+  assert.equal(root.querySelector('.gpage-markship'), null);
+  assert.equal(doc.activeElement, root.querySelector('.rd-tab[data-tab="decisions"]'));
+  GroupPage.syncMarkShip(root, true);
+  root.querySelector('.gpage-more').focus();
+  GroupPage.syncMarkShip(root, false);
+  assert.equal(doc.activeElement, root.querySelector('.gpage-more'));
+});
+
+test('R-arch-7: a page never in the layout gets no Cost tab, step log or Mark and ship, and its Overview stays put', () => {
+  const { root } = s6Root();
+  const overview = root.querySelector('.gpage-overview');
+  const calls = {};
+  for (const tab of ['runs', 'overview', 'decisions', 'logs', 'cost']) {
+    paintGroupPage(root, s6View({ tab, requirements: false, markOpen: true }), s6Deps(calls));
+    assert.equal(root.querySelector('.rd-tab[data-tab="cost"], .gpage-cost, .gpage-steplog, .gpage-markship'), null, tab);
+    assert.deepEqual(s6TabIds(root), ['runs', 'overview', 'decisions', 'logs'], tab);
+    assert.equal(s6Panel(root, 'overview').firstElementChild, overview, tab);
+    assert.equal(root.querySelector('ul.gpage-logs').hidden, false, tab);
+  }
+  assert.equal(calls.steps, undefined);
+  assert.equal(calls.overview.length, 1);
+  assert.equal(calls.overview[0][1]?.shipFirst ?? false, false);
+});
+
+// ── Slice 7 (D7): the confirmation hold's reason links to the Ship card, only in the marked feature's layout ─────
+test('s7: the layout page links a confirmation hold to the Ship card, and the hold wins over the state line', () => {
+  const hold = 'Needs your confirmation: R-ux-2';
+  const held = (more = {}) => {
+    const model = groupModel({ kind: 'feature', title: 'Run tags', members: [done, done], hold }, { now: NOW });
+    return { ...row(), planning: null, model, members: model.members.map((m, i) => ({ position: i + 1, title: `S${i + 1}`, href: '#x', model: m })), ...more };
+  };
+  const { root } = s6Root();
+  paintGroupPage(root, s6View({ row: held(), stateLine: 'Run 2 is being built' }), s6Deps());
+  const status = root.querySelector('.gpage-card .run-status');
+  const link = status.querySelector('a.run-status-link');
+  assert.ok(link, status.outerHTML);
+  assert.equal(link.getAttribute('href'), '#feature/feat_1/requirements/ship');
+  assert.equal(link.textContent, hold);
+  assert.doesNotMatch(status.textContent, /Run 2 is being built/);
+  const dev = s6Root().root;
+  paintGroupPage(dev, { row: held(), project: 'p', tab: 'runs' }, NOOP);
+  assert.equal(dev.querySelector('a.run-status-link'), null, 'no layout: no link');
+  const unowned = s6Root().root;
+  const model = groupModel({ kind: 'feature', title: 'T', members: [done, done], hold: 'R-ops-1 is owned by no run and confirmed by no person' }, { now: NOW });
+  paintGroupPage(unowned, s6View({ row: { ...held(), model } }), s6Deps());
+  assert.equal(unowned.querySelector('a.run-status-link'), null, 'another hold is plain text');
+});
+
+// ── Slice 11 (R-ux-4): the page's header line takes the Verifier's state; the Runs tab lists no round ────────────────
+test('s11 group page: the header line of a failed-round feature reads the Verifier line', () => {
+  const doc = trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
+  const root = buildGroupPage(doc);
+  const built = groupRow({ id: 'feat_1', groupKind: 'feature', title: 'Run tags', smallRuns: true, cost: { usd: 3, byPipeline: { p1: 2, v1: 1 } },
+    members: [{ position: 1, title: 'Slice 1', pipelineId: 'p1', kind: 'hist', href: '#history/k/p1', run: { status: 'done' } }],
+    checks: [{ kind: 'check', round: 2, state: 'failed', gaps: 1, pipelineId: 'v1', runId: '', href: '#history/k/v1', cost: 1 }] }, { now: NOW });
+  // A marked feature's page names its members in the card's short word (app.js gives `shortState`), as in the app.
+  paintGroupPage(root, { row: built, project: 'acme', tab: 'runs', overview: true, requirements: true, shortState: () => 'done' }, NOOP);
+  const status = root.querySelector('.gpage-card .run-status');
+  assert.equal(status.querySelector('.run-status-detail').textContent, 'Verifier round 2 failed · 1 gap');
+  assert.equal(status.dataset.state, 'failed');
+  assert.doesNotMatch(root.textContent, /Ready to ship/);
+  assert.equal(root.querySelectorAll('.gpage-runs .run-member').length, 1, 'rounds stay absent from the Runs tab');
+});
+
+// ── Slice 12 (R-ux-5): the feature page's stop list, first in the Runs panel; one step card, for the opened stop ─────
+const paused = RUN_STATE_ROWS.find((r) => r.state === 'paused').run;
+/** A marked feature's group: run 1 done, runs 2, 3 and 4 wait for an answer, run 5 paused. The current member is run 2.
+ *  `two` swaps run 2's raw run (it moves on once answered). */
+function s12Row(two = asking) {
+  const model = groupModel({ kind: 'feature', title: 'Run tags', members: [done, two, asking, asking, paused] }, { now: NOW });
+  return { kind: 'chain', groupKind: 'feature', groupId: 'feat_1', title: 'Run tags', model, costUsd: 4.2, planning: null,
+    members: model.members.map((m, i) => ({ position: i + 1, title: `Slice ${i + 1}`, pipelineId: `p${i + 1}`, href: `#running/r${i + 1}`, runId: `r${i + 1}`, model: m, cost: 1 })) };
+}
+const s12Ask = (index) => ({ index, runId: `r${index}`, pipelineId: `p${index}`, id: `q${index}`, kind: 'gate', reason: 'check', failed: false, holdsUp: [] });
+const s12Lines = (runs) => stopLinesOf({ asks: runs.map(s12Ask), slices: runs.map((i) => SL4(i, 'questions')) });
+/** The page in a document, with recording stop deps and a question slot that behaves as app.js's: shown for a member,
+ *  hidden for null. */
+function s12Page({ focusOut = null } = {}) {
+  const { doc, root } = s6Root();
+  const log = { painted: [], bound: [], released: [], disposed: [], mounted: [] };
+  const stopDeps = {
+    paintQuestion: (ref, host) => {
+      const panel = host.querySelector('.qpanel');
+      log.painted.push(ref.pipelineId);
+      if (!panel.querySelector('input')) { panel.append(doc.createElement('input')); panel.classList.remove('hidden'); }
+      return null;
+    },
+    releaseQuestion: (host) => log.released.push(host),
+    bindQuestion: (host, line) => { log.bound.push(line.index); return () => log.disposed.push(line.index); },
+    resume: async () => ({ ok: true }),
+    ...(focusOut ? { focusOut: () => focusOut(root) } : {}),
+  };
+  const mountQuestion = (slot, mb) => {
+    log.mounted.push(mb ? mb.position : null);
+    slot.hidden = !mb;
+    if (mb) slot.innerHTML = '<div class="qpanel"><button type="button" class="btn btn-primary" data-qpanel-submit>Send</button></div>';
+    else slot.replaceChildren();
+  };
+  const paint = (view = {}) => paintGroupPage(root, s6View({ row: s12Row(), ...view }), { ...s6Deps(), mountQuestion, stopDeps });
+  const q = (sel) => root.querySelector(sel);
+  const panel = () => s6Panel(root, 'runs');
+  const list = () => q('ol.chat-rc-stops');
+  const line = (run) => list()?.querySelector(`li[data-run="${run}"]`);
+  const press = (run) => { const b = line(run)?.querySelector('button.chat-rc-stop-line'); assert.ok(b, `run ${run}'s line is a button`); b.click(); };
+  const kids = () => [...panel().children].map((c) => c.classList[0]);
+  return { doc, root, log, paint, q, panel, list, line, press, kids, cards: () => [...root.querySelectorAll('.chat-rc-stop-q')] };
+}
+const S12_HEADINGS = 'h1, h2, h3, h4, h5, h6, [role="heading"]';
+
+test('S12 feature layout with view.stops: the Runs panel\'s first child is ol.chat-rc-stops with 3 lines and 0 step cards; no heading added', () => {
+  const today = s12Page();
+  today.paint();
+  const p = s12Page();
+  p.paint({ stops: s12Lines([2, 3, 4]) });
+  const list = p.panel().firstElementChild;
+  assert.ok(list.matches('ol.chat-rc-stops'), `the first child is ${list.tagName}.${list.className}`);
+  assert.equal(list.getAttribute('aria-label'), 'Open stops');
+  assert.equal(list.hidden, false);
+  assert.deepEqual([...list.querySelectorAll(':scope > li.chat-rc-stop')].map((li) => li.dataset.run), ['2', '3', '4']);
+  assert.deepEqual([...list.querySelectorAll('.chat-rc-stop-text')].map((x) => x.textContent),
+    ['Run 2 · plan approval', 'Run 3 · plan approval', 'Run 4 · plan approval']);
+  assert.equal(p.cards().length, 0);
+  assert.deepEqual([p.log.painted, p.log.bound], [[], []]);
+  assert.equal(list.querySelector(S12_HEADINGS), null);
+  assert.equal(p.root.querySelectorAll(S12_HEADINGS).length, today.root.querySelectorAll(S12_HEADINGS).length, 'no new heading on the page');
+  p.paint({ stops: s12Lines([2, 3, 4]) });
+  assert.equal(p.root.querySelectorAll('ol.chat-rc-stops').length, 1, 'one list');
+  assert.equal(p.panel().firstElementChild, list, 'the same node');
+});
+
+test('S12: opening line 2 mounts 1 step card and .gpage-question stays hidden when the current member is listed', () => {
+  const p = s12Page();
+  p.paint({ stops: s12Lines([2, 3, 4]) });
+  assert.deepEqual(p.log.mounted, [null], 'the listed current member draws no question slot');
+  assert.equal(p.q('.gpage-question').hidden, true);
+  p.press(3);                                       // the second line
+  assert.equal(p.cards().length, 1);
+  assert.equal(p.cards()[0].closest('li.chat-rc-stop'), p.line(3));
+  assert.deepEqual(p.log.bound, [3]);
+  const input = p.cards()[0].querySelector('input');
+  input.value = 'half typed';
+  input.focus();
+  p.paint({ stops: s12Lines([2, 3, 4]) });          // a run frame repaints the page
+  assert.equal(p.cards().length, 1);
+  assert.equal(p.line(3).querySelector('input'), input);
+  assert.equal(input.value, 'half typed');
+  assert.equal(p.doc.activeElement, input);
+  assert.deepEqual(p.log.bound, [3]);
+  assert.equal(p.q('.gpage-question').hidden, true);
+  assert.deepEqual(p.log.mounted, [null, null]);
+});
+
+test('S12 R-arch-10: no view.stops (flag off, unmarked), none listed, or no feature layout: no .chat-rc-stops node and the question slot is as today', () => {
+  for (const view of [{}, { stops: [] }, { requirements: false, stops: s12Lines([2, 3, 4]) }]) {
+    const p = s12Page();
+    p.paint(view);
+    const label = JSON.stringify({ requirements: view.requirements, stops: view.stops?.length });
+    assert.equal(p.q('.chat-rc-stops'), null, label);
+    assert.deepEqual(p.log.mounted, [2], `${label}: the current member keeps its question`);
+    assert.equal(p.q('.gpage-question').hidden, false, label);
+    assert.deepEqual(visibleBar(p.root).map((b) => b.dataset.modelAction), ['answer'], label);
+  }
+});
+
+test('S12: when the last stop leaves, the list stays hidden and empty, the open card is released, and the question slot is as today', () => {
+  const p = s12Page();
+  p.paint({ stops: s12Lines([2, 3, 4]) });
+  p.press(3);
+  p.paint({ stops: [] });
+  assert.ok(p.list(), 'the list node');
+  assert.equal(p.list().hidden, true);
+  assert.equal(p.list().children.length, 0);
+  assert.deepEqual(p.log.disposed, [3]);
+  assert.equal(p.log.released.length, 1);
+  assert.equal(p.log.mounted.at(-1), 2);
+  assert.deepEqual(visibleBar(p.root).map((b) => b.dataset.modelAction), ['answer']);
+});
+
+test('S12: with view.order offered, the Runs panel reads ol.chat-rc-stops, .gpage-order, .gpage-runs, on the first paint and after Show order is removed and rebuilt', () => {
+  const p = s12Page();
+  const stops = s12Lines([2, 3, 4]);
+  const order = ['chat-rc-stops', 'gpage-order', 'gpage-runs'];
+  p.paint({ stops, order: orderRows(SIXTEEN) });
+  assert.deepEqual(p.kids().slice(0, 3), order, 'first paint');
+  p.paint({ stops, order: orderRows(SIX_CHAIN) });  // not offered: removed
+  assert.deepEqual(p.kids().slice(0, 2), ['chat-rc-stops', 'gpage-runs']);
+  assert.equal(p.q('.gpage-order'), null);
+  p.paint({ stops, order: orderRows(SIXTEEN) });    // built again: it prepends itself, so the list is put back on top
+  assert.deepEqual(p.kids().slice(0, 3), order, 'after a rebuild');
+});
+
+test('S12: lines listed, all closed: the head shows no Answer and .gpage-question stays hidden, on the Runs tab and on the Cost tab', () => {
+  for (const tab of ['runs', 'cost']) {
+    const control = s12Page();
+    control.paint({ tab });
+    assert.deepEqual(visibleBar(control.root).map((b) => b.dataset.modelAction), ['answer'], `${tab}: the fixture offers Answer with no list`);
+    const p = s12Page();
+    p.paint({ tab, stops: s12Lines([2, 3, 4]) });
+    assert.equal(s6Selected(p.root), tab);
+    assert.deepEqual(visibleBar(p.root).map((b) => b.dataset.modelAction), [], tab);
+    assert.equal(p.q('.gpage-question').hidden, true, tab);
+    assert.equal(p.cards().length, 0, tab);
+    assert.equal(s6Panel(p.root, 'cost').querySelector('.chat-rc-stops'), null, 'the Cost tab shows no list');
+    assert.equal(p.root.querySelectorAll('.chat-rc-stops').length, 1, 'the one list, in the Runs panel');
+    assert.ok(s6Panel(p.root, 'runs').querySelector(':scope > .chat-rc-stops'), tab);
+  }
+});
+
+test('S12: the last listed line leaves with focus inside: the focus lands in .gpage-runs once the page has painted', () => {
+  let calls = 0;
+  const p = s12Page({ focusOut: (root) => { calls += 1; root.querySelector('.gpage-runs button, .gpage-runs a[href]')?.focus(); } });
+  p.paint({ stops: s12Lines([2]) });
+  p.press(2);
+  p.cards()[0].querySelector('input').focus();
+  // Run 2 is answered and moves on: its row is repainted in the same paint that drops its line.
+  p.paint({ stops: [], row: s12Row({ status: 'running' }) });
+  assert.equal(calls, 1);
+  const runs = p.q('.gpage-runs');
+  assert.ok(runs.contains(p.doc.activeElement), `focus is on ${p.doc.activeElement.tagName}.${p.doc.activeElement.className}`);
+});
+
+// ── Slice 18 (D10): the page head of a feature whose runs all have open PRs says the failed round or the confirmation ─────
+test('s18 group page: with every run in an open PR the head reads the failed round, or the confirmation, not In review', () => {
+  const pr = { url: 'https://github.com/o/r/pull/9', number: 9, state: 'OPEN', mergeable: 'MERGEABLE' };
+  const head = (more) => {
+    const built = groupRow({ id: 'feat_1', groupKind: 'feature', title: 'Run tags', smallRuns: true,
+      cost: { usd: 4.5, byPipeline: { p1: 2, p2: 2, v1: 0.5 } },
+      members: [1, 2].map((i) => ({ position: i, title: `Slice ${i}`, pipelineId: `p${i}`, kind: 'hist', href: `#history/k/p${i}`,
+        run: { status: 'done', pr } })), ...more }, { now: NOW });
+    const doc = trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
+    const root = buildGroupPage(doc);
+    paintGroupPage(root, { row: built, project: 'acme', tab: 'runs', overview: true, requirements: true, shortState: () => 'done' }, NOOP);
+    return root.querySelector('.gpage-card .run-status');
+  };
+  assert.match(head({}).textContent, /In review/, 'the control: with neither it reads In review');
+  const failed = head({ checks: [{ kind: 'check', round: 2, state: 'failed', gaps: 1, pipelineId: 'v1', runId: '', href: '#history/k/v1', cost: 0.5 }] });
+  assert.equal(failed.querySelector('.run-status-detail')?.textContent, 'Verifier round 2 failed · 1 gap', failed.textContent);
+  assert.equal(failed.dataset.state, 'failed');
+  assert.doesNotMatch(failed.textContent, /In review/);
+  const hold = 'Needs your confirmation: R-ux-2';
+  const held = head({ hold });
+  const link = held.querySelector('a.run-status-link');
+  assert.equal(link?.textContent, hold, held.textContent);
+  assert.equal(link.getAttribute('href'), '#feature/feat_1/requirements/ship');
+  assert.doesNotMatch(held.textContent, /In review/);
 });

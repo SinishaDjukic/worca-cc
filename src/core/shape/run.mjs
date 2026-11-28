@@ -43,12 +43,19 @@ const count = (v, min) => Number.isInteger(v) && v >= min;
 /** Small runs C5 (D15): shape.verify of a Verifier ticket (src/core/shape/verifier.mjs startVerifyCheck); null when malformed. */
 function normalizeVerifyRef(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-  const { featureId, round, fixCycles, extra = 0, owned, head } = raw;
+  const { featureId, round, fixCycles, extra = 0, owned, head, texts, shipped } = raw;
   if (typeof featureId !== 'string' || !featureId || !count(round, 1) || !count(fixCycles, 0) || !count(extra, 0)) return null;
   if (!Array.isArray(owned) || !owned.every((id) => typeof id === 'string' && id)) return null;
   if (!head || typeof head !== 'object' || typeof head.pipelineId !== 'string' || !head.pipelineId
     || !(head.index === null || count(head.index, 1))) return null;
-  return { featureId, round, fixCycles, extra, owned: [...owned], head: { index: head.index, pipelineId: head.pipelineId } };
+  // Slice 8 (D11): the texts the gate offers for a change, and the gaps shipped earlier in the series. Kept only when given.
+  if (texts !== undefined && (!texts || typeof texts !== 'object' || Array.isArray(texts)
+    || !Object.values(texts).every((t) => typeof t === 'string'))) return null;
+  if (shipped !== undefined && (!Array.isArray(shipped)
+    || !shipped.every((g) => g && typeof g.id === 'string' && g.id && typeof g.reason === 'string'))) return null;
+  return { featureId, round, fixCycles, extra, owned: [...owned], head: { index: head.index, pipelineId: head.pipelineId },
+    ...(texts !== undefined ? { texts: { ...texts } } : {}),
+    ...(shipped !== undefined ? { shipped: shipped.map(({ id, reason }) => ({ id, reason })) } : {}) };
 }
 
 export const isShapeWorkflowId = (id) => id === SHAPE_WORKFLOW_ID || id === SHAPE_UX_WORKFLOW_ID || SHAPE_REQ_WORKFLOW_IDS.includes(id)

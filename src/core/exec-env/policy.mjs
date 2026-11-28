@@ -8,6 +8,11 @@ import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { stripHostCredentials, isBackendSecret } from '../host-credentials.mjs';
 import { mcpSecretFindings } from '../mcp-secrets.mjs';
+import { VAULT_REF_PREFIX } from '../secrets/refs.mjs';
+
+/** A secret vault reference (src/core/secrets/refs.mjs) anywhere in a string. The vault and its key live on the host
+ *  only: a sandbox never gets a reference (it could not resolve one) nor a value read through one by this path. */
+const hasVaultRef = (v) => typeof v === 'string' && v.includes(VAULT_REF_PREFIX);
 import { REMOTE_ENGINES, remoteEnginesText, remoteEngineRefusal } from '../../shared/exec-env.mjs';
 import { engineLabel } from '../../shared/engine-switch.mjs';
 
@@ -101,6 +106,7 @@ export function sandboxEnv(env, { keep = [], engine = 'claude' } = {}) {
   const out = {};
   for (const [k, v] of Object.entries(env || {})) {
     if (typeof v !== 'string' || HOST_ONLY.has(k) || spec.hostOnly.includes(k) || HOST_ONLY_RE.test(k) || never(k) || relayOwned(k)) continue;
+    if (hasVaultRef(v)) continue;   // the secret vault is the host's: a reference never enters a sandbox, even when kept
     if (allowed(k)) out[k] = v;
   }
   return stripHostCredentials(out);
@@ -149,6 +155,7 @@ export function sandboxMcpConfig(config) {
     let host; try { host = new URL(s.url).hostname; } catch { dropped.push({ name, reason: 'has an invalid url' }); continue; }
     if (isLoopbackHost(host)) { dropped.push({ name, reason: `points at ${host}, which inside the sandbox is the sandbox itself` }); continue; }
     if (GITHUB_TOKEN_RE.test(JSON.stringify(s))) { dropped.push({ name, reason: 'carries a GitHub token' }); continue; }
+    if (hasVaultRef(JSON.stringify(s))) { dropped.push({ name, reason: 'carries a secret vault reference, which only this machine can read' }); continue; }
     const found = mcpSecretFindings(s);
     if (found.length) { dropped.push({ name, reason: `carries a secret (${found.join(', ')})` }); continue; }
     kept[name] = s;

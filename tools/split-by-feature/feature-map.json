@@ -4,7 +4,6 @@
     "history": "History has no docs page yet",
     "settings": "Settings has no docs page yet",
     "new-run": "the New run page has no docs page yet",
-    "projects": "the Projects page has no docs page yet",
     "tool-panel": "the tool panel has no docs page of its own yet (docs/terminal.md covers its Terminal tab)"
   },
   "naming": {
@@ -522,6 +521,15 @@
         ],
         "feature": "settings",
         "name": "about-update"
+      },
+      {
+        "section": "^Browser extension pairings",
+        "selectors": [
+          "#secret-vault-card",
+          ".sv-field-note"
+        ],
+        "feature": "settings",
+        "name": "secret-vault"
       },
       {
         "section": "^Model plugins",
@@ -1190,7 +1198,7 @@
     },
     {
       "name": "projects",
-      "doc": null,
+      "doc": "docs/projects.md",
       "routes": [
         "/api/projects"
       ],

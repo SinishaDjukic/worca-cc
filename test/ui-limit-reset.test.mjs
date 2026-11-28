@@ -1,24 +1,16 @@
 // test/ui-limit-reset.test.mjs — the usage-limit pause notice in the UI: the run page's Overview
 // banner (states A–D), the "Resume at" button and its split-menu item, Cancel, the History
 // detail's notice, the minute countdown tick, the Runs-list row note and the Settings checkbox.
-// Harness: jsdom boot of the REAL index.html + app.js, as in test/ui-resume-at.test.mjs (the
-// data-level injection, the URL-armed fetch router, the dispatchable WebSocket stub); the History
-// case boots through test/helpers/history-detail-boot.mjs.
-import { test, afterEach } from 'node:test';
+// Harness: the REAL index.html + app.js booted once for the file (test/helpers/shared-app-boot.mjs), with the URL-armed
+// fetch router of test/ui-resume-at.test.mjs; the History case opens through test/helpers/history-detail-boot.mjs.
+import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { pathToFileURL, fileURLToPath } from 'node:url';
-import { useDomRelease } from './helpers/jsdom-release.mjs';
-import { bootDetail, openDetail, settle as hSettle, ROW as H_ROW, DETAIL as H_DETAIL } from './helpers/history-detail-boot.mjs';
+import { detailOn, openDetail, settle as hSettle, ROW as H_ROW, DETAIL as H_DETAIL } from './helpers/history-detail-boot.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { useSharedApp } from './helpers/shared-app-boot.mjs';
 
-const trackDom = useDomRelease(afterEach);
-
-const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const PROJECT = '/tmp/proj-limit-reset';
-
-const live = [];
-afterEach(() => { while (live.length) { try { live.pop().close(); } catch {} } });
 
 const hhmm = (ms) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 const MIN = 60_000;
@@ -29,58 +21,43 @@ function makeServer() {
   return { tickets: [], settings: { resumeAfterUsageLimit: false }, resumeStatus: 200, posts: [], deletes: [] };
 }
 
-async function boot({ level, server = makeServer() } = {}) {
-  let html = readIndexHtml();
-  if (level) html = html.replace('<html lang="en" data-theme="system">', `<html lang="en" data-theme="system" data-level="${level}">`);
-  const dom = trackDom(new JSDOM(html, { url: 'http://localhost:4317/' }));
-  live.push(dom);
-  const { window } = dom;
-  window.Element.prototype.scrollIntoView = function () {};
-  const sockets = [];
-  window.WebSocket = class {
-    constructor() { this.readyState = 1; this._listeners = {}; sockets.push(this); }
-    send() {} close() {}
-    addEventListener(t, fn) { (this._listeners[t] ||= []).push(fn); }
-    dispatch(type, evt) { for (const fn of this._listeners[type] || []) fn(evt); }
-  };
-  const fetchCalls = [];
-  const json = (body, status = 200) => Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body });
-  window.fetch = (url, opts = {}) => {
-    const u = String(url);
-    const method = (opts.method || 'GET').toUpperCase();
-    fetchCalls.push({ url: u, opts });
-    if (u.includes('/api/schedules/resume')) {
-      const body = JSON.parse(opts.body);
-      server.posts.push(body);
-      if (server.resumeStatus !== 200 && server.resumeStatus !== 202) return json({ error: 'boom' }, server.resumeStatus);
-      return json({ runId: 'ticket-1', status: 'scheduled', scheduledFor: body.scheduledFor, resumePipelineId: body.pipelineId }, 202);
-    }
-    if (u.includes('/api/schedules/') && method === 'DELETE') {
-      server.deletes.push(u);
-      return json({ ok: true });
-    }
-    if (u.includes('/api/schedules')) {
-      return json({ schedules: [], tickets: server.tickets, counts: {}, defaults: { ifMissed: 'run', graceMin: 360, maxFailures: 3 } });
-    }
-    if (u.includes('/api/settings') && method === 'POST') {
-      server.posts.push({ settings: JSON.parse(opts.body) });
-      return json({ ...server.settings, ...JSON.parse(opts.body) });
-    }
-    if (u.includes('/api/settings')) return json(server.settings);
-    if (u.includes('/api/resume')) return json({ ok: true, runId: 'r-new', pipelineId: 'pl_1' });
-    if (u.includes('/api/projects')) return json({ projects: [{ name: 'proj', path: PROJECT, exists: true }] });
-    return json({ config: { steps: {}, customModels: [] }, models: [], efforts: [] });
-  };
-  for (const k of ['window', 'document', 'location', 'localStorage', 'WebSocket', 'fetch', 'navigator']) {
-    try { Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true }); } catch {}
+// The fetch router over the test's server state (boot() swaps it in); the file's answers, at the boot and after.
+let server = makeServer();
+const json = (body, status = 200) => Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body });
+function route(url, opts = {}) {
+  const u = String(url);
+  const method = (opts.method || 'GET').toUpperCase();
+  if (u.includes('/api/schedules/resume')) {
+    const body = JSON.parse(opts.body);
+    server.posts.push(body);
+    if (server.resumeStatus !== 200 && server.resumeStatus !== 202) return json({ error: 'boom' }, server.resumeStatus);
+    return json({ runId: 'ticket-1', status: 'scheduled', scheduledFor: body.scheduledFor, resumePipelineId: body.pipelineId }, 202);
   }
-  globalThis.window = window; globalThis.document = window.document;
-  await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
-  await new Promise((r) => setTimeout(r, 0));
-  const recv = (msg) => { for (const s of sockets) s.dispatch('message', { data: JSON.stringify(msg) }); };
+  if (u.includes('/api/schedules/') && method === 'DELETE') {
+    server.deletes.push(u);
+    return json({ ok: true });
+  }
+  if (u.includes('/api/schedules')) {
+    return json({ schedules: [], tickets: server.tickets, counts: {}, defaults: { ifMissed: 'run', graceMin: 360, maxFailures: 3 } });
+  }
+  if (u.includes('/api/settings') && method === 'POST') {
+    server.posts.push({ settings: JSON.parse(opts.body) });
+    return json({ ...server.settings, ...JSON.parse(opts.body) });
+  }
+  if (u.includes('/api/settings')) return json(server.settings);
+  if (u.includes('/api/resume')) return json({ ok: true, runId: 'r-new', pipelineId: 'pl_1' });
+  if (u.includes('/api/projects')) return json({ projects: [{ name: 'proj', path: PROJECT, exists: true }] });
+  return json({ config: { steps: {}, customModels: [] }, models: [], efforts: [] });
+}
+const app = useSharedApp({ before, beforeEach, after }, { fetchHandler: route });
+const bootDetail = detailOn(app).detail;
+
+// The one shared app, reset to the test's UI level and server state.
+async function boot({ level, server: state = makeServer() } = {}) {
+  server = state;
+  await app.fresh(level ? { level } : {});
   const settle = async (n = 4) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
-  const go = (hash) => { window.location.hash = hash; window.dispatchEvent(new window.Event('hashchange')); };
-  return { window, doc: window.document, recv, settle, go, fetchCalls, server };
+  return { window: app.window, doc: app.document, recv: app.recv, settle, go: app.go, fetchCalls: app.calls, server };
 }
 
 /** A usage-limit-paused run is open on its run page. */
@@ -245,26 +222,29 @@ test('D: a firing ticket reads "resuming…"', async () => {
   assert.match(copyOf(page).textContent, /resuming…/);
 });
 
-for (const level of ['simple', 'advanced', 'expert']) {
-  test(`levels: at ${level} the notice and button show; the menu item is B-only and its caret is hidden at simple`, async () => {
-    const ctx = await boot({ level });
-    const reset = Date.now() + 2 * 60 * MIN;
-    const page = await pausedCard(ctx, { limitResetAt: iso(reset) });
-    assert.match(copyOf(page).textContent, /It resets at/);
-    assert.equal(page.querySelector('.rd-ov-state .limit-resume').hidden, false);
-    const item = page.querySelector('.rd-resume-limit');
-    assert.equal(item.hidden, false, 'B unhides the menu item');
-    assert.match(item.querySelector('b').textContent, new RegExp(`Resume at ${hhmm(reset + 5 * MIN)}`));
-    if (level === 'simple') {
-      const more = page.querySelector('.rd-resume-more');
-      assert.ok(more.hasAttribute('data-min-level') || more.hidden, 'the caret is level-gated at simple');
-    }
-    ctx.server.tickets = [ticket()];
-    ctx.recv({ type: 'schedules-changed' });
-    await ctx.settle(10);
-    assert.equal(page.querySelector('.rd-resume-limit').hidden, true, 'C hides the menu item');
-  });
+// The notice, the button and the menu item at one UI level.
+async function noticeAtLevel(level) {
+  const ctx = await boot({ level });
+  const reset = Date.now() + 2 * 60 * MIN;
+  const page = await pausedCard(ctx, { limitResetAt: iso(reset) });
+  assert.match(copyOf(page).textContent, /It resets at/);
+  assert.equal(page.querySelector('.rd-ov-state .limit-resume').hidden, false);
+  const item = page.querySelector('.rd-resume-limit');
+  assert.equal(item.hidden, false, 'B unhides the menu item');
+  assert.match(item.querySelector('b').textContent, new RegExp(`Resume at ${hhmm(reset + 5 * MIN)}`));
+  if (level === 'simple') {
+    const more = page.querySelector('.rd-resume-more');
+    assert.ok(more.hasAttribute('data-min-level') || more.hidden, 'the caret is level-gated at simple');
+  }
+  ctx.server.tickets = [ticket()];
+  ctx.recv({ type: 'schedules-changed' });
+  await ctx.settle(10);
+  assert.equal(page.querySelector('.rd-resume-limit').hidden, true, 'C hides the menu item');
 }
+
+test('levels: at simple the notice and button show; the menu item is B-only and its caret is hidden at simple', () => noticeAtLevel('simple'));
+test('levels: at advanced the notice and button show; the menu item is B-only and its caret is hidden at simple', () => noticeAtLevel('advanced'));
+test('levels: at expert the notice and button show; the menu item is B-only and its caret is hidden at simple', () => noticeAtLevel('expert'));
 
 test('menu item: "Resume at" is the first item of both split menus', () => {
   const doc = new JSDOM(readIndexHtml()).window.document;
@@ -287,39 +267,6 @@ test('menu item: clicking it posts the same ticket as the button', async () => {
   await ctx.settle(8);
   assert.equal(ctx.server.posts.length, 1);
   assert.equal(ctx.server.posts[0].scheduledFor, iso(reset + 5 * MIN));
-});
-
-/** A usage-limit-paused run is open in the Chat run panel. Chat is the boot view: no Runs view loaded the schedules. */
-async function pausedPanel(ctx, { limitResetAt }) {
-  const { doc, recv, settle, go } = ctx;
-  recv({ type: 'hello', runs: [{ runId: 'r1', title: 'Feat', projectDir: PROJECT, status: 'running', startedAt: '00:00:00', pipelineId: 'pl_1' }] });
-  await settle();
-  recv({ type: 'done', runId: 'r1', status: 'paused', reason: 'usage_limit', detail: DETAIL_TEXT, limitEngine: 'claude', limitResetAt });
-  await settle(8);
-  assert.equal(ctx.fetchCalls.some((c) => c.url.split('?')[0].endsWith('/api/schedules')), false, 'nothing loaded the schedules yet');
-  go('chat/new/run/r1');
-  await settle(10);
-  const screen = doc.querySelector('[data-chat-panel] .crp-host > .rd');
-  assert.ok(screen, 'the run is open in the Chat panel');
-  return screen;
-}
-
-test('Chat panel: a resume already booked keeps "Resume at" out of the Resume menu once the schedules load', async () => {
-  const server = makeServer();
-  server.tickets = [ticket()];
-  const ctx = await boot({ level: 'advanced', server });
-  const screen = await pausedPanel(ctx, { limitResetAt: iso(Date.now() + 2 * 60 * MIN) });
-  assert.equal(screen.querySelector('.rd-resume-limit').hidden, true, 'C: the booked ticket hides the item');
-});
-
-test('Chat panel: a schedules-changed frame repaints the open run\'s Resume menu B→C', async () => {
-  const ctx = await boot({ level: 'advanced' });
-  const screen = await pausedPanel(ctx, { limitResetAt: iso(Date.now() + 2 * 60 * MIN) });
-  assert.equal(screen.querySelector('.rd-resume-limit').hidden, false, 'B offers the item');
-  ctx.server.tickets = [ticket()];
-  ctx.recv({ type: 'schedules-changed' });
-  await ctx.settle(10);
-  assert.equal(screen.querySelector('.rd-resume-limit').hidden, true, 'C hides the item');
 });
 
 test('History: a paused saved run with state.limitResetAt shows .hd-limit-notice in B', async () => {

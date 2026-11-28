@@ -102,7 +102,8 @@ export function stopLineText(entry) {
 }
 
 /**
- * D5: one run's word and mark, first match wins: done; a held stop answer (`after run N`); an open stop or ask
+ * D5: one run's word and mark, first match wins: done; a held stop answer (`after run N`); a held resume (`after run
+ * N`, slice 8); an open stop or ask
  * (`waiting for you`); failed; not started (cannot start, `waits for run …`, `next`, or no word); live (today's phase
  * word). `word` null means "the caller keeps dev's text", '' means "deliberately no word".
  * @param {{slice?: object, slices?: Map<number, object>, snap?: object|null}} input
@@ -116,18 +117,128 @@ export function runStatus({ slice, slices = new Map(), snap = null } = {}) {
     const after = slice.stop.after;
     return { word: Number.isInteger(after) ? `after run ${after}` : slice.nextTurn === true ? 'next' : '', mark: 'after' };
   }
+  // Slice 8 (d8-1): a paused run whose Resume is held behind another run of its feature.
+  if (isObj(slice.heldResume) && Number.isInteger(slice.heldResume.after)) return { word: `after run ${slice.heldResume.after}`, mark: 'after' };
+  // Slice 16 (D4): a paused run whose held resume was refused at its turn says why; the caller keeps dev's dot.
+  if (state === 'paused' && isObj(slice.resumeRefused)) {
+    const why = resumeWhy(slice.resumeRefused);
+    if (why) return { word: why.charAt(0).toLowerCase() + why.slice(1), mark: null };
+  }
   if (openAsk(slice) || (isObj(snap) && snap.pendingQuestion)) return { word: 'waiting for you', mark: 'ask' };
   if (FAILED.has(state)) return { word: 'failed', mark: 'failed' };
   if (NOT_STARTED.has(state)) {
-    // Direction dd181c89f: a run that can never start keeps dev's text (no word of its own yet), never next.
-    if (slice.cannotStart) return { word: null, mark: 'faint' };
     const named = namedWaits(slice, slices);
+    // Slice 16 (H5): a run that can never start names the reduced list plus the run that can never finish, with its
+    // cause; never next.
+    if (slice.cannotStart) {
+      const bad = isObj(slice.cannotStart) && Number.isInteger(slice.cannotStart.run) ? slice.cannotStart.run : null;
+      const reason = bad != null && slice.cannotStart.reason ? ` (${slice.cannotStart.reason})` : '';
+      const list = [...new Set(bad == null ? named : [...named, bad])].sort((a, b) => a - b);
+      if (!list.length) return { word: 'cannot start', mark: 'faint' };
+      const parts = list.map((d) => d + (d === bad ? reason : causeOf(slices.get(d))));
+      return { word: `cannot start · ${waitsForRunWord(parts.join(', '))}`, mark: 'faint' };
+    }
     if (named.length) return { word: waitsForRunWord(named.map((d) => d + causeOf(slices.get(d))).join(', ')), mark: 'faint' };
     if (slice.nextTurn === true) return { word: slice.kind === 'change' ? 'next · small change run' : 'next', mark: 'ring' };
     return { word: '', mark: 'ring' };
   }
   if (LIVE.has(state)) return { word: runShortWord(snap) || null, mark: 'live' };
   return { word: null, mark: null };
+}
+
+/**
+ * Slice 8 (d8-5): a paused run's Resume label, the one home of its text: `Resume after run N` when its Resume would wait
+ * for run N (the view's `resumeAfter`), else `Resume`.
+ * @param {unknown} after
+ * @returns {string}
+ */
+export function resumeLabel(after, { heldAfter } = {}) {
+  if (Number.isInteger(heldAfter)) return 'Waiting for its turn';
+  return Number.isInteger(after) ? `Resume after run ${after}` : 'Resume';
+}
+
+/** Slice 16 (D1): the word a run held for its turn reads on the group line. */
+export const HELD_TURN_WORD = 'waiting for its turn';
+
+const COST_ERRORS = new Set(['total cost limit reached', 'pipeline cost limit reached']);
+
+/**
+ * Slice 16 (D3): why a resume did not go on, derived from the reply of POST /api/resume (or a stored `resumeRefused`
+ * record): `saving` and `turn` for a held reply, `clash` for TAKE_IN_REFUSED, `cost` for a budget refusal, else null.
+ * @param {unknown} body
+ * @returns {'saving'|'turn'|'clash'|'cost'|null}
+ */
+export function resumeCauseOf(body) {
+  if (!isObj(body)) return null;
+  if (body.held === true) return body.saving === true ? 'saving' : 'turn';
+  if (body.code === 'TAKE_IN_REFUSED') return 'clash';
+  if (body.budget || body.needsOverride || COST_ERRORS.has(body.error)) return 'cost';
+  return null;
+}
+
+/**
+ * Slice 16 (D3): the one text of a resume that did not go on, by its cause. '' for a non-object or a reply with
+ * nothing to say.
+ * @param {unknown} body
+ * @returns {string}
+ */
+export function resumeWhy(body) {
+  if (!isObj(body)) return '';
+  const cause = resumeCauseOf(body);
+  if (cause === 'saving') return `Run ${body.after} is still saving its work`;
+  if (cause === 'turn') return `Run ${body.after} holds the turn`;
+  if (cause === 'cost') return 'Not resumed: the cost limit is reached';
+  if (typeof body.error === 'string' && body.error) return `Not resumed: ${body.error}`;
+  return '';
+}
+
+/**
+ * Slice 16 (D5): the toast of a press that did not go on, or null when there is nothing to say (the run went on, or a
+ * `needsOverride` reply the cost confirm handles).
+ * @param {unknown} body
+ * @param {number} status
+ * @returns {{tone: 'info'|'err', title: string, detail: string}|null}
+ */
+export function resumeNote(body, status) {
+  if (!isObj(body) || body.needsOverride) return null;
+  const cause = resumeCauseOf(body);
+  if (cause === 'turn') return { tone: 'info', title: 'Waiting for its turn', detail: resumeWhy(body) };
+  if (cause === 'saving') return { tone: 'info', title: 'Waiting', detail: resumeWhy(body) };
+  if (Number.isInteger(status) && status >= 200 && status < 300) return null;
+  const detail = resumeWhy(body);
+  return detail ? { tone: 'err', title: 'Could not resume the run', detail } : null;
+}
+
+/** Slice 16 (D1): the "More ways to resume" note of a run held for its turn. */
+export const heldResumeNote = (after) => `Waiting for its turn after run ${after}`;
+
+/** Slice 16 (D9): the disabled reason of a held run's Resume. */
+export const heldResumeTitle = (after) => `Goes on after run ${after}`;
+
+/**
+ * Slice 16 (D1): the `heldResume.after` of the view slice whose `pipelineId` is the member a Resume acts on. Null for
+ * malformed input, an empty id, no match or a non-integer value. Mirrors resumeAfterOf.
+ * @param {unknown} slices
+ * @param {unknown} pipelineId
+ * @returns {number|null}
+ */
+export function heldAfterOf(slices, pipelineId) {
+  if (!Array.isArray(slices) || !pipelineId) return null;
+  const s = slices.find((x) => isObj(x) && x.pipelineId === pipelineId);
+  return s && isObj(s.heldResume) && Number.isInteger(s.heldResume.after) ? s.heldResume.after : null;
+}
+
+/**
+ * Slice 11 (d11-3): the `resumeAfter` of the view slice whose `pipelineId` is the member a footer's Resume acts on, for
+ * `resumeLabel`. Null for malformed input, an empty id, no match or a non-integer value. Pure; never throws.
+ * @param {unknown} slices
+ * @param {unknown} pipelineId
+ * @returns {number|null}
+ */
+export function resumeAfterOf(slices, pipelineId) {
+  if (!Array.isArray(slices) || !pipelineId) return null;
+  const s = slices.find((x) => isObj(x) && x.pipelineId === pipelineId);
+  return s && Number.isInteger(s.resumeAfter) ? s.resumeAfter : null;
 }
 
 /**

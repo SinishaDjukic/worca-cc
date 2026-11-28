@@ -1,8 +1,39 @@
 // test/shape-ship.test.mjs — Ship as (D24) and the changelog entry (D25): src/core/shape/ship.mjs, pure, with recorded
-// fake deps.
-import { test } from 'node:test';
+// fake deps. Shaper small runs slice 4 (R-ux-3, R-qa-6): the list rule `shipChain` (pure), then the same rule read by
+// Ship on real git branches in the temp home.
+import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { useTempHome } from './helpers/temp-home.mjs';
+import { withEnv as withEnvVars } from './helpers/with-env.mjs';
+import { GITCONFIG } from './helpers/base-world.mjs';
+import { commitFile, g, head, isAncestorExit, minute, record, siblingKit, siblingRunsFeature } from './helpers/shape-sixteen-runs.mjs';
+import { getDb } from '../src/core/db.mjs';
+import { RunHarness } from '../src/core/run-harness.mjs';
+import { chainBaseBranchesOf, getTicket } from '../src/core/scheduler.mjs';
+import { featureView, shipOrder, smallRunsPrBase, stackedPrBase } from '../src/core/shape/features.mjs';
+import { sliceSourceOf } from '../src/core/shape/chain.mjs';
 import { shipFeature, onePrBody, SHIP_MODES, SHIP_CARD_VERBS, shipCardVerb } from '../src/core/shape/ship.mjs';
+// A namespace read, so a missing new export (shipChain) fails only its own tests, not the whole file.
+import * as SHIP from '../src/core/shape/ship.mjs';
+
+useTempHome(after, 'worca-shape-ship-');
+const root = mkdtempSync(join(tmpdir(), 'worca-shape-ship-proj-'));
+after(() => rmSync(root, { recursive: true, force: true }));
+before(() => { getDb(); });
+// File-wide: every git command in this file reads a temp global config, not the machine's.
+const GIT_ENV = ['GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM'];
+const gitEnvBefore = Object.fromEntries(GIT_ENV.map((k) => [k, process.env[k]]));
+before(() => {
+  process.env.GIT_CONFIG_GLOBAL = join(root, 'gitconfig');
+  process.env.GIT_CONFIG_NOSYSTEM = '1';
+  writeFileSync(process.env.GIT_CONFIG_GLOBAL, GITCONFIG);
+});
+after(() => {
+  for (const [k, v] of Object.entries(gitEnvBefore)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+});
 
 const pr = (n) => ({ url: `https://github.com/o/r/pull/${n}` });
 const FEATURE = () => ({ id: 'feat_1', title: 'Charts', slices: [1, 2, 3].map((i) => ({
@@ -94,6 +125,16 @@ test('the changelog update: one ### Charts entry on an empty file, unchanged on 
   assert.equal(update(once), once);
 });
 
+test('the changelog names the carried runs too, in run order; they get no PR call', async () => {
+  let update = null;
+  const f = fake({ commitChangelog: (pid, fn) => { update = fn; return { ok: true }; } });
+  const feature = FEATURE();
+  const listed = [feature.slices[0], feature.slices[2]];
+  await shipFeature({ feature: { ...feature, slices: listed, carried: [feature.slices[1]] }, mode: 'stacked' }, f.deps);
+  assert.deepEqual(update('').match(/^- Slice \d/gm), ['- Slice 1', '- Slice 2', '- Slice 3']);
+  assert.deepEqual(f.calls.filter((c) => c[0] === 'markReady').map((c) => c[1]), [pr(1).url, pr(3).url]);
+});
+
 test('onePrBody: over maxBody the checklists are left out with a note; without it every checklist is kept', () => {
   const slices = FEATURE().slices.map((s) => ({ ...s, checklistMd: `## Perspective checklist\n\n${'- [x] item\n'.repeat(50)}` }));
   const full = onePrBody(slices);
@@ -183,4 +224,293 @@ test('headPipelineId: the changelog, push and one PR use that slice', async () =
     await shipFeature({ feature: FEATURE(), mode: 'one', ...(head ? { headPipelineId: head } : {}) }, g.deps);
     assert.equal(g.calls.find((c) => c[0] === 'openOnePr')[1].pipelineId, 'p3');
   }
+});
+
+// ---- One PR for a feature planned in small runs (R-arch-1): the preamble and the carried runs in its one body ----------
+const PREAMBLE = "Care: Balanced · Worca's pick\nDropped: R-comp-4 · Out of scope";
+const noPrFeature = (over = {}) => ({ id: 'f', title: 'Charts', slices: [slice(1, null), slice(2, null)], ...over });
+const bodyOf = (f) => f.calls.find((c) => c[0] === 'openOnePr')[1].body;
+
+test('one PR body: a preamble goes first once; no preamble leaves the body unchanged', async () => {
+  const with_ = fake();
+  assert.equal((await shipFeature({ feature: noPrFeature({ preamble: PREAMBLE }), mode: 'one' }, with_.deps)).ok, true);
+  assert.equal(bodyOf(with_), `${PREAMBLE}\n\n${onePrBody(noPrFeature().slices)}`);
+  assert.equal(bodyOf(with_).match(/^Care: /gm).length, 1);
+  for (const extra of [{}, { preamble: '' }]) {
+    const plain = fake();
+    await shipFeature({ feature: noPrFeature(extra), mode: 'one' }, plain.deps);
+    assert.equal(bodyOf(plain), onePrBody(noPrFeature().slices), JSON.stringify(extra));
+  }
+  // A draft the forge answers with is adopted with the same preamble.
+  const adopted = fake({ openOnePr: { ok: true, url: 'https://github.com/o/r/pull/2', existed: true } });
+  await shipFeature({ feature: noPrFeature({ preamble: PREAMBLE, slices: [slice(1, null), slice(2, pr(2))] }), mode: 'one' }, adopted.deps);
+  assert.ok(adopted.calls.find((c) => c[0] === 'adoptOnePr')[1].body.startsWith(`${PREAMBLE}\n\n## Slice 1:`));
+});
+
+test('one PR body: the preamble counts against maxBody, so the checklists give way to it', async () => {
+  const slices = noPrFeature().slices.map((s) => ({ ...s, checklistMd: `## Perspective checklist\n\n${'- [x] item\n'.repeat(20)}`.trimEnd() }));
+  const full = onePrBody(slices).length;
+  const bodyAt = async (maxBody) => { const f = fake(); await shipFeature({ feature: noPrFeature({ preamble: PREAMBLE, slices }), mode: 'one', maxBody }, f.deps); return bodyOf(f); };
+  const fits = await bodyAt(full + PREAMBLE.length + 2);
+  assert.ok(fits.startsWith(PREAMBLE) && fits.includes('## Perspective checklist'), 'exactly room for both: every checklist is kept');
+  const over = await bodyAt(full + PREAMBLE.length + 1);
+  assert.ok(over.startsWith(PREAMBLE), over.slice(0, 80));
+  assert.ok(!over.includes('## Perspective checklist'), 'one character short: the checklists are left out');
+});
+
+test('one PR body: a carried run keeps its section and Satisfies line, in index order; its draft is closed and a CLOSED carried PR gets no Draft line and no close call', async () => {
+  const owning = (n, sp) => ({ ...slice(n, sp), requirements: { ids: [`R-po-${n}`], check: null } });
+  const f = fake();
+  // Listed: runs 1 and 3. Carried: run 2 (an in-flight draft) and run 4 (a PR already closed).
+  const feature = { id: 'f', title: 'Charts', slices: [owning(1, null), owning(3, null)],
+    carried: [owning(4, { url: pr(4).url, state: 'CLOSED' }), owning(2, { url: pr(2).url, state: 'OPEN', draft: true })] };
+  const out = await shipFeature({ feature, mode: 'one' }, f.deps);
+  assert.equal(out.ok, true, JSON.stringify(out));
+  const body = bodyOf(f);
+  assert.deepEqual(body.match(/^## Slice \d+/gm), ['## Slice 1', '## Slice 2', '## Slice 3', '## Slice 4']);
+  assert.deepEqual(body.match(/^Satisfies: .*$/gm), [1, 2, 3, 4].map((n) => `Satisfies: R-po-${n}`));
+  assert.deepEqual(body.match(/^Draft: .*$/gm), [`Draft: ${pr(2).url} (closed)`]);
+  assert.deepEqual(f.calls.filter((c) => c[0] === 'close').map((c) => c[1]), [pr(2).url]);
+  assert.equal(out.closed, 1);
+  assert.equal(f.calls.find((c) => c[0] === 'openOnePr')[1].pipelineId, 'p3', 'the head is still the last listed run');
+});
+
+// ---- Slice 4 (R-ux-3): the pure list rule. Rows are the finished runs in finish order; the last one is the head. -------
+// A row of run `n`: on `feat/run-n`, based on `from` (a run number, or a branch name), carrying the runs `carries`.
+const branchName = (x) => (typeof x === 'number' ? `feat/run-${x}` : x);
+const row = (n, from, { carries = [], ...over } = {}) => ({ index: n, pipelineId: `p${n}`, branch: branchName(n),
+  source: branchName(from), carries: carries.map(branchName), merged: false, pending: false, ...over });
+const chainOfRows = (rows) => SHIP.shipChain(rows, { root: 'dev' });
+const listed = (out) => out.order.map((o) => [o.index, o.base]);
+const carriedBy = (out) => out.carried.map((c) => [c.index, c.by]).sort((a, b) => a[0] - b[0]);
+
+test('shipChain: 7, 9, 8, 10 along the sources', () => {
+  const out = chainOfRows([row(7, 'dev'), row(9, 7), row(8, 9, { carries: [9] }), row(10, 8)]);
+  assert.deepEqual(out, { order: [
+    { index: 7, pipelineId: 'p7', base: 'dev' }, { index: 9, pipelineId: 'p9', base: 'feat/run-7' },
+    { index: 8, pipelineId: 'p8', base: 'feat/run-9' }, { index: 10, pipelineId: 'p10', base: 'feat/run-8' }], carried: [] });
+});
+
+test('shipChain: combine shape lists 7, 9, 10 and carries 8 by 10', () => {
+  const out = chainOfRows([row(7, 'dev'), row(8, 7), row(9, 7), row(10, 9, { carries: [8] })]);
+  assert.deepEqual(listed(out), [[7, 'dev'], [9, 'feat/run-7'], [10, 'feat/run-9']]);
+  assert.deepEqual(out.carried, [{ index: 8, pipelineId: 'p8', by: 'p10' }]);
+  assert.ok(out.order.every((o) => o.base !== 'feat/run-8'), 'no listed PR is based on a carried run\'s branch');
+});
+
+test('shipChain: the mirror lists 7, 8, 10 and carries 9', () => {
+  const out = chainOfRows([row(7, 'dev'), row(9, 7), row(8, 7), row(10, 8, { carries: [9] })]);
+  assert.deepEqual(listed(out), [[7, 'dev'], [8, 'feat/run-7'], [10, 'feat/run-8']]);
+  assert.deepEqual(out.carried, [{ index: 9, pipelineId: 'p9', by: 'p10' }]);
+});
+
+test('shipChain: a run carried by a carried run is carried too, by the listed run', () => {
+  const out = chainOfRows([row(1, 'dev'), row(2, 1), row(3, 1, { carries: [2] }), row(4, 1), row(5, 4, { carries: [3] })]);
+  assert.deepEqual(listed(out), [[1, 'dev'], [4, 'feat/run-1'], [5, 'feat/run-4']]);
+  assert.deepEqual(carriedBy(out), [[2, 'p5'], [3, 'p5']]);
+});
+
+test('shipChain: an unexplained finished run returns null', () => {
+  assert.equal(chainOfRows([row(7, 'dev'), row(8, 7), row(9, 7), row(10, 9)]), null, 'nothing says run 8\'s work is in a listed run');
+  // Carried by a run that is itself neither listed nor carried explains nothing.
+  assert.equal(chainOfRows([row(1, 'dev'), row(2, 1), row(3, 1, { carries: [2] }), row(4, 1)]), null);
+});
+
+test('shipChain: a MERGED predecessor puts the next on the root', () => {
+  const out = chainOfRows([row(7, 'dev'), row(9, 7, { merged: true }), row(8, 9), row(10, 8)]);
+  assert.deepEqual(listed(out), [[7, 'dev'], [9, 'feat/run-7'], [8, 'dev'], [10, 'feat/run-8']]);
+});
+
+test('shipChain: a pending predecessor puts the next on the root', () => {
+  const out = chainOfRows([row(7, 'dev'), row(9, 7, { pending: true }), row(8, 9), row(10, 8)]);
+  assert.deepEqual(listed(out), [[7, 'dev'], [9, 'feat/run-7'], [8, 'dev'], [10, 'feat/run-8']], 'the pending run is still listed');
+});
+
+test('shipChain: two rows on one work branch walk the later finisher first', () => {
+  // Run 8 changed nothing and kept no branch: its work branch is its source, run 7's.
+  const out = chainOfRows([row(7, 'dev'), row(8, 7, { branch: 'feat/run-7' }), row(10, 7)]);
+  assert.deepEqual(listed(out), [[7, 'dev'], [8, 'feat/run-7'], [10, 'feat/run-7']]);
+  assert.deepEqual(out.carried, []);
+});
+
+test('shipChain: a cycle in sources stops (bounded)', () => {
+  const out = chainOfRows([row(7, 8), row(8, 7)]);
+  assert.deepEqual(listed(out), [[7, 'dev'], [8, 'feat/run-7']], 'each run is walked once');
+  assert.equal(chainOfRows([row(6, 'dev'), row(7, 8), row(8, 7)]), null, 'a run the cycle never reaches is unexplained');
+});
+
+test('shipChain: a row with no branch or source is not walkable, and nothing throws', () => {
+  assert.equal(chainOfRows([{ index: 1, pipelineId: 'p1' }, row(2, 1)]), null);
+  assert.deepEqual(listed(chainOfRows([{ index: 1, pipelineId: 'p1' }])), [[1, 'dev']]);
+  // A missing source never matches a missing branch.
+  for (const none of [undefined, null]) {
+    const bare = (n) => ({ index: n, pipelineId: `p${n}`, branch: none, source: none, carries: [], merged: false, pending: false });
+    assert.equal(chainOfRows([bare(1), bare(2)]), null, String(none));
+  }
+});
+
+test('shipChain: empty rows', () => {
+  assert.deepEqual(chainOfRows([]), { order: [], carried: [] });
+});
+
+test('shipChain (R-arch-6): pure: no db, git or scheduler import; the same rows give the same answer and are not changed', () => {
+  const src = readFileSync(new URL('../src/core/shape/ship.mjs', import.meta.url), 'utf8');
+  const imports = [...src.matchAll(/(?:\bfrom\s*|\bimport\s*\(\s*|^import\s+)['"]([^'"]+)['"]/gm)].map((m) => m[1]);
+  assert.deepEqual(imports.filter((p) => /db\.mjs|git|scheduler|child_process|artifacts|features\.mjs/.test(p)), []);
+  const rows = [row(7, 'dev'), row(8, 7), row(9, 7), row(10, 9, { carries: [8] })];
+  const was = structuredClone(rows);
+  assert.deepEqual(chainOfRows(rows), chainOfRows(rows));
+  assert.deepEqual(rows, was);
+});
+
+// ---- A2 (R-qa-2): the ancestry pass. A covered run's branch holds the commits of the branch it started from. ----------
+test("shipChain: a run started from an uncarried run's branch carries it (ancestry pass)", () => {
+  // Finish order 1, 5, 2, 3, 4, 6. Run 5 started from run 1, run 6 from run 5; run 6 then took in runs 2, 3 and 4.
+  const out = chainOfRows([row(1, 'dev'), row(5, 1), row(2, 'dev'), row(3, 'dev'), row(4, 'dev'),
+    row(6, 4, { from: 'feat/run-5', carries: [2, 3, 4] })]);
+  assert.ok(out, 'every finished run is listed or carried');
+  assert.deepEqual(out.order, [{ index: 4, pipelineId: 'p4', base: 'dev' }, { index: 6, pipelineId: 'p6', base: 'feat/run-4' }]);
+  assert.deepEqual(carriedBy(out), [[1, 'p6'], [2, 'p6'], [3, 'p6'], [5, 'p6']]);
+});
+
+test('shipChain: rows that resolve with the first closure are unchanged by from', () => {
+  const resolved = [
+    [row(7, 'dev'), row(9, 7), row(8, 9, { carries: [9] }), row(10, 8)],
+    [row(7, 'dev'), row(8, 7), row(9, 7), row(10, 9, { carries: [8] })],
+    [row(7, 'dev'), row(9, 7), row(8, 7), row(10, 8, { carries: [9] })],
+    [row(1, 'dev'), row(2, 1), row(3, 1, { carries: [2] }), row(4, 1), row(5, 4, { carries: [3] })],
+    [row(7, 'dev'), row(9, 7, { merged: true }), row(8, 9), row(10, 8)],
+    [row(7, 'dev'), row(9, 7, { pending: true }), row(8, 9), row(10, 8)],
+    [row(7, 'dev'), row(8, 7, { branch: 'feat/run-7' }), row(10, 7)],
+    [row(7, 8), row(8, 7)],
+    [{ index: 1, pipelineId: 'p1' }],
+    [],
+  ];
+  for (const rows of resolved) {
+    const was = chainOfRows(rows);
+    assert.ok(was, JSON.stringify(rows));
+    // Every other row's branch as each row's fire-time base: none of it may move a chain that already resolves.
+    for (let shift = 1; shift < Math.max(2, rows.length); shift++) {
+      const withFrom = rows.map((r, i) => ({ ...r, from: rows[(i + shift) % rows.length].branch || 'feat/run-7' }));
+      assert.deepEqual(chainOfRows(withFrom), was, JSON.stringify(withFrom));
+    }
+  }
+});
+
+test('shipChain: a row reachable by no walk, carry, from or source edge still falls back (null)', () => {
+  // Run 2's branch is nobody's source or fire-time base, and nothing carries it.
+  assert.equal(chainOfRows([row(1, 'dev'), row(2, 'dev'), row(3, 1, { from: 'feat/run-1' })]), null);
+  // The edges go from a covered run to its base only: a run that started from a covered run is not carried by that.
+  assert.equal(chainOfRows([row(1, 'dev'), row(2, 1, { from: 'feat/run-1' }), row(3, 1)]), null);
+  // An uncovered run's own fire-time base carries nothing.
+  assert.equal(chainOfRows([row(1, 'dev'), row(2, 'dev'), row(4, 'dev', { from: 'feat/run-2' }), row(3, 1)]), null);
+});
+
+// ---- Slice 4 (R-qa-6): Ship on real git branches. Runs 8 and 9 build on run 7, run 10 builds on 8 and 9. ---------------
+const ON = { WORCA_FLAGS: 'shaperSmallRuns' };
+const { siblingWorld, waitedRunHarness, doneSiblings, runTen } = siblingKit({ root, RunHarness });
+const recordOf = (pid) => JSON.parse(getDb().prepare('SELECT branch FROM pipelines WHERE id = ?').get(pid).branch);
+/** What Ship lists for the feature (the card's rows), what it opens (shipOrder) and the base of each of `runs`' PRs. */
+function shipRead({ fx }, runs) {
+  const view = featureView(fx.featureId);
+  return {
+    card: view.ship.smallRuns.order.map((o) => o.pipelineId),
+    opened: shipOrder(view).map((s) => s.pipelineId),
+    bases: runs.map((run) => stackedPrBase(fx.pipelineOf(run))),
+    along: view.ship.smallRuns.along,
+  };
+}
+
+/** Run 9 finishes while run 8 waits; `takeIn(harness)` is run 8's take-in; then run 8 finishes with the record it left
+ *  (the harness's _persist is a stand-in) and run 10 starts where the fire path picks, commits and finishes. */
+async function runsAfterTakeIn(takeIn) {
+  const w = siblingWorld();
+  const { repo, wt9, fx } = w;
+  g(wt9, 'add', '-A');
+  g(wt9, 'commit', '-qm', 'nine.txt');
+  fx.finish(9, { at: minute(1), branch: record(9) });
+  const eight = waitedRunHarness(w);
+  await takeIn(eight.h);
+  fx.finish(8, { at: minute(2), branch: eight.record() });
+  // Run 10 starts where the fire path picks.
+  assert.equal(sliceSourceOf(getTicket(fx.ticketOf(10))).sourceBranch, 'feat/run-8');
+  const wt10 = join(dirname(repo), 'wt10');
+  g(repo, 'worktree', 'add', '-q', '-b', 'feat/run-10', wt10, 'feat/run-8');
+  commitFile(wt10, 'ten.txt');
+  fx.start(10, { branch: record(10, 'feat/run-8') });
+  fx.finish(10, { at: minute(3) });
+  return w;
+}
+
+test('R-qa-6: run 8 waits, takes in run 9; Ship lists 7 on the base, 9 on 7, 8 on 9, 10 on 8', () => withEnvVars(ON, async () => {
+  const w = await runsAfterTakeIn(async (h) => assert.equal((await h.takeInBeforeAnswer()).ok, true));
+  const { repo, fx } = w;
+  const nine = head(repo, 'feat/run-9');
+  assert.equal(isAncestorExit(repo, nine, 'feat/run-8'), 0, 'run 9\'s commit is in run 8\'s branch');
+  assert.equal(isAncestorExit(repo, nine, 'feat/run-10'), 0, 'run 9\'s commit is in run 10\'s branch');
+
+  const pids = [7, 9, 8, 10].map((run) => fx.pipelineOf(run));
+  const ship = shipRead(w, [7, 9, 8, 10]);
+  assert.deepEqual(ship.card, pids, 'runs 7, 9, 8 and 10, and no other pull request');
+  assert.deepEqual(ship.opened, pids, 'Ship opens what the card lists');
+  assert.deepEqual(ship.bases, ['dev', 'feat/run-7', 'feat/run-9', 'feat/run-8']);
+  assert.equal(recordOf(fx.pipelineOf(8)).source, 'feat/run-9', 'run 8\'s recorded base');
+  assert.equal(smallRunsPrBase(fx.pipelineOf(8)), recordOf(fx.pipelineOf(8)).source, 'Ship bases run 8 on its recorded base');
+  assert.equal(ship.along, true, 'the list came from the real branches, not from the finish order');
+}));
+
+test('combine shape (no wait): Ship lists 7, 9, 10 and no PR for run 8', () => withEnvVars(ON, async () => {
+  const w = doneSiblings({ eightAt: minute(1), nineAt: minute(2) });
+  const { repo, fx } = w;
+  assert.equal(sliceSourceOf(getTicket(fx.ticketOf(10))).sourceBranch, 'feat/run-9');
+  const ten = runTen(w, 'feat/run-9');
+  await ten.combine();   // merges run 8 in
+  assert.equal(isAncestorExit(repo, w.eight, 'feat/run-10'), 0, 'run 8\'s work is in run 10\'s branch');
+  // runTen seeds a pipeline row of its own: persist its record into the feature's run 10.
+  fx.start(10, { branch: ten.record() });
+  fx.finish(10, { at: minute(3), branch: ten.record() });
+  assert.deepEqual(recordOf(fx.pipelineOf(10)).combined, [{ index: 2, branch: 'feat/run-8' }], 'run 10\'s record names what it combined');
+
+  const pids = [7, 9, 10].map((run) => fx.pipelineOf(run));
+  const ship = shipRead(w, [7, 9, 10]);
+  assert.deepEqual(ship.card, pids, 'run 10\'s pull request carries run 8\'s work: run 8 gets none');
+  assert.deepEqual(ship.opened, pids, 'Ship opens what the card lists');
+  assert.deepEqual(ship.bases, ['dev', 'feat/run-7', 'feat/run-9']);
+  assert.equal(ship.along, true);
+}));
+
+test('R-arch-5 resume: run 8 resumed after run 9 finished lists 7, 9, 8, 10', () => withEnvVars(ON, async () => {
+  const w = await runsAfterTakeIn((h) => h._takeInOnResume());
+  const { fx } = w;
+  const pids = [7, 9, 8, 10].map((run) => fx.pipelineOf(run));
+  const ship = shipRead(w, [7, 9, 8, 10]);
+  assert.deepEqual(ship.card, pids, 'runs 7, 9, 8 and 10, and no other pull request');
+  assert.deepEqual(ship.opened, pids, 'Ship opens what the card lists');
+  assert.deepEqual(ship.bases, ['dev', 'feat/run-7', 'feat/run-9', 'feat/run-8']);
+  assert.equal(recordOf(fx.pipelineOf(8)).source, 'feat/run-9', 'run 8\'s recorded base');
+  assert.equal(smallRunsPrBase(fx.pipelineOf(8)), 'feat/run-9', 'Ship bases run 8 on its recorded base');
+  assert.equal(ship.along, true, 'the list came from the real branches, not from the finish order');
+}));
+
+// A pin: it holds before and after the change.
+test('unmarked feature: flag on lists the same PRs as flag off', async () => {
+  const projectDir = mkdtempSync(join(root, 'unmarked-'));
+  // The combine shape, where the small-runs rule would drop run 8.
+  const fx = siblingRunsFeature({ projectDir, smallRuns: false });
+  fx.finish(7, { at: minute(0) });
+  for (const [run, branch] of [[8, record(8)], [9, record(9)],
+    [10, { ...record(10, 'feat/run-9'), combined: [{ index: 2, branch: 'feat/run-8' }] }]]) {
+    fx.start(run, { branch });
+    fx.finish(run, { at: minute(run - 7) });
+  }
+  const read = () => {
+    const view = featureView(fx.featureId);
+    return { opened: shipOrder(view), ship: view.ship,
+      bases: [7, 8, 9, 10].map((run) => stackedPrBase(fx.pipelineOf(run), chainBaseBranchesOf(fx.pipelineOf(run)))) };
+  };
+  const on = await withEnvVars(ON, read);
+  const off = await withEnvVars({ WORCA_FLAGS: undefined }, read);
+  assert.deepEqual(on, off);
+  assert.equal(on.opened.length, 4, 'every run keeps its pull request');
+  assert.equal(on.ship.smallRuns, undefined);
 });

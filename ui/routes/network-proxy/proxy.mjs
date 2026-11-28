@@ -45,15 +45,24 @@ app.post('/api/proxy/login', async (req, res) => {
   const body = req.body || {};
   const login = { domain: body.domain, user: body.user, password: typeof body.password === 'string' ? body.password : '' };
   body.password = undefined;   // the request object never holds it past this point
-  const r = await proxyHost.login(login);
-  login.password = undefined;
-  res.status(r.status).json(r.body);
+  // The native host saves through the vault (secretVault) and maps its refusals itself; the catch makes sure an async
+  // rejection always answers, with only an error code (D12).
+  try {
+    const r = await proxyHost.login(login);
+    res.status(r.status).json(r.body);
+  } catch (err) {
+    if (!res.headersSent) res.status(500).json({ error: `the login could not be saved (${err && typeof err.code === 'string' ? err.code : 'error'})` });
+  } finally { login.password = undefined; }
 });
 
 app.post('/api/proxy/logout', async (req, res) => {
   if (refuseProxyAgent(req, res)) return;
-  const r = await proxyHost.logout();
-  res.status(r.status).json(r.body);
+  try {
+    const r = await proxyHost.logout();
+    res.status(r.status).json(r.body);
+  } catch (err) {
+    if (!res.headersSent) res.status(500).json({ error: `the login could not be deleted (${err && typeof err.code === 'string' ? err.code : 'error'})` });
+  }
 });
 
 // D9: the body's networkProxy is a candidate merged over the saved values; a pass is recorded for the UNTESTED gate.

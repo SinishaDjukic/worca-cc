@@ -19,6 +19,9 @@ import { careOfRow, requirementKindsOf } from '../src/shared/shape/feature-recor
 import { featureFigures } from '../src/core/shape/measure.mjs';
 import { latestFinishedSlice, latestFinishedSource, sliceChainGate, sliceSourceOf, headMissingSlice, smallRunsChainGate,
   sliceFireStart, oneShipCheck, shipHeadRow, shipHeadBase, heldStopTurn } from '../src/core/shape/chain.mjs';
+// Namespace reads, so a missing new export (the dependency combine) fails only its own test, not the whole file.
+import * as CHAIN from '../src/core/shape/chain.mjs';
+import * as FEATURES from '../src/core/shape/features.mjs';
 
 useTempHome(after, 'worca-shape-chain-');
 
@@ -547,12 +550,542 @@ test('D1 shipOrder: marked → finish order, an archived run last; unmarked → 
   assert.equal(shipOrder(v), v.slices);
 });
 
-test('D1 oneShipCheck, marked: one → 409 STACKED_ONLY first; stacked → head is the latest finished run', async () => {
+// A marked feature's One check: the head holds every run's work unless `missing`; ctxOf names the head's branch.
+const markedCtx = (p) => () => ({ target: { repoDir: '/repo', feature: `feat/${p[2]}` } });
+const doneRows = (p, prs = {}) => [1, 2, 3].map((index) => ({ index, pipelineId: p[index], state: 'done', pr: prs[index] || null }));
+const PR40 = { url: 'https://github.com/me/repo/pull/40', number: 40, state: 'OPEN', draft: false };
+
+test('D1 oneShipCheck, marked, flag on: One with no PR is not refused; its head is the latest finished run', async () => {
   const { id, p } = finishing132();
-  const v = viewOf(id, [{ index: 1, pipelineId: p[1], state: 'done', pr: { url: 'u', state: 'OPEN' } }]);
-  for (const deps of [ON, OFF]) {
-    assert.deepEqual(await oneShipCheck(id, 'one', v, NEVER, deps),
+  const asked = [];
+  const ctxOf = (h) => { asked.push(h); return markedCtx(p)(); };
+  assert.deepEqual(await oneShipCheck(id, 'one', viewOf(id, doneRows(p)), ctxOf, { ...ON, isAncestor: async () => true }),
+    { head: p[2], refusal: null });
+  assert.deepEqual(asked, [p[2]]);
+  // A closed PR and a slice draft are no run's own PR.
+  const loose = doneRows(p, { 1: { ...PR40, state: 'CLOSED' }, 3: { ...PR40, draft: true } });
+  assert.deepEqual(await oneShipCheck(id, 'one', viewOf(id, loose), ctxOf, { ...ON, isAncestor: async () => true }), { head: p[2], refusal: null });
+});
+
+test('D1 oneShipCheck, marked, flag on: run 2\'s PR #40 refuses One with HAS_SLICE_PR naming it, before any branch is read', async () => {
+  const { id, p } = finishing132();
+  assert.deepEqual(await oneShipCheck(id, 'one', viewOf(id, doneRows(p, { 2: PR40 })), NEVER, ON),
+    { head: null, refusal: { status: 409, body: { code: 'HAS_SLICE_PR', error: 'Run 2 already has pull request #40 open' } } });
+});
+
+test('D1 oneShipCheck, marked, flag on: a head without run 1\'s work, or one that cannot be checked, refuses HEAD_MISSING_WORK', async () => {
+  const { id, p } = finishing132();
+  const miss = await oneShipCheck(id, 'one', viewOf(id, doneRows(p)), markedCtx(p), { ...ON, isAncestor: async () => false });
+  assert.deepEqual(miss, { head: p[2], refusal: { status: 409, body: { code: 'HEAD_MISSING_WORK',
+    error: "run 1's work is not in the branch one PR would ship: create one PR per run" } } });
+  const broken = await oneShipCheck(id, 'one', viewOf(id, doneRows(p)), () => ({ error: 'the last slice has no run' }), ON);
+  assert.deepEqual(broken, { head: p[2], refusal: { status: 409, body: { code: 'HEAD_MISSING_WORK',
+    error: 'the branch one PR would ship cannot be checked (the last slice has no run): create one PR per run' } } });
+});
+
+test('D1 oneShipCheck, marked, flag on: with no finished run there is no head and no refusal (NOT_READY comes first)', async () => {
+  quiet();
+  const f = createSliceFeature({ pipelineId: pipe('running'), projectDir: root, title: 'Ship', outline: outlineOf(2), perspectives: ['product'], workflowId: 'wf_shape' });
+  markFeature(f.id);
+  assert.equal(latestFinishedSlice(f.id), null);
+  assert.deepEqual(await oneShipCheck(f.id, 'one', viewOf(f.id, []), NEVER, ON), { head: null, refusal: null });
+});
+
+test('D1 oneShipCheck, marked, flag off: One stays 409 STACKED_ONLY with the old reason, word for word; stacked keeps the latest finished head', async () => {
+  const { id, p } = finishing132();
+  for (const prs of [{}, { 2: PR40 }]) {
+    assert.deepEqual(await oneShipCheck(id, 'one', viewOf(id, doneRows(p, prs)), NEVER, OFF),
       { head: null, refusal: { status: 409, body: { code: 'STACKED_ONLY', error: 'small runs ship a PR per run' } } });
-    assert.deepEqual(await oneShipCheck(id, 'stacked', v, NEVER, deps), { head: p[2], refusal: null });
   }
+  for (const deps of [ON, OFF]) assert.deepEqual(await oneShipCheck(id, 'stacked', viewOf(id, doneRows(p, { 2: PR40 })), NEVER, deps), { head: p[2], refusal: null });
+});
+
+// The unmarked One check must answer as before. These rows were captured once by running the same cases against a
+// `git archive 217b540b4` copy of src/. Each row: mode, flag, case, the heads ctxOf was asked for, the answer.
+const ONE_CASES = {
+  'no PR': {}, 'open PR': { pr: PR40 }, 'closed PR': { pr: { ...PR40, state: 'CLOSED' } }, 'draft slice PR': { pr: { ...PR40, draft: true } },
+  'ctx error': { ctxError: true }, 'missing slice': { missing: true },
+};
+const HAS_PR = { head: null, refusal: { status: 409, body: { code: 'HAS_SLICE_PR', error: 'a run in this feature already has a PR: create one PR per run' } } };
+const NONE = { head: null, refusal: null };
+const AT_P2 = { head: 'P2', refusal: null };
+const missingAt = (error) => ({ head: 'P2', refusal: { status: 409, body: { code: 'HEAD_MISSING_WORK', error } } });
+const ONE_ROWS_217 = [
+  ['one', 'on', 'no PR', ['P2'], AT_P2],
+  ['one', 'on', 'open PR', [], HAS_PR],
+  ['one', 'on', 'closed PR', ['P2'], AT_P2],
+  ['one', 'on', 'draft slice PR', ['P2'], AT_P2],
+  ['one', 'on', 'ctx error', ['P2'], missingAt('the branch one PR would ship cannot be checked (the last slice has no run): create one PR per run')],
+  ['one', 'on', 'missing slice', ['P2'], missingAt("run 1's work is not in the branch one PR would ship: create one PR per run")],
+  ['one', 'off', 'no PR', [], NONE],
+  ['one', 'off', 'open PR', [], HAS_PR],
+  ['one', 'off', 'closed PR', [], NONE],
+  ['one', 'off', 'draft slice PR', [], NONE],
+  ['one', 'off', 'ctx error', [], NONE],
+  ['one', 'off', 'missing slice', [], NONE],
+  ...['on', 'off'].flatMap((flag) => Object.keys(ONE_CASES).map((name) => ['stacked', flag, name, [], NONE])),
+];
+
+test('unmarked One ship check equals checkpoint 217b540b4', async () => {
+  const { id, p } = finishing132({ marked: false });
+  assert.equal(latestFinishedSlice(id).pipelineId, p[2], 'the fixture, as captured: run 2 is the head');
+  const rowsNow = [];
+  for (const mode of ['one', 'stacked']) for (const flag of ['on', 'off']) for (const [name, c] of Object.entries(ONE_CASES)) {
+    const view = viewOf(id, [{ index: 1, pipelineId: p[1], state: 'done', pr: c.pr || null }, { index: 2, pipelineId: p[2], state: 'done', pr: null },
+      { index: 3, pipelineId: null, state: 'planned', pr: null }]);
+    const asked = [];
+    const ctxOf = (head) => { asked.push(head); return c.ctxError ? { error: 'the last slice has no run' } : { target: { repoDir: '/repo', feature: `feat/${p[2]}` } }; };
+    const r = await oneShipCheck(id, mode, view, ctxOf, { ...(flag === 'on' ? ON : OFF), isAncestor: async () => !c.missing });
+    rowsNow.push(JSON.parse(JSON.stringify([mode, flag, name, asked, r]).split(p[1]).join('P1').split(p[2]).join('P2')));
+  }
+  assert.deepEqual(rowsNow, ONE_ROWS_217);
+});
+
+// ── Small runs, a run starts with the work of every run it builds on: the reason and the fire-time gate ──────────────
+
+test('R-arch-4 clashReason: the runs in ascending order and the file they clash in', () => {
+  assert.equal(CHAIN.clashReason({ runs: [9, 8], files: ['src/a.mjs'] }), 'runs 8 and 9 clash in src/a.mjs');
+  assert.equal(CHAIN.clashReason({ runs: [8, 4, 6], files: ['src/a.mjs'] }), 'runs 4, 6 and 8 clash in src/a.mjs');
+});
+
+test('R-arch-4 clashReason: at most 3 files are named, then how many more', () => {
+  const files = ['one.mjs', 'two.mjs', 'three.mjs', 'four.mjs', 'five.mjs'];
+  const five = CHAIN.clashReason({ runs: [8, 9], files });
+  assert.ok(five.startsWith('runs 8 and 9 clash in '), five);
+  for (const f of files.slice(0, 3)) assert.ok(five.includes(f), `${five}: names ${f}`);
+  for (const f of files.slice(3)) assert.ok(!five.includes(f), `${five}: leaves out ${f}`);
+  assert.ok(five.endsWith('and 2 more files'), five);
+  // checkCombine caps the list; fileCount is the real number.
+  assert.ok(CHAIN.clashReason({ runs: [8, 9], files, fileCount: 250 }).endsWith('and 247 more files'));
+  const two = CHAIN.clashReason({ runs: [8, 9], files: files.slice(0, 2) });
+  assert.ok(two.includes('one.mjs') && two.includes('two.mjs') && !/more file/.test(two), two);
+});
+
+/** A marked 4-run feature, runs 1 to 3 done on their own branches, run 4 building on `dependsOn`; `start` is the run
+ *  whose branch run 4 would start from. → { id, ticket, branch: (k) => name, own } */
+function combineFeature({ dependsOn = ['s2', 's3'], start = 2 } = {}) {
+  const f = feature(4, { deps: { 4: dependsOn } });
+  fire(f.t[3], pipe('done'));
+  markFeature(f.id);
+  const origin = getDb().prepare('SELECT origin_pipeline_id FROM shape_features WHERE id = ?').get(f.id).origin_pipeline_id;
+  const p = [null, origin, getTicket(f.t[2]).pipelineId, getTicket(f.t[3]).pipelineId];
+  const branch = (k) => `feat/${p[k]}`;
+  return { id: f.id, p, ticket: getTicket(f.t[4]), branch, own: { pipelineId: p[start], sourceBranch: branch(start) } };
+}
+/** Flag on; `check(branches)` is checkCombine's answer, `ancestor(a, b)` isAncestor's. Every call is recorded. */
+function combineSeams({ check = () => ({ status: 'clean', files: [], fileCount: 0 }), ancestor = () => false } = {}) {
+  const checks = [];
+  const ancestors = [];
+  return { checks, ancestors, deps: { flagEnabled: () => true,
+    checkCombine: async (dir, { branches }) => { checks.push({ dir, branches: [...branches] }); return check(branches); },
+    isAncestor: async (dir, a, b) => { ancestors.push([a, b]); return ancestor(a, b); } } };
+}
+const conflicts = (branches, files = ['src/a.mjs']) => ({ status: 'conflicts', files, fileCount: files.length,
+  branch: branches.at(-1), with: branches.slice(0, -1) });
+
+test('sliceCombineGate: a clean check starts the run, checks the start and the missing branches once, and clears an old hold', () => withEnvVars(SMALL_ON, async () => {
+  const w = combineFeature();
+  const s = combineSeams();
+  FEATURES.setClashHold(w.ticket.id, { reason: 'old', runs: [2, 3], files: ['x'], at: Date.now() });
+  assert.equal(await CHAIN.sliceCombineGate(w.ticket, w.own, s.deps), null);
+  assert.deepEqual(s.checks, [{ dir: w.ticket.projectDir, branches: [w.branch(2), w.branch(3)] }]);
+  // Every ancestor question names branches under refs/heads/, so a tag or remote of the same name is never read.
+  assert.deepEqual(s.ancestors, [[`refs/heads/${w.branch(3)}`, `refs/heads/${w.branch(2)}`]]);
+  assert.equal(FEATURES.clashHoldOf(w.ticket.id), null);
+}));
+
+test('sliceCombineGate: nothing missing from the start branch answers null with no combine check', () => withEnvVars(SMALL_ON, async () => {
+  const w = combineFeature();
+  const s = combineSeams({ ancestor: () => true });
+  FEATURES.setClashHold(w.ticket.id, { reason: 'old', runs: [2, 3], files: ['x'], at: Date.now() });
+  assert.equal(await CHAIN.sliceCombineGate(w.ticket, w.own, s.deps), null);
+  assert.deepEqual(s.checks, []);
+  assert.equal(FEATURES.clashHoldOf(w.ticket.id), null);
+}));
+
+test('sliceCombineGate: a workspace ticket, no start branch, a pending start and an unmarked feature ask git nothing', () => withEnvVars(SMALL_ON, async () => {
+  const w = combineFeature();
+  const s = combineSeams({ check: conflicts });
+  assert.equal(await CHAIN.sliceCombineGate({ ...w.ticket, workspaceId: 'ws_x' }, w.own, s.deps), null);
+  for (const own of [null, { pending: true }, { pipelineId: null, sourceBranch: null }]) {
+    assert.equal(await CHAIN.sliceCombineGate(w.ticket, own, s.deps), null, JSON.stringify(own));
+  }
+  assert.equal(await CHAIN.sliceCombineGate(w.ticket, w.own, { ...s.deps, flagEnabled: () => false }), null);
+  getDb().prepare(`UPDATE pipelines SET shape_stats = NULL WHERE id = ?`).run(w.p[1]);
+  assert.equal(await CHAIN.sliceCombineGate(w.ticket, w.own, s.deps), null);
+  assert.deepEqual([s.checks, s.ancestors], [[], []]);
+}));
+
+test('sliceCombineGate: a dependency still merging its work back waits (transient)', () => withEnvVars(SMALL_ON, async () => {
+  const w = combineFeature();
+  getDb().prepare('UPDATE pipelines SET branch = ?, updated_at = ? WHERE id = ?')
+    .run(JSON.stringify({ source: 'main', feature: 'main', sameAsSource: true, worktreeDir: '/tmp/x' }), new Date().toISOString(), w.p[3]);
+  const s = combineSeams();
+  assert.deepEqual(await CHAIN.sliceCombineGate(w.ticket, w.own, s.deps),
+    { ok: false, error: 'the run before it is still merging its work back', transient: true });
+  assert.deepEqual(s.checks, []);
+}));
+
+test('sliceCombineGate: a branch that is gone fails the start for good', () => withEnvVars(SMALL_ON, async () => {
+  const w = combineFeature();
+  const s = combineSeams({ check: () => ({ status: 'no-branch', branch: 'feat/x', files: [], fileCount: 0 }) });
+  assert.deepEqual(await CHAIN.sliceCombineGate(w.ticket, w.own, s.deps),
+    { ok: false, error: 'branch feat/x no longer exists', transient: false });
+}));
+
+test('sliceCombineGate: a check that cannot run is transient only for a failure or a timeout', () => withEnvVars(SMALL_ON, async () => {
+  const w = combineFeature();
+  for (const [kind, transient] of [['timeout', true], ['failed', true], ['git-too-old', false], ['bad-branch', false], ['bad-request', false]]) {
+    const s = combineSeams({ check: () => ({ status: 'error', kind, error: `boom ${kind}`, files: [], fileCount: 0 }) });
+    assert.deepEqual(await CHAIN.sliceCombineGate(w.ticket, w.own, s.deps),
+      { ok: false, error: `could not combine the work of runs 2 and 3: boom ${kind}`, transient }, kind);
+    assert.equal(FEATURES.clashHoldOf(w.ticket.id), null, 'an error is no clash hold');
+  }
+}));
+
+test('sliceCombineGate (D8): only the runs that clash are named: the third branch clashes with the second, not the first', () => withEnvVars(SMALL_ON, async () => {
+  const w = combineFeature({ dependsOn: ['s1', 's2', 's3'], start: 1 });
+  const s = combineSeams({ check: (branches) => (branches.includes(w.branch(2)) && branches.includes(w.branch(3))
+    ? conflicts(branches) : { status: 'clean', files: [], fileCount: 0 }) });
+  assert.deepEqual(await CHAIN.sliceCombineGate(w.ticket, w.own, s.deps),
+    { ok: false, hold: true, error: 'runs 2 and 3 clash in src/a.mjs' });
+  assert.deepEqual(s.checks[0].branches, [w.branch(1), w.branch(2), w.branch(3)]);
+  assert.deepEqual(s.checks.slice(1).map((c) => c.branches).sort(),
+    [[w.branch(1), w.branch(3)], [w.branch(2), w.branch(3)]].sort(), 'one pairwise check per branch it was combined with');
+  const hold = FEATURES.clashHoldOf(w.ticket.id);
+  assert.deepEqual([hold.reason, [...hold.runs].sort(), hold.files], ['runs 2 and 3 clash in src/a.mjs', [2, 3], ['src/a.mjs']]);
+}));
+
+test('sliceCombineGate (D8): a clash that needs the whole fold names every run in it', () => withEnvVars(SMALL_ON, async () => {
+  const w = combineFeature({ dependsOn: ['s1', 's2', 's3'], start: 1 });
+  const s = combineSeams({ check: (branches) => (branches.length > 2 ? conflicts(branches) : { status: 'clean', files: [], fileCount: 0 }) });
+  assert.deepEqual(await CHAIN.sliceCombineGate(w.ticket, w.own, s.deps),
+    { ok: false, hold: true, error: 'runs 1, 2 and 3 clash in src/a.mjs' });
+}));
+
+// ── Slice 3 (R-po-2): what a run that waited at a stop takes in before it goes on (takeInVerdict) ───────────────────
+const BASE = 'feat/base';
+const REASON = 'runs 2 and 3 clash in src/a.mjs';
+/** A marked 4-run feature: run 1 (done) is the shared base's branch, run 2 is the waiting run (live), runs 3 and 4 are
+ *  done, each with the record `branches` gives it (`{source}` of the shared base by default) and a finish time.
+ *  → { id, p, br, own } */
+function takeInFeature({ own = {}, three = {}, four = {}, at = { 3: '2026-03-02T00:00:00Z', 4: '2026-03-03T00:00:00Z' } } = {}) {
+  const f = feature(4, { two: 'none' });
+  getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = (SELECT origin_pipeline_id FROM shape_features WHERE id = ?)')
+    .run(JSON.stringify({ source: 'main', feature: BASE }), f.id);
+  const br = (k) => `feat/take-${f.id}-${k}`;
+  const rec = (k, over) => ({ source: BASE, feature: br(k), ...over });
+  const p2 = pipe('running', { branch: rec(2, own) });
+  const p3 = pipe('done', { branch: rec(3, three), steps: stepAt(at[3]), updatedAt: at[3] });
+  const p4 = pipe('done', { branch: rec(4, four), steps: stepAt(at[4]), updatedAt: at[4] });
+  fire(f.t[2], p2); fire(f.t[3], p3); fire(f.t[4], p4);
+  markFeature(f.id);
+  return { id: f.id, p: [null, null, p2, p3, p4], br, own: { featureId: f.id, pipelineId: p2, branch: br(2) } };
+}
+/** Seams for takeInVerdict: every sibling branch resolves and is missing unless said otherwise (the shared base, run 1's
+ *  branch, is held). Every call recorded. */
+function takeInSeams({ check = () => ({ status: 'clean', files: [], fileCount: 0 }), ancestor = (a) => a === `refs/heads/${BASE}`, resolves = () => true } = {}) {
+  const checks = [];
+  const ancestors = [];
+  return { checks, ancestors, deps: {
+    checkCombine: async (dir, { branches }) => { checks.push([...branches]); return check(branches); },
+    isAncestor: async (dir, a, b) => { ancestors.push([a, b]); return ancestor(a, b); },
+    resolves: async (dir, ref) => resolves(ref) } };
+}
+const verdictOf = (w, s) => CHAIN.takeInVerdict(root, w.own, s.deps);
+
+test('takeInVerdict: nothing missing when the run holds every finished sibling; no combine check', () => withEnvVars(SMALL_ON, async () => {
+  const w = takeInFeature();
+  const s = takeInSeams({ ancestor: () => true });
+  assert.deepEqual(await verdictOf(w, s), { status: 'none', skipped: [] });
+  assert.deepEqual(s.checks, []);
+}));
+
+test('takeInVerdict: a same-base sibling still merging its work back is a wait for its run number', () => withEnvVars(SMALL_ON, async () => {
+  const w = takeInFeature();
+  getDb().prepare('UPDATE pipelines SET branch = ?, updated_at = ? WHERE id = ?')
+    .run(JSON.stringify({ source: BASE, feature: BASE, sameAsSource: true, worktreeDir: '/tmp/x' }), new Date().toISOString(), w.p[3]);
+  assert.deepEqual(await verdictOf(w, takeInSeams()), { status: 'wait', after: 3 });
+}));
+
+/** Pipeline `pid` ran on its source branch and is done: still merging back unless `over` says otherwise. */
+const onSource = (pid, over = {}, updatedAt = new Date().toISOString()) => getDb().prepare('UPDATE pipelines SET branch = ?, updated_at = ? WHERE id = ?')
+  .run(JSON.stringify({ source: BASE, feature: BASE, sameAsSource: true, worktreeDir: '/tmp/x', ...over }), updatedAt, pid);
+
+test('mergingBackSliceOf: null when no run finished', () => {
+  quiet();
+  const f = createSliceFeature({ pipelineId: pipe('stopped'), projectDir: root, title: 'C', outline: outlineOf(2), perspectives: ['product'], workflowId: 'wf_shape' });
+  assert.equal(CHAIN.mergingBackSliceOf(f.id), null);
+});
+
+test("mergingBackSliceOf: the pending run's number; exclude skips the asker's own run; null once it merged back", () => {
+  const w = takeInFeature();
+  assert.equal(CHAIN.mergingBackSliceOf(w.id), null, 'finished runs, none merging back');
+  onSource(w.p[3]);
+  assert.equal(CHAIN.mergingBackSliceOf(w.id), 3);
+  assert.equal(CHAIN.mergingBackSliceOf(w.id, { exclude: w.p[3] }), null);
+  onSource(w.p[3], { mergeBack: { merged: true } });
+  assert.equal(CHAIN.mergingBackSliceOf(w.id), null);
+  // Past MERGE_BACK_WAIT_MS a merge back that never came holds nothing.
+  onSource(w.p[3], {}, '2026-01-01T00:00:00Z');
+  assert.equal(CHAIN.mergingBackSliceOf(w.id), null);
+});
+
+test('mergingBackSliceOf: of two pending runs, the first in finish order', () => {
+  const w = takeInFeature({ at: { 3: '2026-03-04T00:00:00Z', 4: '2026-03-03T00:00:00Z' } });
+  onSource(w.p[3]);
+  onSource(w.p[4]);
+  assert.equal(CHAIN.mergingBackSliceOf(w.id), 4);
+});
+
+test('mergingBackSliceOf: null on any error, never throws', () => {
+  assert.equal(CHAIN.mergingBackSliceOf({ toString() { throw new Error('boom'); } }), null);
+});
+
+test('takeInVerdict: clean lists the missing runs in finish order with the combine check', () => withEnvVars(SMALL_ON, async () => {
+  const w = takeInFeature({ at: { 3: '2026-03-04T00:00:00Z', 4: '2026-03-03T00:00:00Z' } });
+  const s = takeInSeams();
+  const v = await verdictOf(w, s);
+  assert.equal(v.status, 'clean');
+  assert.deepEqual(v.missing, [{ index: 4, branch: w.br(4), pipelineId: w.p[4] }, { index: 3, branch: w.br(3), pipelineId: w.p[3] }], 'finish order');
+  assert.deepEqual(s.checks, [[w.br(2), w.br(4), w.br(3)]]);
+  assert.equal(v.check.status, 'clean');
+  assert.deepEqual(v.skipped, []);
+}));
+
+test('takeInVerdict: a sibling whose branch no longer resolves is left out and listed in skipped', () => withEnvVars(SMALL_ON, async () => {
+  const w = takeInFeature();
+  const v = await verdictOf(w, takeInSeams({ resolves: (ref) => !ref.endsWith(w.br(4)) }));
+  assert.equal(v.status, 'clean');
+  assert.deepEqual(v.missing.map((m) => m.index), [3]);
+  assert.deepEqual(v.skipped, [{ index: 4, branch: w.br(4) }]);
+}));
+
+test('takeInVerdict: conflicts are a clash naming the runs and the file', () => withEnvVars(SMALL_ON, async () => {
+  const w = takeInFeature();
+  const held = (a) => a === `refs/heads/${BASE}` || a === `refs/heads/${w.br(4)}`;   // run 2 already holds run 4's work
+  const v = await verdictOf(w, takeInSeams({ check: (branches) => conflicts(branches), ancestor: held }));
+  assert.deepEqual([v.status, v.reason, v.runs.slice().sort(), v.files], ['clash', REASON, [2, 3], ['src/a.mjs']]);
+}));
+
+test('takeInVerdict: a failed check or a gone branch is an error, and a throwing seam never throws out', () => withEnvVars(SMALL_ON, async () => {
+  const w = takeInFeature();
+  const timeout = await verdictOf(w, takeInSeams({ check: () => ({ status: 'error', kind: 'timeout', error: 'git timed out', files: [], fileCount: 0 }) }));
+  assert.equal(timeout.status, 'error');
+  assert.match(timeout.error, /git timed out/);
+  const gone = await verdictOf(w, takeInSeams({ check: (branches) => ({ status: 'no-branch', branch: branches[1], files: [], fileCount: 0 }) }));
+  assert.equal(gone.status, 'error');
+  assert.match(gone.error, /no longer exists/);
+  assert.deepEqual(await verdictOf(w, takeInSeams({ ancestor: () => { throw new Error('boom'); } })), { status: 'error', error: 'boom' });
+}));
+
+test('takeInVerdict: a finished run on another base is missing too, in finish order, so a wait takes in all dev would', () => withEnvVars(SMALL_ON, async () => {
+  const w = takeInFeature({ three: { source: 'feat/other' }, four: { source: 'feat/else' } });
+  const s = takeInSeams();
+  const v = await verdictOf(w, s);
+  assert.deepEqual([v.status, v.missing?.map((m) => m.index)], ['clean', [3, 4]]);
+  assert.deepEqual(s.checks, [[w.br(2), w.br(3), w.br(4)]]);
+}));
+
+test('takeInVerdict: a waiting run with no recorded fire-time base takes in nothing, and git is not asked', () => withEnvVars(SMALL_ON, async () => {
+  const w = takeInFeature();
+  getDb().prepare('UPDATE pipelines SET branch = NULL WHERE id = ?').run(w.p[2]);
+  const s = takeInSeams();
+  assert.deepEqual(await verdictOf(w, s), { status: 'none', skipped: [] });
+  assert.deepEqual([s.checks, s.ancestors], [[], []]);
+}));
+
+test('takeInVerdict (D5): a run that took work in still has a fire-time base (sourceFrom ?? source); a run on its sibling\'s branch is taken in too', () => withEnvVars(SMALL_ON, async () => {
+  // The waiting run and run 3 each took work in since they started from BASE; run 4 started from run 3's branch.
+  const w = takeInFeature({ own: { source: 'feat/taken', sourceFrom: BASE }, three: { source: 'feat/else', sourceFrom: BASE } });
+  getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?')
+    .run(JSON.stringify({ source: w.br(3), feature: w.br(4) }), w.p[4]);
+  const v = await verdictOf(w, takeInSeams());
+  assert.deepEqual([v.status, v.missing?.map((m) => m.index)], ['clean', [3, 4]]);
+  assert.equal(CHAIN.fireSourceOf(w.p[2]), BASE);
+  assert.equal(CHAIN.fireSourceOf(w.p[4]), w.br(3));
+  assert.equal(CHAIN.fireSourceOf('nope'), null);
+}));
+
+test('combineVerdict is exported for the take-in', () => { assert.equal(typeof CHAIN.combineVerdict, 'function'); });
+
+// ── Slice 3 (R-po-6): a resume is checked for a clash before it starts (takeInClashAudit, resumeTakeInVerdict) ──────
+test('takeInClashAudit: names the clashing missing branch and the file count; null without a clashing entry', () => {
+  const missing = [{ index: 3, branch: 'feat/r3' }, { index: 4, branch: 'feat/r4' }, { index: 5, branch: 'feat/r5' }];
+  const clash = { status: 'clash', runs: [2, 4, 5], files: ['src/a.mjs'], missing };
+  assert.equal(CHAIN.takeInClashAudit(clash, 'feat/own'), 'Base `feat/r4` moved: conflicts in 1 file.', 'the first missing run that clashes');
+  assert.equal(CHAIN.takeInClashAudit({ ...clash, files: ['src/a.mjs', 'src/b.mjs'] }, 'feat/own'),
+    'Base `feat/r4` moved: conflicts in 2 files.');
+  for (const none of [{ ...clash, runs: [2] }, { ...clash, missing: [] }, { status: 'clash', runs: [2], files: [] }, null, undefined]) {
+    assert.equal(CHAIN.takeInClashAudit(none, 'feat/own'), null, JSON.stringify(none));
+  }
+});
+
+/** takeInSeams that clash on every combine, also recording each ref it is asked to resolve. */
+function resumeSeams(over = {}) {
+  const resolved = [];
+  const s = takeInSeams({ check: (branches) => conflicts(branches), resolves: (ref) => { resolved.push(ref); return true; }, ...over });
+  return { ...s, resolved };
+}
+const setBranch = (pid, rec) => getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?').run(rec && JSON.stringify(rec), pid);
+
+test('resumeTakeInVerdict: flag off, an unmarked feature, no feature, no branch record or sameAsSource answers none and asks git nothing', async () => {
+  const none = async (w, why, pid = w.p[2]) => {
+    const s = resumeSeams();
+    assert.deepEqual(await CHAIN.resumeTakeInVerdict(root, pid, s.deps), { status: 'none', skipped: [] }, why);
+    assert.deepEqual([s.checks, s.ancestors, s.resolved], [[], [], []], `${why}: git is not asked`);
+  };
+  await withEnvVars(SMALL_OFF, async () => none(takeInFeature(), 'flag off'));
+  await withEnvVars(SMALL_ON, async () => {
+    const unmarked = takeInFeature();
+    getDb().prepare('UPDATE pipelines SET shape_stats = NULL WHERE id = (SELECT origin_pipeline_id FROM shape_features WHERE id = ?)').run(unmarked.id);
+    await none(unmarked, 'unmarked feature');
+    await none(takeInFeature(), 'a pipeline of no feature', pipe('paused', { branch: { source: BASE, feature: 'feat/loose' } }));
+    for (const [why, rec] of [
+      ['no branch record', () => null],
+      ['no feature branch', () => ({ source: BASE })],
+      ['on its source branch', (w) => ({ source: BASE, feature: w.br(2), sameAsSource: true })],
+    ]) {
+      const w = takeInFeature();
+      setBranch(w.p[2], rec(w));
+      await none(w, why);
+    }
+  });
+});
+
+test("resumeTakeInVerdict: a marked paused run reads its own branch record's feature branch and returns takeInVerdict's clash", () => withEnvVars(SMALL_ON, async () => {
+  const w = takeInFeature();
+  getDb().prepare("UPDATE pipelines SET status = 'paused' WHERE id = ?").run(w.p[2]);
+  const holds = (a) => a === `refs/heads/${BASE}` || a === `refs/heads/${w.br(4)}`;   // run 2 already holds run 4's work
+  const s = resumeSeams({ ancestor: holds });
+  const v = await CHAIN.resumeTakeInVerdict(root, w.p[2], s.deps);
+  assert.deepEqual([v.status, v.reason, v.runs?.slice().sort(), v.files, v.branch], ['clash', REASON, [2, 3], ['src/a.mjs'], w.br(2)]);
+  assert.deepEqual(v.missing, [{ index: 3, branch: w.br(3), pipelineId: w.p[3] }]);
+  assert.equal(s.checks[0][0], w.br(2), "the combine starts from the run's own branch");
+  assert.equal(CHAIN.takeInClashAudit(v, v.branch), `Base \`${w.br(3)}\` moved: conflicts in 1 file.`);
+  const broken = await CHAIN.resumeTakeInVerdict(root, w.p[2], resumeSeams({ ancestor: () => { throw new Error('boom'); } }).deps);
+  assert.deepEqual([broken.status, broken.error], ['error', 'boom']);
+  const noRecord = await CHAIN.resumeTakeInVerdict(root, w.p[2], { recordOf: () => { throw new Error('unreadable'); } });
+  assert.equal(noRecord.status, 'error', 'it never throws');
+}));
+
+test('run-harness take-in builds its clash line through takeInClashAudit', () => {
+  const src = readFileSync(new URL('../src/core/run-harness.mjs', import.meta.url), 'utf8');
+  const body = /\n  async _takeInNow\([\s\S]*?\n  \}\n/.exec(src)?.[0] || '';
+  assert.ok(body, '_takeInNow');
+  assert.ok(body.includes('takeInClashAudit('), '_takeInNow calls takeInClashAudit');
+  assert.ok(!body.includes('baseMovedAudit(c.branch'), 'no second builder of the clash line');
+});
+
+// ── A2 (R-qa-2): run 6's PR diff after 3 take-ins from unrelated bases ──────────────────────────────────────────────
+/** The harness's take-in patch rule (_takeInNow, src/core/run-harness.mjs:10854-10866), once for one take-in `d`:
+ *  `source` becomes the branch taken in, `sourceFrom` keeps the first old `source`, `tookIn` gets one entry appended. */
+const tookInOnce = (r, d) => ({ ...r, source: d.branch, sourceFrom: r.sourceFrom || r.source, tookIn: [...(r.tookIn || []), d] });
+
+test("A2 (R-qa-2): run 6's PR diff after 3 take-ins from unrelated bases holds only its own and carried work", (t) => withEnvVars(SMALL_ON, async () => {
+  quiet();
+  const dir = mkdtempSync(join(tmpdir(), 'worca-shape-chain-takein-'));
+  try {
+    git(dir, 'init', '-q', '-b', 'main'); git(dir, 'config', 'user.email', 't@t'); git(dir, 'config', 'user.name', 't');
+    git(dir, 'config', 'commit.gpgsign', 'false');
+    writeFileSync(join(dir, 'base.txt'), 'base\n'); git(dir, 'add', '-A'); git(dir, 'commit', '-qm', 'base');
+    const br = (k) => `feat/a2-run${k}`;
+    // Runs 1 to 4 start from main, run 5 from run 1, run 6 from run 5: runs 2, 3 and 4 share no base with runs 5 and 1.
+    for (const [k, from] of [[1, 'main'], [2, 'main'], [3, 'main'], [4, 'main'], [5, br(1)], [6, br(5)]]) {
+      git(dir, 'checkout', '-q', '-b', br(k), from);
+      writeFileSync(join(dir, `run${k}.txt`), `${k}\n`); git(dir, 'add', '-A'); git(dir, 'commit', '-qm', `run${k} work`);
+    }
+    // Run 6 (checked out) takes in runs 2, 3 and 4, each as a two-parent merge like mergeBaseInto's.
+    const shas = {};
+    for (const k of [2, 3, 4]) { shas[k] = git(dir, 'rev-parse', br(k)); git(dir, 'merge', '-q', '--no-ff', '--no-edit', br(k)); }
+    git(dir, 'checkout', '-q', 'main');
+    assert.equal(git(dir, 'rev-list', '--count', '--min-parents=2', `main..${br(6)}`), '3', 'three take-in merges');
+
+    // Finish order 1, 5, 2, 3, 4, 6.
+    const at = { 1: 1, 5: 2, 2: 3, 3: 4, 4: 5, 6: 6 };
+    const seed = (k, record) => {
+      const when = `2026-03-0${at[k]}T00:00:00Z`;
+      return pipe('done', { branch: { feature: br(k), ...record }, steps: stepAt(when), updatedAt: when });
+    };
+    const p = [null, seed(1, { source: 'main' })];
+    const f = createSliceFeature({ pipelineId: p[1], projectDir: root, title: 'Take in', outline: outlineOf(6), perspectives: ['product'], workflowId: 'wf_shape' });
+    for (const k of [2, 3, 4]) p[k] = seed(k, { source: 'main' });
+    p[5] = seed(5, { source: br(1) });
+    let six = { source: br(5), feature: br(6) };
+    for (const k of [2, 3, 4]) six = tookInOnce(six, { index: k, branch: br(k), pipelineId: p[k], sha: shas[k] });
+    assert.deepEqual([six.source, six.sourceFrom, six.tookIn.map((d) => d.index)], [br(4), br(5), [2, 3, 4]]);
+    p[6] = seed(6, six);
+    const tickets = rows(f.id).map((r) => r.ticket_id);
+    for (let k = 2; k <= 6; k++) fire(tickets[k - 1], p[k]);
+    markFeature(f.id);
+    assert.deepEqual(finishedSlices(f.id).map((s) => s.index), [1, 5, 2, 3, 4, 6]);
+
+    // 1. The commits of run 6's PR diff.
+    const subjects = (base, head) => git(dir, 'log', '--no-merges', '--format=%s', `${base}..${head}`).split('\n').filter(Boolean);
+    const base = smallRunsPrBase(p[6]);
+    const diff = subjects(base, br(6));
+    const shown = `run 6's PR diff ${base}..${br(6)} lists: ${diff.join(', ')}`;
+    t.diagnostic(shown);
+    // 2. What Ship opens and what it carries.
+    const ship = await FEATURES.featureShipInput(featureView(f.id));
+    const openers = ship.slices.filter((s) => s.pipelineId);
+    const carried = (ship.carried || []).map((c) => c.pipelineId);
+    // 3. Every commit in the diff is run 6's or a carried run's.
+    const allowed = [6, ...[1, 2, 3, 4, 5].filter((k) => carried.includes(p[k]))].map((k) => `run${k} work`);
+    assert.deepEqual(diff.filter((s) => !allowed.includes(s)), [], `commits of runs that are neither run 6 nor carried by Ship; ${shown}`);
+    // 4. No commit ships in two PRs.
+    const inPr = new Map();
+    for (const o of openers) {
+      const k = p.indexOf(o.pipelineId);
+      for (const s of subjects(smallRunsPrBase(o.pipelineId), br(k))) {
+        assert.equal(inPr.get(s), undefined, `"${s}" is in the PRs of both run ${inPr.get(s)} and run ${k}`);
+        inPr.set(s, k);
+      }
+    }
+    // Runs 4 and 6 open PRs; runs 1, 2, 3 and 5 ship in run 6's.
+    assert.deepEqual(openers.map((o) => o.index), [4, 6]);
+    assert.deepEqual([...carried].sort(), [p[1], p[2], p[3], p[5]].sort());
+    assert.deepEqual([...diff].sort(), [1, 2, 3, 5, 6].map((k) => `run${k} work`), shown);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+}));
+
+// ── A3 (R-qa-2): a clash found as the run sets up becomes a hold ────────────────────────────────────────────────────
+test('holdAfterSetupClash: sets the clash hold and unfires the ticket; flag off, an unmarked feature or a lost compare-and-set writes nothing', async () => {
+  const NOW = Date.parse('2026-03-10T00:00:00Z');
+  const clash = { reason: REASON, runs: [2, 3], files: ['src/a.mjs'] };
+  const raw = (id) => getDb().prepare('SELECT * FROM scheduled_runs WHERE id = ?').get(id);
+  const holdOf = (id) => withEnvVars(SMALL_ON, () => FEATURES.clashHoldOf(id));
+  const call = (args, env = SMALL_ON) => withEnvVars(env, () => CHAIN.holdAfterSetupClash(args, { now: NOW }));
+  /** Run 4 of a fresh feature, fired as `pid`, its attempt ended in error. */
+  const attempt = ({ marked = true } = {}) => withEnvVars(SMALL_ON, () => {
+    const f = feature(4);
+    markFeature(f.id);
+    if (!marked) getDb().prepare('UPDATE pipelines SET shape_stats = NULL WHERE id = (SELECT origin_pipeline_id FROM shape_features WHERE id = ?)').run(f.id);
+    const pid = pipe('error');
+    fire(f.t[4], pid);
+    return { id: f.id, args: { ticketId: f.t[4], pipelineId: pid, clash } };
+  });
+  const writesNothing = async (label, ticketId, args, env) => {
+    const was = raw(ticketId);
+    assert.equal(await call(args, env), null, label);
+    assert.deepEqual(raw(ticketId), was, `${label}: the ticket is unchanged`);
+    assert.equal(await holdOf(ticketId), null, `${label}: no hold`);
+  };
+
+  const off = await attempt();
+  await writesNothing('flag off', off.args.ticketId, off.args, SMALL_OFF);
+  const unmarked = await attempt({ marked: false });
+  await writesNothing('an unmarked feature', unmarked.args.ticketId, unmarked.args);
+  const bare = await attempt();
+  await writesNothing('no clash', bare.args.ticketId, { ...bare.args, clash: undefined });
+  // A Start now race: the ticket is already fired as another pipeline.
+  const raced = await attempt();
+  fire(raced.args.ticketId, pipe('running'));
+  await writesNothing('a lost compare-and-set', raced.args.ticketId, raced.args);
+
+  const w = await attempt();
+  assert.deepEqual(await call(w.args), { held: true, featureId: w.id });
+  const ticket = getTicket(w.args.ticketId);
+  assert.deepEqual([ticket.status, ticket.pipelineId, ticket.forced, ticket.failReason], ['scheduled', null, false, null]);
+  assert.deepEqual(await holdOf(w.args.ticketId), { ...clash, at: NOW });
 });

@@ -142,7 +142,7 @@ worca ui            # start it (worca --ui does the same)
 ```
 
 Open the printed URL (by default `http://localhost:4317`) and add a project under **Projects › Add project**: **New**
-by name, any **Folder**, or **Clone from URL**. Then click **New pipeline**, describe the task, pick a workflow and
+by name, any **Folder**, or **Clone from URL**. Then click **New** at the top of the Runs page, describe the task, pick a workflow and
 press **Start run**. To try a run offline, with no Claude calls and no cost, turn on **Mock mode** beside it.
 
 At the Advanced [UI level](ui-levels.md), the form also takes a markdown brief or a task from a plugin source such

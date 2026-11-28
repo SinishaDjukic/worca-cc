@@ -1,7 +1,8 @@
 // src/shared/pr-auto.mjs
 // "Create a PR when a run finishes": the values, labels and source wording shared by the core
 // (resolution, validation) and the browser (the New run form, the run header, the settings pages).
-// Pure: no imports, no I/O.
+// Pure: no I/O (the ship ledger gives the legacy reason it maps).
+import { LEGACY_PER_RUN_REASON } from './shape/ship-ledger.mjs';
 
 export const PR_OPEN = Object.freeze(['none', 'draft', 'ready']);
 export const PR_SLICES = Object.freeze(['each', 'one']);
@@ -29,3 +30,12 @@ const EXEMPT_TEXT = Object.freeze({
 export function prSourceText(source) { return SOURCE_TEXT[source] || (source ? String(source) : ''); }
 /** Why an exempt run opens no PR through this path; an unknown kind reads as no-work. */
 export function prExemptText(exempt) { return EXEMPT_TEXT[exempt] || EXEMPT_TEXT['no-work']; }
+
+/** Stored outcome reasons that read in other words on screen (with the Shaper small runs flag on). A record keeps its
+ *  reason as stored; only the display maps it. */
+export const LEGACY_OUTCOME_REASONS = Object.freeze({ [LEGACY_PER_RUN_REASON]: 'each run of this feature ships its own pull request' });
+/** A stored outcome reason as shown: a legacy reason in its new words, any other as it is. */
+export function outcomeReasonText(reason) {
+  const r = reason == null ? '' : String(reason);
+  return Object.hasOwn(LEGACY_OUTCOME_REASONS, r) ? LEGACY_OUTCOME_REASONS[r] : r;
+}

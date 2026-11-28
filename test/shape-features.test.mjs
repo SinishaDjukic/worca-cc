@@ -6,7 +6,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'nod
 import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { replanBrief } from '../src/shared/shape/slices.mjs';
+import { replanBrief, changelogWithFeature } from '../src/shared/shape/slices.mjs';
+import { shipChangelogSlices } from '../src/core/shape/ship.mjs';
 import { world } from './helpers/shape-sixteen-runs.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
@@ -29,6 +30,10 @@ import {
   addFeatureNote, featureNotes, appendFeatureRun, featureBase, liveRoundOf, setFeatureAcceptance, chatShipCardOffered,
   changeAgreedRequirements, acceptanceRefusal, shipHold, carriedRequirements, storedAgentFacts,
 } from '../src/core/shape/features.mjs';
+// A namespace read, so a missing new export (the clash hold) fails only its own test, not the whole file.
+import * as FEATURES from '../src/core/shape/features.mjs';
+import { createPrLabel } from '../ui/public/ship-words.mjs';
+import { runOrderLayout } from '../ui/public/shape/run-order-map.mjs';
 
 useTempHome(after, 'worca-shape-features-');
 
@@ -1670,6 +1675,33 @@ test('C4: an append in the same call keeps the new text in outline.agreed and it
   assert.match(getTicket(out.added[0].ticketId, { withRequest: true }).request.prompt, /members and guests/);
 });
 
+// ---- Slice 8 (R-po-3, D8): the Verifier gate's runs build on the last run before them ---------------------------
+test('an appendFor with dependsOn stores it and the view builds on that run; without it an appended run builds on nothing', () => withSmallRuns(true, () => {
+  const a = mkC4(5, { pipelineId: pipe('done') });
+  // buildsOn is a marked feature's word: mark its origin run.
+  getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), a.pid);
+  const out = changeAgreedRequirements(a.id, { changes: [], appendFor: [
+    { ownerIndex: 2, ids: ['R-po-2'], title: 'Close R-po-2', goal: 'g', dependsOn: ['s5'] },
+    { ownerIndex: 3, ids: ['R-po-2'], title: 'Change: R-po-2', goal: 'g' }] });
+  assert.deepEqual(out.added.map((x) => x.index), [6, 7]);
+  appendFeatureRun(a.id, { title: 'Change', goal: 'g', kind: 'change', requirements: ['R-po-2'] });
+  assert.deepEqual(outlineRow(a.id).slices.slice(5).map((s) => s.dependsOn), [['s5'], [], []]);
+  assert.deepEqual(featureView(a.id).slices.slice(5).map((s) => s.buildsOn), [[5], [], []]);
+}));
+
+test('an extra run appended from chat builds on nothing and Show order stands it after the last run', () => withSmallRuns(true, () => {
+  // Runs 1–5 as a chain, so "after run 5" is a column no other rule gives run 6.
+  const outline = outlineC4(5);
+  outline.slices.forEach((s, i) => { s.dependsOn = i ? [`s${i}`] : []; });
+  const a = mkC4(5, { pipelineId: pipe('done'), outline });
+  getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), a.pid);
+  appendFeatureRun(a.id, { title: 'Bigger legend', goal: 'make the legend bigger', kind: 'extra' });
+  const { slices } = featureView(a.id);
+  assert.deepEqual([slices[5].kind, slices[5].buildsOn], ['extra', []], 'the data is as stored: it builds on nothing');
+  const col = new Map(runOrderLayout(slices).runs.map((r) => [r.index, r.col]));
+  assert.deepEqual([col.get(5), col.get(6)], [4, 5], 'run 6 stands after run 5');
+}));
+
 test('C4: a STALE from throws and leaves the row, tickets and slice rows byte-equal', () => {
   const a = mkC4(3, { pipelineId: pipe('done') });
   const before = snapC4(a.id);
@@ -1783,8 +1815,9 @@ test('fail closed: flag on, an agreed requirement with no run and no person keep
     assert.equal('unowned' in v.ship.smallRuns, false);
     assert.equal(acceptanceRefusal(v), null);
   });
+  // Slice 7 (D1): with every requirement owned or confirmed, the open confirmation is the hold.
   const held = withSmallRuns(true, () => mk(2, { outline: kindsOutline(), requirementKinds: COMPLIANCE }));
-  assert.equal(shipHold(held.id), null);
+  assert.equal(shipHold(held.id), 'Needs your confirmation: R-sec-1');
   assert.equal(shipHold('feat_none'), null);
 });
 
@@ -1877,7 +1910,7 @@ test('D3: flag on, marked: every ship.smallRuns entry has shown; flag off: none'
   mark(pid);
   const on = withSmallRuns(true, () => featureView(id).ship.smallRuns);
   assert.deepEqual(on.owned.map((o) => [o.id, o.shown.text, o.shown.mark]), [['R-po-1', 'run 1 · met', 'check'], ['R-qa-1', 'run 2 · to do', 'wait']]);
-  assert.deepEqual(on.confirmed.map((c) => [c.id, c.shown.text]), [['R-sec-1', 'confirmed by a person · Compliance']]);
+  assert.deepEqual(on.confirmed.map((c) => [c.id, c.shown.text]), [['R-sec-1', 'waiting for you to confirm · Compliance']]);
   const off = withSmallRuns(false, () => featureView(id).ship.smallRuns);
   assert.ok([...off.owned, ...off.confirmed].every((e) => !('shown' in e)), 'flag off: D1\'s entries');
   assert.deepEqual(off.met, on.met);
@@ -1980,3 +2013,249 @@ test('resumeFeature without an index restarts the first halted run (run 5), not 
   assert.notEqual(res.ticketId, before.get(5));
   assert.equal(rowTickets().get(9), before.get(9));
 }));
+
+// ---- A run held because the runs it builds on clash: the hold and Start now's refusal --------------------------------
+const CLASH_HOLD = (at = Date.now()) => ({ reason: 'runs 2 and 3 clash in src/a.mjs', runs: [2, 3], files: ['src/a.mjs'], at });
+
+test('clashRefusalOf (D9): the reason only when the hold arm ran for this request', () => {
+  const hold = CLASH_HOLD(1000);
+  const ticket = { status: 'scheduled', forced: false };
+  const refuse = (over = {}) => FEATURES.clashRefusalOf({ ticket, hold, requestAt: 1000, ...over });
+  assert.equal(refuse(), hold.reason, 'found in the same millisecond as the request');
+  assert.equal(refuse({ requestAt: 999 }), hold.reason);
+  assert.equal(refuse({ ticket: { status: 'scheduled', forced: 0 } }), hold.reason);
+  // A busy tick that never reached the ticket leaves it forced: a stale hold never answers.
+  assert.equal(refuse({ ticket: { status: 'scheduled', forced: true } }), null);
+  assert.equal(refuse({ ticket: { status: 'scheduled', forced: 1 } }), null);
+  assert.equal(refuse({ requestAt: 1001 }), null, 'a hold found before the request');
+  assert.equal(refuse({ ticket: { status: 'firing', forced: false } }), null);
+  assert.equal(refuse({ ticket: { status: 'running', forced: false } }), null);
+  assert.equal(refuse({ hold: null }), null);
+  assert.equal(refuse({ ticket: null }), null);
+});
+
+test('clash hold: it holds the ticket and reads on the view with Ask me before each run off, until cleared or the feature leaves active', () => withSmallRuns(true, () => {
+  const fx = world(root, { done: [1] });
+  const ticketId = fx.ticketOf(2);
+  const holds = () => FEATURES.featureHoldsTicket(getTicket(ticketId));
+  assert.equal(featureView(fx.featureId).approveEach, false);
+  assert.equal(holds(), false);
+  const hold = CLASH_HOLD();
+  FEATURES.setClashHold(ticketId, hold);
+  assert.deepEqual(FEATURES.clashHoldOf(ticketId), hold);
+  assert.equal(holds(), true);
+  assert.deepEqual(featureView(fx.featureId).held, { index: 2, ticketId, reason: hold.reason });
+  getDb().prepare("UPDATE shape_features SET status = 'replanning' WHERE id = ?").run(fx.featureId);
+  assert.equal(holds(), false, 'only an active feature holds');
+  getDb().prepare("UPDATE shape_features SET status = 'active' WHERE id = ?").run(fx.featureId);
+  assert.equal(holds(), true);
+  FEATURES.clearClashHold(ticketId);
+  assert.equal(FEATURES.clashHoldOf(ticketId), null);
+  assert.equal(holds(), false);
+  assert.equal(featureView(fx.featureId).held, null);
+}));
+
+test('clash hold: Cancel the rest drops the hold of each ticket it cancels', () => withSmallRuns(true, () => {
+  const fx = world(root, { done: [1] });
+  const ticketId = fx.ticketOf(2);
+  FEATURES.setClashHold(ticketId, CLASH_HOLD());
+  cancelRest(fx.featureId);
+  getDb().prepare("UPDATE shape_features SET status = 'active' WHERE id = ?").run(fx.featureId);
+  assert.equal(FEATURES.clashHoldOf(ticketId), null);
+}));
+
+// ── Slice 3 (R-arch-5, D10, D11, D13): the PR base after a take-in, and the stop's refusal and "going" marks ────────
+const mergedPr = (pid) => getDb().prepare("UPDATE pipelines SET pr_url = 'https://github.com/me/repo/pull/7', pr_number = 7, pr_state = 'MERGED' WHERE id = ?").run(pid);
+/** A marked 4-run feature finishing 1, 3, 4, 2, run 2's record carrying `tookIn` (run numbers) and `source` the last
+ *  one's branch. → { p, br } */
+function tookInFeature(tookIn) {
+  const done = (day, branch = {}) => pipe('done', { branch, steps: [{ key: 'n_impl', status: 'done', updatedAt: `2026-03-0${day}T00:00:00Z` }] });
+  const p1 = done(1);
+  const f = createSliceFeature({ pipelineId: p1, projectDir: root, title: 'Charts', outline: outlineOf(4), perspectives: ['product'], workflowId: 'wf_shape' });
+  const [, r2, r3, r4] = tickets(f.id);
+  const p = [null, p1, done(5), done(2), done(3)];
+  for (const [k, r] of [[2, r2], [3, r3], [4, r4]]) setTicket(r.ticket_id, 'fired', { pipelineId: p[k] });
+  mark(p1);
+  const br = (k) => `feat/${p[k]}`;
+  getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?').run(JSON.stringify({
+    source: tookIn.length ? br(tookIn.at(-1)) : br(1), sourceFrom: br(1), feature: br(2),
+    tookIn: tookIn.map((k) => ({ index: k, branch: br(k), pipelineId: p[k], sha: 'a'.repeat(40) })) }), p[2]);
+  return { p, br };
+}
+
+test('R-arch-5 smallRunsPrBase: a run that took work in is based on the recorded source, not the run that finished before it', () => {
+  const { p, br } = tookInFeature([3]);
+  assert.equal(FEATURES.smallRunsPrBase(p[2]), br(3));
+  assert.equal(stackedPrBase(p[2], ['main', br(3)]), br(3));
+  mergedPr(p[4]);                                   // the finish-order predecessor's PR says nothing about this base
+  assert.equal(FEATURES.smallRunsPrBase(p[2]), br(3));
+});
+
+test('R-arch-5 smallRunsPrBase: the root once the PR of the last taken-in run is merged, and only that one', () => {
+  const { p, br } = tookInFeature([4, 3]);
+  mergedPr(p[4]);
+  assert.equal(FEATURES.smallRunsPrBase(p[2]), br(3), 'an earlier taken-in run merged: the base stays');
+  mergedPr(p[3]);
+  assert.equal(FEATURES.smallRunsPrBase(p[2]), 'main');
+});
+
+test('R-arch-5 smallRunsPrBase: an empty tookIn keeps the finish-order rule', () => {
+  const { p, br } = tookInFeature([]);
+  assert.equal(FEATURES.smallRunsPrBase(p[2]), br(4));
+});
+
+test('D11/D13 liveSliceFrom: a refused reason and a take-in in flight mark the stop; without them today\'s object', () => {
+  const input = { runId: 'r1', status: 'running', pendingQuestion: STOP_PQ, approved: true };
+  const plain = liveSliceFrom(input);
+  assert.deepEqual(plain.stop, { reason: 'objection', held: false });
+  assert.deepEqual(liveSliceFrom({ ...input, refused: null, going: false }), plain);
+  assert.deepEqual(liveSliceFrom({ ...input, refused: 'runs 2 and 3 clash in src/a.mjs' }).stop,
+    { reason: 'objection', held: false, refused: 'runs 2 and 3 clash in src/a.mjs' });
+  assert.deepEqual(liveSliceFrom({ ...input, going: true }).stop, { reason: 'objection', held: false, going: true });
+  assert.equal('stop' in liveSliceFrom({ runId: 'r', status: 'running', going: true, refused: 'x' }), false, 'no stop, no marks');
+});
+
+test('D13 busySliceOf: a run whose open stop is taking work in is going', () => {
+  const f = mk(2);
+  const live = (extra) => (pid) => (pid === f.pid ? liveSliceFrom({ runId: 'r1', status: 'running', approved: true, pendingQuestion: STOP_PQ, ...extra }) : null);
+  assert.deepEqual(busySliceOf(f.id, { live: live({ going: true }) }), { index: 1 });
+  assert.equal(busySliceOf(f.id, { live: live({}) }), null, 'the same open stop without it is not going');
+});
+
+// ── Slice 4 (R-ux-3): a marked feature's Ship list follows the real branches (flag on) ──────────────────────────────
+/** A marked 4-run feature on `main`, every run done in the order `finish` names (run numbers). `branches[k]` is run k's
+ *  record as run numbers: `from` (its source; a string is a branch name) and `combined` (the runs its start merged).
+ *  Runs after the fourth stay unfinished: `running` (run 5) or not started (run 6). → { id, p, br } */
+function branchFeature(branches, { finish = [1, 2, 3, 4], slices = 4, extra = {} } = {}) {
+  const at = (k) => `2026-03-0${finish.indexOf(k) + 1}T00:00:00Z`;
+  const p = [null];
+  for (let k = 1; k <= Math.min(slices, 5); k++) {
+    p.push(finish.includes(k)
+      ? pipe('done', { steps: [{ key: 'n_impl', status: 'done', updatedAt: at(k) }] }) : pipe('running'));
+  }
+  const f = createSliceFeature({ pipelineId: p[1], projectDir: root, title: 'Charts', outline: outlineOf(slices), perspectives: ['product'], workflowId: 'wf_shape' });
+  const rows = tickets(f.id);
+  for (let k = 2; k < p.length; k++) setTicket(rows[k - 1].ticket_id, 'fired', { pipelineId: p[k] });
+  mark(p[1]);
+  const br = (x) => (typeof x === 'number' ? `feat/${p[x]}` : x);
+  const update = getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?');
+  for (let k = 1; k < p.length; k++) {
+    const { from = 'main', combined = null } = branches[k] || {};
+    update.run(JSON.stringify({ source: br(from), feature: br(k),
+      ...(combined ? { combined: combined.map((c) => ({ index: c, branch: br(c) })) } : {}), ...(extra[k] || {}) }), p[k]);
+  }
+  return { id: f.id, p, br };
+}
+/** Runs 2 and 3 build on run 1; run 4 starts from run 3 and combines run 2: 3 pull requests for 4 runs. */
+const COMBINE = { 2: { from: 1 }, 3: { from: 1 }, 4: { from: 3, combined: [2] } };
+const shipIndexes = (v) => v.ship.smallRuns.order.map((o) => o.index);
+
+test('small runs Ship (flag on): combine shape lists 3 PRs and Create reads 3', async () => {
+  const { id, p, br } = branchFeature(COMBINE);
+  await withSmallRunsAsync(true, async () => {
+    const v = featureView(id);
+    assert.deepEqual(shipIndexes(v), [1, 3, 4]);
+    assert.equal(createPrLabel(v.ship.smallRuns.order.length), 'Create 3 PRs');
+    assert.equal(v.ship.smallRuns.along, true);
+    const pids = [p[1], p[3], p[4]];
+    assert.deepEqual(v.ship.smallRuns.order.map((o) => o.pipelineId), pids);
+    // What is listed is what Ship opens, marks ready and bases.
+    assert.deepEqual(FEATURES.shipOrder(v).map((s) => s.pipelineId), pids);
+    const input = await featureShipInput(v);
+    assert.deepEqual(input.slices.map((s) => s.pipelineId), pids);
+    // Run 2's work ships inside run 4's PR, so the changelog still names it.
+    assert.deepEqual(input.carried.map((s) => s.pipelineId), [p[2]]);
+    assert.match(changelogWithFeature('', { title: input.title, slices: shipChangelogSlices(input) }), new RegExp(`^- ${v.slices[1].title}`, 'm'));
+    assert.deepEqual(pids.map((pid) => stackedPrBase(pid, ['main', br(1)])), ['main', br(1), br(3)]);
+  });
+});
+
+test('small runs Ship (flag on): each row stacks on the PR of the row before it', () => {
+  const { id, p, br } = branchFeature(COMBINE);
+  const open = getDb().prepare("UPDATE pipelines SET pr_url = ?, pr_number = ?, pr_state = 'OPEN' WHERE id = ?");
+  for (const [k, n] of [[1, 11], [2, 12], [3, 13], [4, 14]]) open.run(`https://github.com/me/repo/pull/${n}`, n, p[k]);
+  withSmallRuns(true, () => {
+    assert.deepEqual(featureView(id).ship.smallRuns.order.map((o) => [o.index, o.pr?.number, o.onto]),
+      [[1, 11, null], [3, 13, 11], [4, 14, 13]]);
+    assert.equal(FEATURES.smallRunsPrBase(p[3]), br(1));
+  });
+});
+
+// A pin: it holds before and after the change.
+test('small runs Ship (flag off): finish order unchanged', async () => {
+  const { id, p, br } = branchFeature(COMBINE);
+  await withSmallRunsAsync(false, async () => {
+    const v = featureView(id);
+    assert.deepEqual(shipIndexes(v), [1, 2, 3, 4]);
+    assert.equal('along' in v.ship.smallRuns, false);
+    assert.deepEqual(FEATURES.shipOrder(v).map((s) => s.index), [1, 2, 3, 4]);
+    assert.deepEqual((await featureShipInput(v)).slices.map((s) => s.index), [1, 2, 3, 4]);
+    assert.deepEqual([1, 2, 3, 4].map((k) => FEATURES.smallRunsPrBase(p[k])), ['main', br(1), br(2), br(3)]);
+  });
+});
+
+// A pin: it holds before and after the change.
+test('small runs Ship (flag on, fallback): an unexplained run lists 4 in finish order', () => {
+  // The combine shape without the record of what run 4 merged: nothing proves run 2's work is in a listed PR.
+  const { id, p, br } = branchFeature({ ...COMBINE, 4: { from: 3 } });
+  withSmallRuns(true, () => {
+    const v = featureView(id);
+    assert.deepEqual(shipIndexes(v), [1, 2, 3, 4]);
+    assert.equal('along' in v.ship.smallRuns, false);
+    assert.deepEqual(FEATURES.shipOrder(v).map((s) => s.index), [1, 2, 3, 4]);
+    assert.deepEqual([1, 2, 3, 4].map((k) => FEATURES.smallRunsPrBase(p[k])), ['main', br(1), br(2), br(3)]);
+  });
+});
+
+test('small runs Ship (flag on): a run that has not finished stays after the listed runs, in index order, with no base', () => {
+  const { id, p } = branchFeature(COMBINE, { slices: 6 });   // run 5 is running, run 6 has not started
+  withSmallRuns(true, () => {
+    const v = featureView(id);
+    assert.deepEqual(shipIndexes(v), [1, 3, 4, 5, 6]);
+    assert.equal(v.ship.smallRuns.along, true);
+    assert.deepEqual(FEATURES.shipOrder(v).map((s) => s.index), [1, 3, 4, 5, 6]);
+    assert.equal(FEATURES.smallRunsPrBase(p[5]), null);
+  });
+});
+
+test('small runs Ship (flag on): a MERGED predecessor puts the next listed run on the root', () => {
+  const { id, p, br } = branchFeature(COMBINE);
+  mergedPr(p[1]);
+  withSmallRuns(true, () => {
+    assert.deepEqual(shipIndexes(featureView(id)), [1, 3, 4]);
+    assert.deepEqual([1, 3, 4].map((k) => FEATURES.smallRunsPrBase(p[k])), ['main', 'main', br(3)]);
+  });
+});
+
+test('small runs Ship (flag on): a predecessor still merging back stays listed and puts the next run on the root', () => {
+  const { id, p, br } = branchFeature(COMBINE);
+  // Run 3 is on its source branch, done just now, with no merge back yet: previousBranchesOf answers pending.
+  const rec = { source: br(1), feature: br(3), sameAsSource: true, worktreeDir: root };
+  getDb().prepare('UPDATE pipelines SET branch = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(rec), new Date().toISOString(), p[3]);
+  withSmallRuns(true, () => {
+    const v = featureView(id);
+    assert.deepEqual(shipIndexes(v), [1, 3, 4]);
+    assert.equal(v.ship.smallRuns.along, true);
+    assert.deepEqual([1, 3, 4].map((k) => FEATURES.smallRunsPrBase(p[k])), ['main', br(1), 'main']);
+  });
+});
+
+test('small runs PR base (flag on): a run with no PR of its own keeps its recorded source, or the root once that PR is MERGED', () => {
+  // Finish order 1, 3, 2, 4: run 2, which gets no PR, finished right after run 3, which is not its source.
+  const { p, br } = branchFeature(COMBINE, { finish: [1, 3, 2, 4] });
+  withSmallRuns(true, () => {
+    assert.equal(FEATURES.smallRunsPrBase(p[2]), br(1));
+    assert.equal(stackedPrBase(p[2], ['main', br(1)]), br(1));
+    mergedPr(p[1]);
+    assert.equal(FEATURES.smallRunsPrBase(p[2]), 'main');
+  });
+});
+
+test('small runs PR base (flag on): a run with no PR of its own whose source no run of the list owns goes to the root', () => {
+  const { id, p } = branchFeature({ ...COMBINE, 2: { from: 'feat/elsewhere' } });
+  withSmallRuns(true, () => {
+    assert.deepEqual(shipIndexes(featureView(id)), [1, 3, 4]);
+    assert.equal(FEATURES.smallRunsPrBase(p[2]), 'main');
+  });
+});
+

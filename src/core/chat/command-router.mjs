@@ -20,6 +20,14 @@ import { giveUpOption, describePauseReason, pauseConsequences } from '../failure
 import { chatActor } from '../identity.mjs';
 import { SWITCH_ENGINES, engineLabel, engineList, engineRefusalFor } from '../../shared/engine-switch.mjs';
 import { ACTION_DONE } from './receipts.mjs';
+import { gapRetryAnswer, GAP_REPLY_WORDS } from '../../shared/shape/verifier.mjs';
+
+/** Slice 10 (D14): `/approve` on the Verifier's gap stop. Shipping with a gap needs a reason, which no chat verb carries. */
+/** Slice 18 (D3): the refusal names the feature page when no chat follows the feature (`false`), else the card. */
+export const gapApproveRefusal = (hasChat) => `the Verifier found gaps, and shipping with a gap needs a reason. Answer it on the ${hasChat === false ? 'feature page in the Worca UI' : 'feature card'}, or \`/retry\` to ${GAP_REPLY_WORDS.retry}.`;
+export const GAP_APPROVE_REFUSAL = gapApproveRefusal(undefined);
+/** The answer path's refusals a chat `/retry` on a gap stop can meet (a stale or re-raised stop): replied as a warning. */
+const GAP_ANSWER_REFUSALS = new Set(['INVALID_ANSWER', 'STOP_HELD', 'STOP_ANSWERED']);
 
 const md = (value) => ({ kind: 'markdown', value });
 const reply = (text, severity = 'info') => ({ title: null, body: [md(text)], severity });
@@ -156,7 +164,8 @@ export function lastPathSegment(p) {
  *          answer(runId, id, payload), stop(runId), pause(runId),
  *          stopPaused(pipelineId) -> {ok:true}|{ok:false, error},
  *          resume(pipelineId), history({limit}), listProjects(),
- *          listScheduled?() -> [{id, title, runAt, status, projectDir, workspaceName?}] (optional)
+ *          listScheduled?() -> [{id, title, runAt, status, projectDir, workspaceName?}] (optional),
+ *          whereToAnswer?(runId) -> {hasChat:boolean}|null (optional; slice 18: where a gap stop is answered)
  */
 export function createCommandRouter({ actions, chatContext, logger = () => {}, onRefused = () => {}, now = Date.now }) {
   const lastHintAt = new Map();   // "plugin/channelId:chatId" -> ms
@@ -367,6 +376,8 @@ export function createCommandRouter({ actions, chatContext, logger = () => {}, o
       }
       const out = engine ? await actions.resume(t.row.id, actor, { engine }) : await actions.resume(t.row.id, actor);
       const on = engine ? ` on ${engineLabel(engine)}` : '';
+      // Shaper small runs slice 7 (D18): a resume held for its turn started nothing.
+      if (out?.held) return reply(`Resume of \`${runRef(t.row.id)}\` waits its turn (after run ${out.after})`);
       if (out?.ok) return reply(`▶️ Resuming \`${runRef(t.row.id)}\`${on} — ${String(t.row.title || '').slice(0, 50)}`);
       // The engine gate's consent is a UI checkbox, never a chat word: the refusal sends the person there.
       const why = out?.code === 'engine-refused' ? engineRefusalFor(out.error, 'chat') : out?.error;
@@ -638,6 +649,24 @@ export function createCommandRouter({ actions, chatContext, logger = () => {}, o
       return reply(`\`${ref}\` is not waiting on a decision.${verb === 'cancel' ? ` \`/stop ${ref}\` stops the run.` : ''}`, 'warning');
     }
     const givingUp = verb === 'abort' || verb === 'cancel';
+    // Slice 10 (D14): the Verifier's gap stop. /retry answers `fix` for every gap the stop holds for the person, through
+    // the same answer path (and validator) as the app; /approve would ship with a gap, which needs a reason: refused.
+    if (pq.stop?.form === 'gaps' && !givingUp) {
+      if (verb === 'approve') {
+        // Slice 18 (D5): whether a chat follows the run's feature, read now; a throw or no lookup keeps the card words.
+        const placeOf = (runId) => { try { return actions.whereToAnswer?.(runId) ?? null; } catch { return null; } };
+        return reply(`\`${ref}\`: ${gapApproveRefusal(placeOf(t.run.runId)?.hasChat)}`, 'warning');
+      }
+      const payload = gapRetryAnswer(pq.stop);
+      try {
+        await actions.answer(t.run.runId, pq.id, payload, actor);
+      } catch (err) {
+        if (GAP_ANSWER_REFUSALS.has(err?.code)) return reply(`\`${ref}\`: ${String(err.message || err.code).slice(0, 200)}`, 'warning');
+        throw err;
+      }
+      const n = payload.answers.length;
+      return reply(`✅ \`${ref}\` answered: a fix run for ${n === 1 ? 'the gap' : `each of ${n} gaps`}.`, 'success');
+    }
     let payload;
     let what;
     if (pq.kind === 'gate') {

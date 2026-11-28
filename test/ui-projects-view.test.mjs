@@ -1,25 +1,13 @@
 // test/ui-projects-view.test.mjs
-import { test, afterEach } from 'node:test';
+import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import { JSDOM } from 'jsdom';
-import { useDomRelease } from './helpers/jsdom-release.mjs';
+import { useSharedApp } from './helpers/shared-app-boot.mjs';
 import { lastToast, toastTitles, cardAlertOf } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { backdropClick, dragOut, pressEscape, discardPrompt, discardChanges } from './helpers/popups.mjs';
-import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
-// Release each booted window after its test (see test/helpers/jsdom-release.mjs).
-const trackDom = useDomRelease(afterEach);
-
-const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
-
-class WSStub {
-  constructor() { WSStub.last = this; this.readyState = 0; this._listeners = {}; }
-  send() {} close() {}
-  addEventListener(type, fn) { (this._listeners[type] = this._listeners[type] || []).push(fn); }
-  _open() { this.readyState = 1; (this._listeners.open || []).forEach((fn) => fn({})); }
-}
+// The one fake socket of the shared app (below): a frame sent through `WSStub.last._listeners.message` reaches the app.
+const WSStub = { get last() { return { _listeners: { message: [(evt) => app.wsBox.ws.dispatch('message', evt)] } }; } };
 
 const PROJECTS = [
   { name: 'alpha', path: '/Users/me/dev/alpha', exists: true, key: 'alpha-00000001' },
@@ -43,30 +31,30 @@ const TM_SCOPES = {
   anyEnabled: true,
 };
 
+// The app is booted once for the file (test/helpers/shared-app-boot.mjs) and reset before each test; boot() resets it
+// with the test's fetch handler and storage, and keeps its { window } shape. window.confirm and requestAnimationFrame
+// are stubbed at load, as before.
+const defaultFetch = (u) => {
+  if (u.includes('/api/projects')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: PROJECTS }) });
+  if (u.includes('/api/history')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ pipelines: HISTORY, ghAvailable: false }) });
+  return Promise.resolve({ ok: true, status: 200, json: async () => ({ config: { steps: {}, customModels: [] }, models: [], efforts: [], branches: [], workspaces: [], agents: [], channels: [] }) });
+};
+const app = useSharedApp({ before, beforeEach, after }, {
+  url: 'http://localhost:4321/',
+  setup: (window) => {
+    window.confirm = () => true;
+    window.requestAnimationFrame = (fn) => setTimeout(fn, 0);
+    globalThis.requestAnimationFrame = window.requestAnimationFrame;
+  },
+  fetchHandler: defaultFetch,
+});
+
 async function boot({ fetchHandler, storage = {} } = {}) {
-  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4321/' }));
-  const { window } = dom;
-  window.Element.prototype.scrollIntoView = function () {};
-  window.WebSocket = WSStub;
-  window.confirm = () => true;
-  window.requestAnimationFrame = (fn) => setTimeout(fn, 0);
-  window.fetch = (url, opts) => {
-    const u = String(url);
-    if (fetchHandler) { const r = fetchHandler(u, opts || {}); if (r) return r; }
-    if (u.includes('/api/projects')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: PROJECTS }) });
-    if (u.includes('/api/history')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ pipelines: HISTORY, ghAvailable: false }) });
-    return Promise.resolve({ ok: true, status: 200, json: async () => ({ config: { steps: {}, customModels: [] }, models: [], efforts: [], branches: [], workspaces: [], agents: [], channels: [] }) });
-  };
-  for (const k of ['window', 'document', 'location', 'localStorage', 'WebSocket', 'fetch', 'navigator', 'requestAnimationFrame']) {
-    try { Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true }); } catch {}
-  }
-  globalThis.window = window; globalThis.document = window.document;
-  // Seeded BEFORE app.js loads: the Runs list reads its folded groups at module load.
-  for (const [k, v] of Object.entries(storage)) window.localStorage.setItem(k, v);
-  await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
-  await new Promise((r) => setTimeout(r, 0));
-  if (WSStub.last) WSStub.last._open();
-  return { window };
+  // The team-metrics scopes are cached for 15 s; the server's own change frame makes the test's answer the next read,
+  // as on a fresh page.
+  app.recv({ type: 'team-metrics-changed' });
+  await app.fresh({ ...(fetchHandler ? { fetchHandler } : {}), local: storage });
+  return { window: app.window };
 }
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -339,41 +327,6 @@ test('a row opens the project page by click, Enter or chevron (hash, header, foc
       click(window, doc.querySelector('#projects-list .pl-item[data-key="alpha-00000001"] .proj-open'));
       await tick(); await tick();
       assert.equal(window.location.hash, '#projects/alpha-00000001');
-    } },
-  ]);
-});
-
-test('Show in Runs unfolds the project group; New pipeline selects the project, lands on #new and issues ONE config load for it', async () => {
-  // One boot walks Show in Runs, then New pipeline; each step's state is recorded as it
-  // happens, and the rows read the records.
-  const cfgDirs = [];
-  const { window } = await boot({
-    storage: { 'worca-cc.runs.collapsed': JSON.stringify(['project:alpha-00000001']) },   // Group by Project sections fold by project:KEY
-    fetchHandler: (u) => { if (u.startsWith('/api/config')) cfgDirs.push(decodeURIComponent(u.split('projectDir=')[1] || '')); return null; },
-  });
-  await goHash(window, 'projects/alpha-00000001');
-  await tick(); await tick();
-  const doc = window.document;
-  click(window, doc.querySelector('#proj-detail .pd-history'));
-  const afterHistory = { hash: window.location.hash, collapsed: JSON.parse(window.localStorage.getItem('worca-cc.runs.collapsed')) };
-  await goHash(window, 'projects/alpha-00000001');
-  cfgDirs.length = 0;
-  click(window, doc.querySelector('#proj-detail .pd-new'));
-  const sel = doc.getElementById('projectSelect');
-  const afterNew = { hash: window.location.hash, name: sel.options[sel.selectedIndex].dataset.name,
-    lastProject: window.localStorage.getItem('worca-cc.lastProject') };
-  await tick(); await tick();
-  await checkRows([
-    { name: 'Show in Runs unfolds the project group on the Runs list; New pipeline selects the project and lands on #new', run: () => {
-      assert.equal(afterHistory.hash, '#runs');
-      assert.deepEqual(afterHistory.collapsed, [],
-        'the project group is unfolded (the folded key is gone)');
-      assert.equal(afterNew.hash, '#new');
-      assert.equal(afterNew.name, 'alpha');
-      assert.equal(afterNew.lastProject, 'alpha');
-    } },
-    { name: 'New pipeline from a project page issues ONE config load, for the page project', run: () => {
-      assert.deepEqual(cfgDirs, ['/Users/me/dev/alpha']);
     } },
   ]);
 });

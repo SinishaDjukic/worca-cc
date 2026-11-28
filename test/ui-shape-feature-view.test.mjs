@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { featureHeadline, renderFeature, renderFeatureRequirements, paintFeatureDecisions } from '../ui/public/shape/feature-view.mjs';
+import * as FeatureView from '../ui/public/shape/feature-view.mjs';
 import { setShipDialogOpener, renderShipCard } from '../ui/public/shape/ship-card.mjs';
 import { shipLedger, careOutcome } from '../src/shared/shape/ship-ledger.mjs';
 import { requirementStatus } from '../src/shared/shape/req-status.mjs';
@@ -253,6 +254,17 @@ test('D1: a marked feature\'s shipBlock renders the small-runs card and Met post
   assert.ok(q(waiting, '[data-ship-card="waiting"]'), 'a marked feature still waits for its runs');
 });
 
+test('a marked feature shipped as one PR: the page\'s Ship card shows 1 PR open, one PR row and one PR holding every run', () => {
+  const order = [1, 2, 3].map((i) => ({ index: i, pipelineId: `p${i}`, title: `Slice ${i} title`, pr: { number: 40, url: 'https://x/pull/40' }, onto: null }));
+  const smallRuns = { ...SR_WAIT(), confirmed: [], waiting: [], blocked: false, reason: null, order };
+  const shipped = (mode) => mount(feature({ status: 'done', done: 3, ship: { ready: false, mode, smallRuns } })).el;
+  const el = shipped('one');
+  assert.equal(el.querySelector('.ask-shipcard-done').textContent, '1 PR open');
+  assert.equal(el.querySelector('.ask-shipcard-stats').textContent, 'one PR holding every run');
+  assert.equal(el.querySelectorAll('.ask-shipcard-prs .plan-check-row').length, 1);
+  assert.equal(shipped('stacked').querySelectorAll('.ask-shipcard-prs .plan-check-row').length, 3, 'stacked counts as today');
+});
+
 test('D1: on the feature page, Not met with a typed reason and Enter posts the mark and the reason', async () => {
   const sr = SR_WAIT();
   const { el } = mount(feature({ status: 'done', done: 3, ship: { ready: true, mode: null, smallRuns: sr } }));
@@ -328,7 +340,7 @@ test('Requirements lists 5 rows; each note equals shown.text of requirementStatu
   const f = d3Feature();
   const el = reqs(f);
   assert.ok(el.matches('div.plan-body.srows.shape-feature-reqs'));
-  assert.equal(el.querySelector('p.cap.shape-feature-reqs-cap').textContent, '5 requirements · 4 owned by a run · 1 confirmed by a person');
+  assert.equal(el.querySelector('p.cap.shape-feature-reqs-cap').textContent, '5 requirements · 4 owned by a run · 1 you confirm');
   const rows = rowsOf(el);
   assert.equal(rows.length, 5);
   const sr = f.ship.smallRuns;
@@ -341,7 +353,7 @@ test('Requirements lists 5 rows; each note equals shown.text of requirementStatu
     if (r.dataset.owner === 'confirmed by a person') assert.equal(r.dataset.role, 'Compliance');
   }
   assert.deepEqual(rows.map((r) => r.querySelector('.plan-check-detail').textContent), ['run 2 · met', 'run 3 · being built', 'run 4 · to do',
-    'run 2 · changed · run 5 builds it', 'confirmed by a person · Compliance']);
+    'run 2 · changed · run 5 builds it', 'waiting for you to confirm · Compliance']);
 });
 
 test('owner direction: Requirements are grouped per role with the role fold, count and states; an all-met role is closed, a role with anything open is open', () => {
@@ -404,15 +416,15 @@ test('an owned row\'s run N is a link to runHref(N), and plain text when runHref
   assert.equal(rows[4].querySelector('a'), null, 'a confirmed row has no run link');
 });
 
-test('before and after Ship the confirmed row reads `confirmed by a person · Compliance`, then confirmed by Compliance or Marked Not met by you · reason', () => {
+test('before and after Ship the confirmed row reads `waiting for you to confirm · Compliance`, then confirmed by you or Marked Not met by you · reason', () => {
   const note = (f) => reqs(f).querySelector('[data-key="R-comp-1"] .plan-check-detail').textContent;
-  assert.equal(note(d3Feature()), 'confirmed by a person · Compliance');
-  assert.equal(note(d3Feature({ acceptance: [{ id: 'R-comp-1', mark: 'met', at: '2026-11-22T16:55:00.000Z' }] })), 'confirmed by Compliance');
+  assert.equal(note(d3Feature()), 'waiting for you to confirm · Compliance');
+  assert.equal(note(d3Feature({ acceptance: [{ id: 'R-comp-1', mark: 'met', at: '2026-11-22T16:55:00.000Z' }] })), 'confirmed by you · Compliance');
   assert.equal(note(d3Feature({ acceptance: [{ id: 'R-comp-1', mark: 'not-met', reason: 'no signed\ncopy' }] })), 'Marked Not met by you · no signed copy');
   const at = '2026-11-22T16:55:00.000Z';
   const row = reqs(d3Feature({ acceptance: [{ id: 'R-comp-1', mark: 'met', at }] })).querySelector('[data-key="R-comp-1"]');
   const d = new Date(at);
-  assert.equal(row.title, `R-comp-1 · A signed copy is kept · confirmed by Compliance · ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`);
+  assert.equal(row.title, `R-comp-1 · A signed copy is kept · confirmed by you · Compliance · ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`);
 });
 
 test('a row with a note gives its mark a state-only accessible name', () => {
@@ -509,4 +521,83 @@ test('source scan: the status words appear in string literals only in req-status
   assert.deepEqual(hits, ['src/shared/shape/req-status.mjs']);
   const importers = files.filter((p) => p.startsWith('ui/') && /\bfrom\s+['"][^'"]*req-status\.mjs['"]/.test(readFileSync(new URL(p, root), 'utf8')));
   assert.deepEqual(importers, [], 'no ui module imports req-status.mjs (R-arch-8)');
+});
+
+// ── Feature page slice 6 (R-ux-3): the Ship card first on the Requirements tab, and the open mark ────────────────
+const HELD_VIEW = (ship) => feature({ done: 2, replanOf: 'f0', log: [{ key: 'l1', run: null, text: 'Split into 3 runs', detail: [] }],
+  slices: [slice(1, 'done', { pipelineId: 'p1' }), slice(2, 'done', { pipelineId: 'p2' }), slice(3, 'held')],
+  held: { index: 3, ticketId: 't3', reason: 'runs 1 and 2 clash in src/a.mjs' }, ship });
+const kids = (el) => [...el.children].map((c) => (c.matches('[data-ship-card]') ? 'ship' : c.className.split(' ').find((x) => x.startsWith('shape-feature-'))));
+
+test('shipFirst: the Ship card first, then the re-planned note, then the actions; no step log and no merge-order line', () => {
+  for (const [ship, phase] of [[{ ready: true, mode: null, smallRuns: SR_WAIT() }, 'ready'], [{ ready: false, mode: null, smallRuns: SR_WAIT() }, 'waiting']]) {
+    const { el } = mount(HELD_VIEW(ship), deps({ shipFirst: true }));
+    assert.ok(el.firstElementChild.matches(`[data-ship-card="${phase}"]`), `${phase}: ${el.firstElementChild.className}`);
+    assert.deepEqual(kids(el), ['ship', 'shape-feature-replanned', 'shape-feature-actions'], phase);
+    assert.equal(el.querySelector('ol.shape-feature-log'), null);
+    assert.equal(el.querySelector('.shape-feature-order'), null);
+    assert.equal(el.querySelector('.shape-feature-actions .shape-feature-held-why').textContent, 'Run 3 is held: runs 1 and 2 clash in src/a.mjs');
+  }
+});
+
+test('without shipFirst the view keeps today\'s order: note, step log, merge-order line, Ship card, actions', () => {
+  const { el } = mount(HELD_VIEW({ ready: true, mode: null, smallRuns: SR_WAIT() }));
+  assert.deepEqual(kids(el), ['shape-feature-replanned', 'shape-feature-log', 'shape-feature-order', 'ship', 'shape-feature-actions']);
+});
+
+const OPEN_MARK = (state, ship = {}) => feature({ status: 'done', done: 3,
+  ship: { ready: true, mode: null, smallRuns: { ...SR_WAIT(), confirmed: [{ ...SR_WAIT().confirmed[0], state: 'confirmed', mark: 'met' },
+    { ...SR_WAIT().confirmed[0], id: 'R-comp-5', state, mark: null }] }, ...ship } });
+
+test('markOpen: true while a confirmed requirement is waiting or needs a reason and the feature is ready to ship', () => {
+  assert.equal(FeatureView.markOpen(OPEN_MARK('waiting')), true);
+  assert.equal(FeatureView.markOpen(OPEN_MARK('needs-reason')), true);
+});
+
+test('markOpen: false with every mark made, not ready, shipped, no small-runs ledger, or no feature', () => {
+  assert.equal(FeatureView.markOpen(OPEN_MARK('confirmed')), false, 'all confirmed');
+  assert.equal(FeatureView.markOpen(OPEN_MARK('waiting', { ready: false })), false, 'not ready to ship');
+  assert.equal(FeatureView.markOpen(OPEN_MARK('waiting', { mode: 'stacked' })), false, 'already shipped');
+  assert.equal(FeatureView.markOpen(OPEN_MARK('waiting', { smallRuns: undefined })), false, 'no small-runs ledger');
+  assert.equal(FeatureView.markOpen(null), false);
+});
+
+// ── Slice 7 (R-ux-2, R-arch-4) ─────────────────────────────────────────────────────────────────────────────────
+test('s7: the waiting row reads waiting for you to confirm · Design, and the caption counts what you confirm', () => {
+  const kinds = [{ id: 'R-ux-2', kind: 'confirmed', role: 'design' }];
+  const sr = shipLedger({ agreed: [{ id: 'R-ux-2', text: 'The words say who confirms' }], kinds, acceptance: [], runs: D3_RUNS('done') });
+  const base = d3Feature();
+  const el = reqs(feature({ id: 'f_s7', requirementKinds: kinds, ship: { ready: true, mode: null, smallRuns: { ...sr, care: base.ship.smallRuns.care, base: 'main', order: [] } } }));
+  assert.equal(el.querySelector('[data-key="R-ux-2"] .plan-check-detail').textContent, 'waiting for you to confirm · Design');
+  assert.equal(el.querySelector('p.cap.shape-feature-reqs-cap').textContent, '1 requirement · 0 owned by a run · 1 you confirm');
+  assert.doesNotMatch(el.textContent, /confirmed by a person/);
+});
+
+test('s7 R-arch-4: the feature view\'s waiting Ship card of a feature with no chat says "on this page."', () => {
+  const line = (hasChat) => mount(feature({ ...(hasChat === undefined ? {} : { hasChat }), ship: { ready: false, mode: null } }))
+    .el.querySelector('[data-ship-card="waiting"]')?.textContent;
+  assert.equal(line(false), 'Ship card comes when all 3 runs are done, on this page.');
+  assert.equal(line(true), 'Ship card comes when all 3 runs are done, here and in the chat.');
+  assert.equal(line(undefined), 'Ship card comes when all 3 runs are done, here and in the chat.');
+});
+
+// Slice 9 (R-po-4, D14): the feature page posts a note's acknowledgement with the check the person read.
+test('s9: Acknowledge on the feature page posts the note and the check to /acknowledge and opens Create', async () => {
+  const checkAt = '2026-11-27T10:00:00.000Z';
+  const smallRuns = { ...SR_WAIT(), confirmed: [], waiting: [], blocked: true, reason: "Acknowledge the Verifier's note to ship",
+    findings: { items: [{ id: 'note-1', text: 'the import test takes 40 s', ack: null }], checkAt, open: 1 } };
+  const answered = { ...smallRuns, blocked: false, reason: null,
+    findings: { items: [{ ...smallRuns.findings.items[0], ack: { by: 'ann', at: '2026-11-27T14:02:00.000Z' } }], checkAt, open: 0 } };
+  const { el } = mount(feature({ status: 'done', done: 3, ship: { ready: true, mode: null, smallRuns } }));
+  const button = q(el, '[data-act="ship-ack-note-1"]');
+  assert.ok(button, 'the Acknowledge button on the feature page');
+  const sent = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { sent.push([url, init.method, JSON.parse(init.body)]); return { ok: true, json: async () => ({ smallRuns: answered }) }; };
+  try {
+    button.click();
+    await flush(); await flush();
+  } finally { globalThis.fetch = real; }
+  assert.deepEqual(sent, [['/api/shape/features/f1/acknowledge', 'POST', { checkAt, note: 'note-1' }]]);
+  assert.equal(q(el, '[data-act="ship-create"]').disabled, false);
 });

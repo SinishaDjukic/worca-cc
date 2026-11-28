@@ -5,14 +5,29 @@
 // waiting on a live mock run. At 375px, in light and dark, each surface is captured beside its prototype screen
 // (`plans/shaper-refresh/prototype.html#id`, the moment's segment clicked):
 //   C5 `#verifier` verifying ([data-vf="vw"]) and gap found ([data-vf="vf"]), `#ship` (state line and receipt), the
-//      bound stop (`#run-stops`), on the Chat card, plus the run page and side panel of the Verifier run and a gap run;
+//      gap question (`#run-stops`), on the Chat card, plus the run page and side panel of the Verifier run and a gap run;
 //   C1 `#prototype` offered, building, built, remark proposed, confirmed ([data-proto] 0, .5, 1, 2, 3);
 //   C2 `#build` rows and `#run-panel` Agents; C3 `#run-stops` question, answered fold and waiting row;
 //   C4 `#req-change` notice and its "How a change lands" fold;
 // D2 (D2_ONLY=1 runs it alone): the cases runs-list, run-facts, agents-place and card-members of a marked 10-run
 //   feature, in light and dark at 375px and 1280px at Expert, and the flag-off control's Agents places per page;
-// D3 (last; D3_ONLY=1 runs it alone): the feature page's Requirements (one fold per role) and Decisions tabs of a marked
+// D3 (D3_ONLY=1 runs it alone): the feature page's Requirements (one fold per role) and Decisions tabs of a marked
 //   feature before and after Ship, light and dark at 1280px and 375px, beside the prototype's `#feature` tabs;
+// the held row (HELD_ONLY=1 runs it alone): a run held on a clash, its reason and one Start now, light and dark at 1280px;
+// a stop's findings (STOP_FINDINGS_ONLY=1 runs it alone): a 3-issue gate stop lists its 3 issues on the run page, the Chat run
+//   panel and the Chat feature card, light and dark at 1280px;
+// the take-in (last; TAKEIN_ONLY=1 runs it alone): the moved step a run that waited at a stop logs once it took in a
+//   finished run's work, and its stop's "Not sent: …" line after a refused take-in, light and dark at 1280px;
+// Ship as one PR (SHIP_ONE_ONLY=1 runs it alone): the Create PR dialog's One enabled and disabled with its reason, the
+//   feature page line, the Shipped card after a One ship, an old outcome's new words and the Labs entry, at 1280px;
+// the carried runs (SHIP_CARRIED_ONLY=1 runs it alone): the Ship card's and the Create PR dialog's carried line and
+//   "Create 4 PRs", light and dark at 1280px, beside the run's prototype (SHIP_CARRIED_PROTOTYPE);
+// the Verifier's note on the Ship card (SHIP_NOTES_ONLY=1 runs it alone): before and after Acknowledge, light and dark at 1280px;
+// the Labs entry's words (LABS_WORDS_ONLY=1 runs it alone): "small runs" only in its title, light and dark at 1280px;
+// the Verifier's Away answers (GAP_AWAY_ONLY=1 runs it alone): the Log tab's and the Chat card's "decided by" lines and the
+//   gap question with Away's answer and a held judgement call, light and dark;
+// the feature page tabs (FEATURE_TABS_ONLY=1 runs it alone): the Cost tab, Mark and ship to the Ship card on Requirements,
+//   and the Log tab, light and dark at 1280px, the Cost tab and the bar at 375px in light;
 // and one reduced-motion capture of Prototype building. A live phase then follows a REAL paced mock Design build
 // (WORCA_MOCK_DESIGN_MS=400) on the Chat card: the Lead row, a row per screen and pieces assembling, captured mid-build
 // and with reduced motion (chat-prototype-building-mid-light, chat-prototype-building-reduced-motion-light). Every list (the Verifier's gap `.srows` included) is measured:
@@ -44,7 +59,7 @@ const log = (m) => process.stderr.write(`[${((Date.now() - T0) / 1000).toFixed(1
 let chrome = null; let srv = null; let home = null; let proj = null; let profile = null; let failed = 0;
 const results = { startedAt: new Date(T0).toISOString(), width: WIDTH, verdict: null, lists: [], shots: [], checks: [],
   notes: ['The detail leaves out the cost, as every S8 line does; "Ready to ship" is the word, so the detail does not repeat it.',
-    'New wording with no prototype screen (the bound stop, "Ship with the gap", the accepted receipt, the stopped line) is paired with #run-stops for layout only.'] };
+    'New wording with no prototype screen (the gap question, "Ship with the gap", the accepted receipt, the stopped line) is paired with #run-stops for layout only.'] };
 let logFile = null;
 const writeLog = (verdict) => { if (logFile) writeFileSync(logFile, JSON.stringify({ ...results, verdict }, null, 2) + '\n'); };
 async function shutdown(code) {
@@ -82,12 +97,14 @@ execFileSync('git', ['commit', '-qm', 'init'], { cwd: proj });
 const imp = (rel) => import(new URL(rel, import.meta.url).href);
 const { server, runs, reqChanges } = await imp('../ui/server.mjs');
 const { getDb } = await imp('../src/core/db.mjs');
-const { projectKey } = await imp('../src/core/store.mjs');
+const { projectKey, projectStorePath } = await imp('../src/core/store.mjs');
+const { addProject } = await imp('../src/core/projects.mjs');
 const { writeStoreMeta, recordArtifact, appendAuditById } = await imp('../src/core/artifacts.mjs');
-const { createSliceFeature, recordShapePlan, changeAgreedRequirements, setFeatureAcceptance, recordShip } = await imp('../src/core/shape/features.mjs');
+const { createSliceFeature, recordShapePlan, changeAgreedRequirements, setFeatureAcceptance, recordShip, setClashHold } = await imp('../src/core/shape/features.mjs');
 const askStore = await imp('../src/core/ask/store.mjs');
 const { normalizeOutline } = await imp('../src/shared/shape/slices.mjs');
-const { gateStop } = await imp('../src/shared/shape/run-stops.mjs');
+const { gateStop, planStop } = await imp('../src/shared/shape/run-stops.mjs');
+const { baseMovedAudit } = await imp('../src/core/git-sync.mjs');
 const { verifyStop } = await imp('../src/shared/shape/verifier.mjs');
 const { prototypeView } = await imp('../src/shared/shape/prototype.mjs');
 const { careRunPlan } = await imp('../src/shared/shape/feature-record.mjs');
@@ -97,7 +114,7 @@ const { resolveGraph } = await imp('../src/core/workflows.mjs');
 const { loadAgentRegistry } = await imp('../src/core/agent-registry.mjs');
 const { buildGraphManifest } = await imp('../src/shared/graph/manifest.mjs');
 const { createPrototypeDesign, startPrototypeBuild, prototypeBrief } = await imp('../src/core/shape/prototype-design.mjs');
-const { designBuilds } = await imp('../ui/server.mjs');
+const { designBuilds, _testing: { heldStops } } = await imp('../ui/server.mjs');
 srv = server;
 await new Promise((r, rej) => { srv.once('error', (err) => rej(new Error(`cannot listen on VERIFY_PORT ${process.env.VERIFY_PORT}: ${err.message}`))); srv.listen(Number(process.env.VERIFY_PORT || 0), '127.0.0.1', r); });
 const base = `http://127.0.0.1:${srv.address().port}`;
@@ -155,8 +172,9 @@ function thread(title, pid) {
   recordShapePlan({ threadId: th.id, cardId, title });
   return th.id;
 }
-/** A marked 4-run feature (`states[k-1]`: done, running or planned) with its Chat thread. → {f, pid(k), threadId} */
-function seedFeature(tag, title, states, { withOutline = outline, requirementKinds = null, titles = TITLES } = {}) {
+/** A marked 4-run feature (`states[k-1]`: done, running or planned) with its Chat thread (none with `chat: false`).
+ *  → {f, pid(k), threadId} */
+function seedFeature(tag, title, states, { withOutline = outline, requirementKinds = null, titles = TITLES, chat = true } = {}) {
   const pid = (k) => `c5${tag}00000${k}`;
   pipeline(pid(1), states[0], title, { smallRuns: true, care: careRec });
   const f = createSliceFeature({ pipelineId: pid(1), projectDir: proj, title, outline: withOutline, perspectives: ['product', 'architect'], workflowId: 'wf_shape',
@@ -165,7 +183,7 @@ function seedFeature(tag, title, states, { withOutline = outline, requirementKin
     const k = i + 1;
     if (k > 1 && st !== 'planned') fire(f, k, pid(k), st, `Run ${k} · ${titles[i]}`);
   });
-  return { f, pid, threadId: thread(title, pid(1)) };
+  return { f, pid, threadId: chat ? thread(title, pid(1)) : null };   // chat: false — a feature no chat started (slice 7)
 }
 function fire(f, k, pid, status, title) {
   pipeline(pid, status, title);
@@ -204,14 +222,15 @@ setVerify(VF.f, vCheck(VF, VF_RUN, 'gaps', { result: { held: HELD, gaps: [GAP] }
 const VC = seedFeature('vc', 'Member list', ['done', 'done', 'done', 'done']);
 pipeline('c5vcv00001', 'done', 'Member list · Verifier');
 setVerify(VC.f, vCheck(VC, 'c5vcv00001', 'clean', { result: { held: AGREED.map((a) => a.id), gaps: [] } }));
-// C5 the bound stop: round 3 of Balanced, one gap still open; the Verifier run asks.
+// Slice 8: the gap question. Round 1 found two gaps; the Verifier run asks before any run is added.
 const VA = seedFeature('va', 'Landing form', ['done', 'done', 'done', 'done']);
 const VA_RUN = 'c5vav00001';
 pipeline(VA_RUN, 'running', 'Landing form · Verifier');
-setVerify(VA.f, vCheck(VA, VA_RUN, 'verifying', { round: 3 }));
-const VSTOP = verifyStop({ gaps: [GAP], round: 3, fixCycles: 2 });
-const VPQ = { id: 'verify-3-x:n_verify:1', kind: 'gate', nodeId: 'n_verify', executionId: 'x:n_verify:1', issues: [], stop: VSTOP };
-liveRun(VA_RUN, 'Landing form · Verifier', { at: 'n_verify', verify: true, pendingQuestion: VPQ, runShape: VERIFY(VA.f.id, 3) });
+setVerify(VA.f, vCheck(VA, VA_RUN, 'verifying', { round: 1 }));
+const GAP2 = { id: 'R-po-3', why: 'the export skips empty charts', title: 'Export empty charts' };
+const VSTOP = verifyStop({ gaps: [GAP, GAP2], round: 1, fixCycles: 2, texts: Object.fromEntries(AGREED.map((a) => [a.id, a.text])) });
+const VPQ = { id: 'verify-1-x:n_verify:1', kind: 'gate', nodeId: 'n_verify', executionId: 'x:n_verify:1', issues: [], stop: VSTOP };
+liveRun(VA_RUN, 'Landing form · Verifier', { at: 'n_verify', verify: true, pendingQuestion: VPQ, runShape: VERIFY(VA.f.id, 1) });
 
 // C2 + C3: run 2 waits on its objection stop, run 3 builds, run 4 builds on run 2.
 const RS = seedFeature('rs', 'Charts', ['done', 'running', 'running', 'planned']);
@@ -290,9 +309,11 @@ if (!wsUrl) { console.error('no devtools target after 60s'); await shutdown(1); 
 const ws = new WebSocket(wsUrl);
 await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
 let msgId = 0; const pending = new Map(); const errors = [];
+let onCdpEvent = null;   // a phase's CDP event handler (the Ship one phase's Fetch stub)
 ws.onmessage = (e) => {
   const m = JSON.parse(e.data);
   if (m.id != null) { const p = pending.get(m.id); pending.delete(m.id); if (p) (m.error ? p.rej(new Error(JSON.stringify(m.error))) : p.res(m.result)); return; }
+  if (onCdpEvent) onCdpEvent(m);
   if (m.method === 'Runtime.exceptionThrown') errors.push(m.params.exceptionDetails.exception?.description || m.params.exceptionDetails.text);
 };
 function cdp(method, params = {}, ms = 15000) {
@@ -488,8 +509,8 @@ async function shipCells(theme, width) {
   if (await card(SB.threadId, `sb${width}`, 'the Ship blocked card', theme) && await SHIP_READY('the Ship blocked card', theme)) {
     await reveal(SHIP);
     const f = await ev(SHIP_FACTS);
-    check(f && f.why === 'Waiting for Compliance to confirm R-comp-4' && f.waiting === 1 && f.stateDetail === 'waiting for Compliance',
-      `ship blocked, ${at}: the reason once in the card; the step detail names who it waits for (D1 shipDetail, the owner's call) (${JSON.stringify(f)})`);
+    check(f && f.why === 'Waiting for you to confirm R-comp-4' && f.waiting === 1 && f.stateDetail === 'Needs your confirmation: R-comp-4',
+      `ship blocked, ${at}: the reason once in the card; the step detail is the confirmation hold (Shaper slice 7, D9) (${JSON.stringify(f)})`);
     check(f && f.create === 'Create 4 PRs' && f.disabled && !f.primary && f.described, `ship blocked, ${at}: Create 4 PRs disabled, not primary, described by the reason`);
     check(f && f.marks.length === 1 && f.marks[0] === 'Mark R-comp-4 as Compliance: The sign-up data stays in the EU' && f.pressed.length === 0 && f.care === 1,
       `ship blocked, ${at}: one unmarked Met / Not met / Dropped picker, one Care row`);
@@ -773,7 +794,7 @@ appendAuditById(D3.pid(2), 'Plan approval **approve** by proof.');
 { const r = reqChanges.apply(D3.f.id, [{ id: 'R-po-1', from: D3_AGREED[0].text, to: 'Export members as CSV with a header row' }], { kind: 'chat', by: 'proof' });
   check(r.ok && r.result.changes[0].case === 'finished', `seed: the D3 change lands on a change run (${JSON.stringify(r)})`); }
 const D3_BEFORE = { 'R-po-1': 'run 2 · changed · run 6 builds it', 'R-po-2': 'run 3 · being built', 'R-po-3': 'run 4 · to do', 'R-po-4': 'run 5 · to do',
-  'R-comp-1': 'confirmed by a person · Compliance' };
+  'R-comp-1': 'waiting for you to confirm · Compliance' };
 const D3_REASON = 'unsigned';
 const D3_AFTER = { 'R-po-1': 'run 2 · met · changed by run 6', 'R-po-2': 'run 3 · met', 'R-po-3': 'run 4 · met', 'R-po-4': 'run 5 · met',
   'R-comp-1': `Marked Not met by you · ${D3_REASON}` };
@@ -827,7 +848,7 @@ async function d3Cells(phase, theme, width, want) {
     const f = await ev(D3_REQ_FACTS);
     results.lists.push({ list: `d3 requirements facts ${phase}`, theme, width, ...f });
     check(f && f.tab === 'requirements' && f.hash === `#feature/${D3.f.id}/requirements`, `requirements, ${at}: the deep link selects Requirements (${JSON.stringify(f && [f.tab, f.hash])})`);
-    check(f && f.cap === '5 requirements · 4 owned by a run · 1 confirmed by a person' && f.roles.join() === 'product,compliance',
+    check(f && f.cap === '5 requirements · 4 owned by a run · 1 you confirm' && f.roles.join() === 'product,compliance',
       `requirements, ${at}: the caption and one fold per role, Product then Compliance (${JSON.stringify(f && [f.cap, f.roles])})`);
     const notes = f ? Object.fromEntries(f.rows.map((r) => [r.id, r.note])) : {};
     check(f && f.rows.length === 5 && Object.keys(want).every((k) => notes[k] === want[k]),
@@ -895,10 +916,1363 @@ async function d3Phase() {
   log(`D3: ${results.d3Minutes} min`);
 }
 
-// D2_ONLY=1 runs the D2 cases alone, D3_ONLY=1 the D3 cases (each command stays under 10 minutes); unset, every case
-// runs, D2 before D3, D3 last.
+// ---- Shaper small runs, slice 2: a run held because the runs it builds on clash. A marked 4-run feature, runs 1 to 3
+// done, run 4's ticket scheduled with "Ask me before each run" off, and the clash hold set as the fire-time check sets
+// it. The Chat card's held row reads the reason, with one Start now, at 1280px in the classic look, light and dark:
+// small-runs-held-clash-light.png and small-runs-held-clash-dark.png in SHOTS_DIR.
+const HELD_REASON = 'runs 2 and 3 clash in src/a.mjs';
+async function heldPhase() {
+  const HC = seedFeature('hc', 'Clash', ['done', 'done', 'done', 'planned']);
+  getDb().prepare('UPDATE shape_features SET approve_each = 0 WHERE id = ?').run(HC.f.id);
+  const t4 = getDb().prepare('SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ? AND idx = 4').get(HC.f.id).ticket_id;
+  setClashHold(t4, { reason: HELD_REASON, runs: [2, 3], files: ['src/a.mjs'], at: Date.now() });
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  for (const theme of THEMES) {
+    if (!(await card(HC.threadId, 'held', 'the clash-held card', theme))) continue;
+    if (await waitFor("!!document.querySelector('.chat-rc .shape-feature-held-why')", `the held row (${theme})`)) {
+      const r = await ev(`(() => { const vis = (els) => [...els].filter((b) => b.offsetParent);
+        return { why: (vis(document.querySelectorAll('.chat-rc .shape-feature-held-why'))[0] || {}).textContent || null,
+          starts: vis(document.querySelectorAll('.chat-rc [data-act="feature-start"]')).filter((b) => b.textContent.trim() === 'Start now').length }; })()`);
+      check(r.why === `Run 4 is held: ${HELD_REASON}`, `held row, ${theme}: "Run 4 is held: ${HELD_REASON}" (${JSON.stringify(r.why)})`);
+      check(r.starts === 1, `held row, ${theme}: Start now shows once (${r.starts})`);
+      await reveal('.chat-rc .shape-feature-held');
+    }
+    // A notice (feedback.mjs) can sit over the card's footer: dismiss each one before the capture.
+    await ev("(() => { for (const b of document.querySelectorAll('button[aria-label=\"Dismiss\"]')) if (b.offsetParent) b.click(); return 0; })()");
+    await sleep(400);
+    const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+    const file = path.join(SHOTS, `small-runs-held-clash-${theme}.png`);
+    await writeFile(file, Buffer.from(data, 'base64'));
+    results.shots.push(file);
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
+// ---- Shaper small runs, slice 3: a run that waited at a stop takes in what finished meanwhile. A marked 4-run feature,
+// runs 1 and 3 done, run 2 live at its stop. Run 2's audit line is the one the harness writes once it merged run 3's
+// branch (`Base \`feat/run-3\` moved: merged into \`feat/run-2\` (1 commit).`), so the Chat card's log reads
+// `feat/run-3 moved · run 2 starts from it`: small-runs-taken-in-light.png and -dark.png. Then run 2's entry carries a
+// refused take-in (`takeInRefused`), and its open stop reads `Not sent: runs 2 and 3 clash in src/a.mjs`:
+// small-runs-take-in-refused-light.png and -dark.png. 1280px, the classic look, in SHOTS_DIR.
+const TAKEIN_REASON = 'runs 2 and 3 clash in src/a.mjs';
+const TAKEIN_STEP = 'feat/run-3 moved · run 2 starts from it';
+async function takeInPhase() {
+  const TI = seedFeature('ti', 'Take in', ['done', 'running', 'done', 'planned']);
+  const stop = gateStop({ run: 2, issues: ISSUES, fixCycles: 3, nodeId: 'n_review' });
+  const pq = { id: 'gate-ti-3', kind: 'gate', wireId: 'w9', nodeId: 'n_review', executionId: 'x:n_review:3', deliveryNo: 3, issues: ISSUES, stop };
+  const runId = liveRun(TI.pid(2), `Run 2 · ${TITLES[1]}`, { at: 'n_review', pendingQuestion: pq, runShape: { slice: { feature: TI.f.id, index: 2 } } });
+  appendAuditById(TI.pid(2), baseMovedAudit('feat/run-3', 'feat/run-2', { merged: true, behind: 1 }));
+  const capture = async (name) => {
+    await ev("(() => { for (const b of document.querySelectorAll('button[aria-label=\"Dismiss\"]')) if (b.offsetParent) b.click(); return 0; })()");
+    await sleep(400);
+    const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+    const file = path.join(SHOTS, name);
+    await writeFile(file, Buffer.from(data, 'base64'));
+    results.shots.push(file);
+  };
+  const visibleText = (sel) => ev(`[...document.querySelectorAll(${JSON.stringify(sel)})].filter((e) => e.offsetParent && !e.hidden).map((e) => e.textContent.trim())`);
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  for (const theme of THEMES) {
+    if (!(await card(TI.threadId, 'takein', 'the take-in card', theme))) continue;
+    const seen = await waitFor(`[...document.querySelectorAll('.chat-rc .chat-rc-log li')].some((li) => li.offsetParent && li.textContent.includes(${JSON.stringify(TAKEIN_STEP)}))`,
+      `the moved step (${theme})`);
+    check(seen, `take-in, ${theme}: the log reads "${TAKEIN_STEP}"`);
+    if (seen) await ev(`(() => { const li = [...document.querySelectorAll('.chat-rc .chat-rc-log li')].find((x) => x.offsetParent && x.textContent.includes(${JSON.stringify(TAKEIN_STEP)})); if (li) li.scrollIntoView({ block: 'center' }); return !!li; })()`);
+    await capture(`small-runs-taken-in-${theme}.png`);
+  }
+  runs.get(runId).takeInRefused = { id: pq.id, reason: TAKEIN_REASON };
+  for (const theme of THEMES) {
+    if (!(await card(TI.threadId, 'takein-refused', 'the refused take-in card', theme))) continue;
+    const seen = await waitFor(`[...document.querySelectorAll('.chat-rc .plan-err')].some((e) => e.offsetParent && !e.hidden && e.textContent === ${JSON.stringify(`Not sent: ${TAKEIN_REASON}`)})`,
+      `the refused stop (${theme})`);
+    const lines = await visibleText('.chat-rc .plan-err');
+    check(seen && lines.length === 1, `take-in refused, ${theme}: one "Not sent: ${TAKEIN_REASON}" line (${JSON.stringify(lines)})`);
+    if (seen) await reveal('.chat-rc .plan-err');
+    await capture(`small-runs-take-in-refused-${theme}.png`);
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
+// ---- Shaper small runs, slice 4: Ship lists the PRs along the real branches (the flag on, 1280px, the classic look).
+// Two marked 4-run features with explicit `feat/run-N` branch records (runs 1 to 4 stand for the outline's 7 to 10):
+// "Ship list", the waited shape (finish order 1, 3, 2, 4; run 2 took run 3 in): run 1 into the base, 3 onto #1, 2 onto #3,
+// 4 onto #2, and the stats line only the rule writes, "stacked along the real branches": small-runs-ship-list-light.png
+// and -dark.png. "Ship combined", the combine shape (run 4 started from run 3 and combined run 2): 3 PRs open, no row for
+// run 2, though run 2 has a PR of its own (the finish-order fallback would list it): small-runs-ship-list-combined-light.png
+// and -dark.png. Then the same combine seed not yet shipped: the ready card's Create reads "Create 3 PRs" (no shot).
+async function shipListPhase() {
+  const setBranches = (x, recs, finish) => {
+    recs.forEach((rec, i) => {
+      const k = i + 1;
+      const at = new Date(Date.parse(now) + (finish.indexOf(k) + 1) * 60_000).toISOString();
+      getDb().prepare('UPDATE pipelines SET branch = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(rec), at, x.pid(k));
+    });
+  };
+  const withPrs = (x) => [1, 2, 3, 4].forEach((k) => getDb().prepare("UPDATE pipelines SET pr_url = ?, pr_number = ?, pr_state = 'OPEN' WHERE id = ?")
+    .run(`https://github.com/proof/repo/pull/${k}`, k, x.pid(k)));
+  const seed = (tag, title, recsOf, finish, { shipped = true } = {}) => {
+    const x = shipFeature(tag, title);
+    setFeatureAcceptance(x.f.id, [COMP_MET]);
+    setBranches(x, recsOf(x), finish);
+    if (shipped) { withPrs(x); recordShip(x.f.id, { mode: 'stacked' }); }
+    return x;
+  };
+  const WAITED = (x) => [{ source: 'main', feature: 'feat/run-1' }, { source: 'feat/run-3', sourceFrom: 'feat/run-1', feature: 'feat/run-2',
+    tookIn: [{ index: 3, branch: 'feat/run-3', pipelineId: x.pid(3) }] }, { source: 'feat/run-1', feature: 'feat/run-3' },
+  { source: 'feat/run-2', feature: 'feat/run-4' }];
+  const COMBINED = () => [{ source: 'main', feature: 'feat/run-1' }, { source: 'feat/run-1', feature: 'feat/run-2' },
+    { source: 'feat/run-1', feature: 'feat/run-3' }, { source: 'feat/run-3', feature: 'feat/run-4', combined: [{ index: 2, branch: 'feat/run-2' }] }];
+  const SL = seed('sl', 'Ship list', WAITED, [1, 3, 2, 4]);
+  const SC = seed('sc', 'Ship combined', COMBINED, [1, 2, 3, 4]);
+  const SQ = seed('sq', 'Ship combined ready', COMBINED, [1, 2, 3, 4], { shipped: false });
+  // The ship rule wants a passed Verifier check for the tip of the head Ship ships (run 4): the branches exist in the
+  // sandbox repo, all on its one commit.
+  for (let k = 1; k <= 4; k++) execFileSync('git', ['branch', '-f', `feat/run-${k}`], { cwd: proj });
+  const headSha = execFileSync('git', ['rev-parse', 'feat/run-4'], { cwd: proj, encoding: 'utf8' }).trim();
+  pipeline('c5sqv00001', 'done', 'Ship combined ready · Verifier');
+  setVerify(SQ.f, vCheck(SQ, 'c5sqv00001', 'clean', { headSha, result: { held: [...AGREED.map((a) => a.id), 'R-comp-4'], gaps: [] } }));
+  const runsOf = (f) => (f ? f.prs.map(([, note], i) => [f.rowRuns[i], note]) : null);
+  const ROW_RUNS = `[...document.querySelectorAll(${JSON.stringify(`${SHIP} .ask-shipcard-prs .plan-check-row`)})].filter((x) => x.offsetParent)
+    .map((x) => Number((x.textContent.match(/run (\\d+) ·/) || [])[1]) || null)`;
+  const facts = async () => { const f = await ev(SHIP_FACTS); if (f) f.rowRuns = await ev(ROW_RUNS); return f; };
+  const capture = async (name) => {
+    await ev("(() => { for (const b of document.querySelectorAll('button[aria-label=\"Dismiss\"]')) if (b.offsetParent) b.click(); return 0; })()");
+    await reveal(SHIP);
+    await sleep(400);
+    const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+    const file = path.join(SHOTS, name);
+    await writeFile(file, Buffer.from(data, 'base64'));
+    results.shots.push(file);
+  };
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  for (const theme of THEMES) {
+    if (await card(SL.threadId, 'shiplist', 'the Ship list card', theme) && await SHIP_READY('the Ship list card', theme)) {
+      const f = await facts();
+      check(f && f.stats === 'stacked along the real branches', `ship list, ${theme}: the stats line reads "stacked along the real branches" (${JSON.stringify(f && f.stats)})`);
+      check(f && f.stateDetail === '4 PRs open', `ship list, ${theme}: 4 PRs open (${JSON.stringify(f && f.stateDetail)})`);
+      check(JSON.stringify(runsOf(f)) === JSON.stringify([[1, 'into main'], [3, 'onto #1'], [2, 'onto #3'], [4, 'onto #2']]),
+        `ship list, ${theme}: run 1 into main, run 3 onto #1, run 2 onto #3, run 4 onto #2 (${JSON.stringify(runsOf(f))})`);
+      await capture(`small-runs-ship-list-${theme}.png`);
+    }
+    if (await card(SC.threadId, 'shipcombined', 'the Ship combined card', theme) && await SHIP_READY('the Ship combined card', theme)) {
+      const f = await facts();
+      check(f && f.stateDetail === '3 PRs open' && f.stats === 'stacked along the real branches',
+        `ship combined, ${theme}: 3 PRs open, stacked along the real branches (${JSON.stringify(f && [f.stateDetail, f.stats])})`);
+      check(JSON.stringify(runsOf(f)) === JSON.stringify([[1, 'into main'], [3, 'onto #1'], [4, 'onto #3']]),
+        `ship combined, ${theme}: rows run 1, run 3, run 4 and none for run 2 (${JSON.stringify(runsOf(f))})`);
+      await capture(`small-runs-ship-list-combined-${theme}.png`);
+    }
+  }
+  if (await card(SQ.threadId, 'shipready', 'the Ship combined ready card', 'light') && await SHIP_READY('the Ship combined ready card', 'light')) {
+    const f = await facts();
+    check(f && f.create === 'Create 3 PRs' && !f.disabled, `ship combined ready: Create reads "Create 3 PRs" (${JSON.stringify(f && f.create)})`);
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
+// ---- Shaper small runs, slice 7: a resume waits its turn. A marked 4-run feature, run 1 done, run 2 working (a running
+// runs-map entry), run 3 paused with a resume point and no runs-map entry. Run 3's saved page Resume is clicked: the
+// server holds it after run 2, so the page keeps the paused run and a button that reads Resume, and no runs-map entry is
+// made for run 3. 1280px, the classic look, light and dark: held-resume-light.png and held-resume-dark.png in SHOTS_DIR.
+async function heldResumePhase() {
+  const HR = seedFeature('hr', 'Held resume', ['done', 'running', 'planned', 'planned']);
+  liveRun(HR.pid(2), `Run 2 · ${TITLES[1]}`, { runShape: { slice: { feature: HR.f.id, index: 2 } } });
+  // Run 3 has what the saved page needs to offer Resume: an 8-hex id, its run folder, an onboarded project, a resume point.
+  const five = 'ab7e0003';
+  fire(HR.f, 3, five, 'paused', `Run 3 · ${TITLES[2]}`);
+  getDb().prepare('UPDATE pipelines SET resume_point = ? WHERE id = ?').run(JSON.stringify({ version: 2, ledger: [], tokens: {} }), five);
+  await mkdir(path.join(projectStorePath(key), 'pipelines', `held-resume-${five}`), { recursive: true });
+  try { await addProject({ name: 'Proof', path: proj }); } catch { /* already onboarded */ }
+  const RESUME = "[...document.querySelectorAll('#hist-detail .hd-resume')].find((b) => b.offsetParent)";
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  for (const theme of THEMES) {
+    await open(`${base}/?heldresume-${theme}#history/${key}/${five}`);
+    await skipWelcome(); await setTheme(theme);
+    if (!(await waitFor(`!!(${RESUME})`, `run 3's Resume (${theme})`))) continue;
+    await skipWelcome();
+    check(/Resume/.test(await ev(`(${RESUME}).textContent`)), `held resume, ${theme}: the saved page offers Resume`);
+    // Slice 8: before the press, the Resume says which run it would wait for.
+    check(await waitFor(`(${RESUME}).textContent.trim() === 'Resume after run 2'`, `run 3's Resume after run 2 (${theme})`),
+      `held resume, ${theme}: before the click the button reads Resume after run 2 (${JSON.stringify(await ev(`(${RESUME}).textContent.trim()`))})`);
+    await ev(`(${RESUME}).click()`);
+    const back = await waitFor(`(() => { const b = ${RESUME}; return !!b && !b.disabled && b.textContent.trim() === 'Resume'; })()`, `the Resume button back (${theme})`);
+    const held = await (await fetch(`${base}/api/shape/features/${HR.f.id}`)).json().catch(() => null);
+    const row = held && (held.feature || held).slices?.find((x) => x.index === 3);
+    check(back, `held resume, ${theme}: the button reads Resume again and is enabled`);
+    check(row && row.state === 'paused', `held resume, ${theme}: run 3 still reads paused (${JSON.stringify(row && row.state)})`);
+    check(![...runs.values()].some((e) => e.pipelineId === five), `held resume, ${theme}: no runs-map entry for run 3`);
+    check(JSON.stringify(heldStops.heldResumeOf(five)) === '{"after":2}', `held resume, ${theme}: the server holds it after run 2 (${JSON.stringify(heldStops.heldResumeOf(five))})`);
+    check(!(await ev("document.querySelector('#toasts')?.textContent.includes('Could not resume') || false")), `held resume, ${theme}: no refusal toast`);
+    check(!(await ev("[...document.querySelectorAll('#hist-detail *')].some((e) => e.offsetParent && /^Starting/.test(e.textContent.trim()) && !e.children.length)")),
+      `held resume, ${theme}: no phantom Starting run`);
+    await ev("(() => { for (const b of document.querySelectorAll('button[aria-label=\"Dismiss\"]')) if (b.offsetParent) b.click(); return 0; })()");
+    await sleep(400);
+    const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+    const file = path.join(SHOTS, `held-resume-${theme}.png`);
+    await writeFile(file, Buffer.from(data, 'base64'));
+    results.shots.push(file);
+    heldStops.dropResume(five);   // slice 8: the next theme starts from a paused run that is not held yet
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
+// ---- Shaper small runs, slice 8: the `after run N` row and the Resume wording. A marked 6-run feature, runs 1–3 done,
+// run 4 working (a running runs-map entry), run 5 not started, run 6 paused with a resume point and no runs-map entry.
+// At 1280px, light and dark: run 6's saved page Resume reads "Resume after run 4" (resume-after-run-THEME.png); it is
+// clicked, the server holds it after run 4 and the button reads plain Resume; the feature page's Runs table row of run 6
+// then reads "after run 4" on the after mark (after-run-row-THEME.png). Once at 375px in light, before the click: the
+// label neither wraps nor overflows, on the saved page and in Chat's run panel.
+// Slice 11: a second marked 6-run feature in the Verifier's state, run 4 paused (a resume point, no runs-map entry) before
+// run 6 working. Nothing in it is clicked. The feature page's footer Resume and the Chat feature card's footer Resume read
+// "Resume after run 6": once at 375px in light (one line, fits), then at 1280px in light and dark
+// (feature-resume-after-run-THEME.png, chat-card-resume-after-run-THEME.png).
+const AR_TITLES = [...TITLES, 'Export the member list', 'Filter members by date'];
+const AR_AGREED = AR_TITLES.map((t, i) => ({ id: `R-po-${i + 1}`, text: t, example: `example ${i + 1}` }));
+const arOutline = normalizeOutline({ why: 'proof', leftOut: [], slices: AR_TITLES.map((title, i) => ({ id: `s${i + 1}`, title, goal: `Goal ${i + 1}`,
+  inScope: [], outOfScope: [], acceptance: [`ok ${i + 1}`], dependsOn: [], estimate: 'small', requirements: [AR_AGREED[i].id] })) }, { agreed: AR_AGREED }).outline;
+async function afterRunPhase() {
+  const AR = seedFeature('ar', 'After run', ['done', 'done', 'done', 'running', 'planned', 'planned'], { withOutline: arOutline, titles: AR_TITLES });
+  liveRun(AR.pid(4), `Run 4 · ${AR_TITLES[3]}`, { runShape: { slice: { feature: AR.f.id, index: 4 } } });
+  const six = 'ab7e0006';
+  fire(AR.f, 6, six, 'paused', `Run 6 · ${AR_TITLES[5]}`);
+  getDb().prepare('UPDATE pipelines SET resume_point = ? WHERE id = ?').run(JSON.stringify({ version: 2, ledger: [], tokens: {} }), six);
+  await mkdir(path.join(projectStorePath(key), 'pipelines', `after-run-${six}`), { recursive: true });
+  try { await addProject({ name: 'Proof', path: proj }); } catch { /* already onboarded */ }
+  // Slice 11: the Verifier's state, run 4 paused before run 6 working.
+  const BF = seedFeature('bf', 'Before', ['done', 'done', 'done', 'planned', 'planned', 'running'], { withOutline: arOutline, titles: AR_TITLES });
+  liveRun(BF.pid(6), `Run 6 · ${AR_TITLES[5]}`, { runShape: { slice: { feature: BF.f.id, index: 6 } } });
+  const four = 'bf7e0004';
+  fire(BF.f, 4, four, 'paused', `Run 4 · ${AR_TITLES[3]}`);
+  getDb().prepare('UPDATE pipelines SET resume_point = ? WHERE id = ?').run(JSON.stringify({ version: 2, ledger: [], tokens: {} }), four);
+  const FOOT = (scope) => `[...document.querySelectorAll('${scope} [data-model-action="resume"]')].find((b) => b.offsetParent)`;
+  const PAGE_RESUME = FOOT('.gpage-actions');
+  const CARD_RESUME = FOOT('.chat-rc-foot');
+  const reads = (btn, text) => `(() => { const b = ${btn}; return !!b && b.textContent.trim() === ${JSON.stringify(text)}; })()`;
+  const RESUME = "[...document.querySelectorAll('#hist-detail .hd-resume')].find((b) => b.offsetParent)";
+  const WAITS = `(() => { const b = ${RESUME}; return !!b && b.textContent.trim() === 'Resume after run 4'; })()`;
+  // One line, no overflow: the label's line boxes and its bar.
+  const FITS = (btn) => `(() => { const b = ${btn}; if (!b) return null; const l = b.querySelector('.hd-btn-label, .rd-btn-label') || b;
+    const bar = b.closest('.rd-bar-end') || b.parentElement; const lines = new Set([...l.getClientRects()].map((r) => Math.round(r.top))).size;
+    return { text: b.textContent.trim(), lines, fits: bar.scrollWidth <= bar.clientWidth, own: b.scrollWidth <= b.clientWidth }; })()`;
+  const fitOk = (r, text = 'Resume after run 4') => !!r && r.text === text && r.lines === 1 && r.fits && r.own;
+  const ROW6 = "[...document.querySelectorAll('.gpage-runs .run-member')].find((li) => li.offsetParent && li.querySelector('.run-member-num')?.textContent.trim() === '6')";
+  // 375px, light, before any click.
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 375, height: 900, deviceScaleFactor: 1, mobile: false });
+  await open(`${base}/?afterrun-narrow#history/${key}/${six}`);
+  await skipWelcome(); await setTheme('light');
+  if (await waitFor(WAITS, "run 6's Resume after run 4 at 375px")) {
+    const r = await ev(FITS(RESUME));
+    check(fitOk(r), `after run, 375px: the saved page's Resume after run 4 keeps one line and fits (${JSON.stringify(r)})`);
+  }
+  await open(`${base}/?afterrun-panel#chat/new/run/${six}/overview`);
+  await skipWelcome(); await setTheme('light');
+  const PANEL = "[...document.querySelectorAll('.hd-resume, .rd-pause')].find((b) => b.offsetParent && b.textContent.trim().startsWith('Resume'))";
+  if (await waitFor(`(() => { const b = ${PANEL}; return !!b && b.textContent.trim() === 'Resume after run 4'; })()`, "Chat's run panel Resume after run 4 at 375px")) {
+    const r = await ev(FITS(PANEL));
+    check(fitOk(r), `after run, 375px: Chat's run panel reads Resume after run 4 on one line that fits (${JSON.stringify(r)})`);
+  }
+  // Slice 11, 375px light: both footers' Resume after run 6 keeps one line and fits.
+  await open(`${base}/?beforerun-narrow#feature/${encodeURIComponent(BF.f.id)}`);
+  await skipWelcome(); await setTheme('light');
+  if (await waitFor(reads(PAGE_RESUME, 'Resume after run 6'), 'the feature page footer Resume after run 6 at 375px')) {
+    const r = await ev(FITS(PAGE_RESUME));
+    check(fitOk(r, 'Resume after run 6'), `before run, 375px: the feature page footer's Resume after run 6 keeps one line and fits (${JSON.stringify(r)})`);
+  } else check(false, `before run, 375px: the feature page footer reads Resume after run 6 (${JSON.stringify(await ev(`(${PAGE_RESUME})?.textContent.trim()`))})`);
+  if (await card(BF.threadId, 'beforerun-card-narrow', 'the Before feature card at 375px', 'light')
+    && await waitFor(reads(CARD_RESUME, 'Resume after run 6'), 'the Chat card footer Resume after run 6 at 375px')) {
+    const r = await ev(FITS(CARD_RESUME));
+    check(fitOk(r, 'Resume after run 6'), `before run, 375px: the Chat card footer's Resume after run 6 keeps one line and fits (${JSON.stringify(r)})`);
+  } else check(false, `before run, 375px: the Chat card footer reads Resume after run 6 (${JSON.stringify(await ev(`(${CARD_RESUME})?.textContent.trim()`))})`);
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  const capture = async (name) => {
+    await ev("(() => { for (const b of document.querySelectorAll('button[aria-label=\"Dismiss\"]')) if (b.offsetParent) b.click(); return 0; })()");
+    await sleep(400);
+    const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+    const file = path.join(SHOTS, name);
+    await writeFile(file, Buffer.from(data, 'base64'));
+    results.shots.push(file);
+  };
+  for (const theme of THEMES) {
+    await open(`${base}/?afterrun-${theme}#history/${key}/${six}`);
+    await skipWelcome(); await setTheme(theme);
+    const waits = await waitFor(WAITS, `run 6's Resume after run 4 (${theme})`);
+    check(waits, `after run, ${theme}: before the press run 6's Resume reads Resume after run 4 (${JSON.stringify(await ev(`(${RESUME})?.textContent.trim()`))})`);
+    if (!waits) continue;
+    await skipWelcome();
+    await capture(`resume-after-run-${theme}.png`);
+    await ev(`(${RESUME}).click()`);
+    const back = await waitFor(`(() => { const b = ${RESUME}; return !!b && !b.disabled && b.textContent.trim() === 'Resume'; })()`, `the plain Resume back (${theme})`);
+    check(back, `after run, ${theme}: once held the button reads plain Resume and is enabled`);
+    check(JSON.stringify(heldStops.heldResumeOf(six)) === '{"after":4}', `after run, ${theme}: the server holds it after run 4 (${JSON.stringify(heldStops.heldResumeOf(six))})`);
+    check(![...runs.values()].some((e) => e.pipelineId === six), `after run, ${theme}: no runs-map entry for run 6`);
+    await open(`${base}/?afterrun-row-${theme}#feature/${encodeURIComponent(AR.f.id)}`);
+    await skipWelcome(); await setTheme(theme);
+    const row = await waitFor(`(() => { const li = ${ROW6}; return !!li && li.dataset.mark === 'after'
+      && (li.querySelector('.run-member-state')?.textContent || '').trim() === 'after run 4'; })()`, `run 6's after run 4 row (${theme})`);
+    check(row, `after run, ${theme}: the Runs table row of run 6 reads after run 4 with data-mark="after" (${JSON.stringify(await ev(`(() => { const li = ${ROW6}; return li ? [li.dataset.mark || null, li.querySelector('.run-member-state')?.textContent || null] : null; })()`))})`);
+    if (row) await capture(`after-run-row-${theme}.png`);
+    heldStops.dropResume(six);   // the next theme starts from a paused run that is not held yet
+  }
+  // Slice 11, 1280px light and dark: the footers say which run the paused run 4 would wait for, before any press.
+  const COUNT = (scope) => `[...document.querySelectorAll('${scope} button')].filter((b) => b.offsetParent && /Resume/.test(b.textContent)).length`;
+  for (const theme of THEMES) {
+    await open(`${base}/?beforerun-${theme}#feature/${encodeURIComponent(BF.f.id)}`);
+    await skipWelcome(); await setTheme(theme);
+    const page = await waitFor(reads(PAGE_RESUME, 'Resume after run 6'), `the feature page footer Resume after run 6 (${theme})`);
+    check(page, `before run, ${theme}: the feature page footer's Resume reads Resume after run 6 (${JSON.stringify(await ev(`(${PAGE_RESUME})?.textContent.trim()`))})`);
+    if (page) {
+      check(await ev(COUNT('.gpage-actions')) === 1, `before run, ${theme}: the feature page footer shows 1 Resume`);
+      await capture(`feature-resume-after-run-${theme}.png`);
+    }
+    const chat = await card(BF.threadId, `beforerun-card-${theme}`, 'the Before feature card', theme)
+      && await waitFor(reads(CARD_RESUME, 'Resume after run 6'), `the Chat card footer Resume after run 6 (${theme})`);
+    check(chat, `before run, ${theme}: the Chat card footer's Resume reads Resume after run 6 (${JSON.stringify(await ev(`(${CARD_RESUME})?.textContent.trim()`))})`);
+    if (chat) {
+      check(await ev(COUNT('.chat-rc-foot')) === 1, `before run, ${theme}: the Chat card footer shows 1 Resume`);
+      await capture(`chat-card-resume-after-run-${theme}.png`);
+    }
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
+// ---- Shaper small runs, slice 10 (R-ux-4): a stop's findings list shows on every surface where it can be answered. A
+// marked 4-run feature, run 2 live at a gate stop with 3 open issues. With the flag on, the run page, the Chat run side
+// panel and the Chat feature card each list the 3 issues under the question (`.qpanel .issues > li.issue`, titled as the
+// issues), with one primary. 1280px, Expert, the classic look, light and dark: small-runs-stop-findings-run-page-…,
+// -panel-… and -card-… .png in SHOTS_DIR.
+const SF_ISSUES = [ISSUES[0],
+  { severity: 'major', title: 'A deleted chart stays reachable from its share link', detail: 'the share row is never revoked' },
+  { severity: 'major', title: 'The chart export leaks private column names', detail: 'CSV header is built before the column filter' }];
+async function stopFindingsPhase() {
+  { const r = await post('/api/settings', { uiLevel: 'expert' }); check(r.ok, `stop findings: the Expert level is set (${r.status})`); }
+  const SF = seedFeature('sf', 'Stop findings', ['done', 'running', 'planned', 'planned']);
+  const stop = gateStop({ run: 2, issues: SF_ISSUES, fixCycles: 3, nodeId: 'n_review' });
+  const pq = { id: 'gate-sf-3', kind: 'gate', wireId: 'w9', nodeId: 'n_review', executionId: 'x:n_review:3', deliveryNo: 3, issues: SF_ISSUES, stop };
+  const runId = liveRun(SF.pid(2), `Run 2 · ${TITLES[1]}`, { at: 'n_review', pendingQuestion: pq, runShape: { slice: { feature: SF.f.id, index: 2 } } });
+  const want = SF_ISSUES.map((i) => i.title);
+  const FACTS = (scope) => `(() => { const vis = (els) => [...els].filter((e) => e.offsetParent);
+    const q = vis(document.querySelectorAll(${JSON.stringify(`${scope} .qpanel`)})).find((x) => x.querySelector('.qopts'));
+    if (!q) return null;
+    return { rows: vis(q.querySelectorAll('.issues > li.issue')).length,
+      titles: vis(q.querySelectorAll('.issues > li.issue .issue-title')).map((t) => t.textContent.trim()),
+      primaries: vis(q.querySelectorAll('.btn-primary')).length,
+      overflow: q.scrollWidth > q.clientWidth + 1 }; })()`;
+  const capture = async (name) => {
+    await ev("(() => { for (const b of document.querySelectorAll('button[aria-label=\"Dismiss\"]')) if (b.offsetParent) b.click(); return 0; })()");
+    await sleep(400);
+    const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+    const file = path.join(SHOTS, name);
+    await writeFile(file, Buffer.from(data, 'base64'));
+    results.shots.push(file);
+  };
+  const judgeList = async (scope, where, theme) => {
+    const listed = `(() => { const f = ${FACTS(scope)}; return !!f && f.rows > 0; })()`;
+    if (!(await waitFor(listed, `the stop's findings on the ${where} (${theme})`))) return;
+    const f = await ev(FACTS(scope));
+    check(f.rows === 3 && JSON.stringify(f.titles) === JSON.stringify(want) && f.primaries === 1 && !f.overflow,
+      `stop findings, ${where}, ${theme}: 3 issue rows titled as the issues, 1 primary, no overflow (${JSON.stringify(f)})`);
+    await reveal(`${scope} .qpanel .issues`);
+  };
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  for (const theme of THEMES) {
+    await open(`${base}/?sfr-${theme}#running/${runId}`);
+    await skipWelcome(); await setTheme(theme);
+    await judgeList('#run-detail', 'run page', theme);
+    await capture(`small-runs-stop-findings-run-page-${theme}.png`);
+    await open(`${base}/?sfp-${theme}#chat/new/run/${SF.pid(2)}/overview`);
+    await skipWelcome(); await setTheme(theme);
+    await judgeList(PANEL, 'Chat run panel', theme);
+    await capture(`small-runs-stop-findings-panel-${theme}.png`);
+    if (await card(SF.threadId, 'sfc', 'the stop findings card', theme)) await judgeList('.chat-rc', 'Chat feature card', theme);
+    await capture(`small-runs-stop-findings-card-${theme}.png`);
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
+// ---- Ship the whole feature as one PR (the flag on, 1280px, the classic look, light and dark). Marked 5-run features,
+// every run finished in run order on a linear chain of branches, R-comp-4 met, a clean Verifier check for run 5's tip:
+// "Ship one" with no PR (the dialog shows One enabled; the feature page line offers ", or ship as one PR"), "Ship one
+// open" with run 2's PR #40 open (One disabled, its reason beside it, N stacked enabled), "Ship one applied" shipped as
+// One (every run holds PR #41: the Chat card reads 1 PR open with one row), a run whose stored outcome has the old
+// reason (the run page reads the new words) and the Labs entry's ship clause. app-ship-one-enabled, -disabled,
+// -group-line, -applied, -outcome and -labs, each -light.png and -dark.png, in SHOTS_DIR.
+const SO_TITLES = [...TITLES, 'Export the member list'];
+const SO_AGREED = SO_TITLES.map((t, i) => ({ id: `R-po-${i + 1}`, text: t, example: `example ${i + 1}` }));
+const soOutline = normalizeOutline({ why: 'proof', leftOut: [], slices: SO_TITLES.map((title, i) => ({ id: `s${i + 1}`, title, goal: `Goal ${i + 1}`,
+  inScope: [], outOfScope: [], acceptance: [`ok ${i + 1}`], dependsOn: [], estimate: 'small', requirements: [SO_AGREED[i].id] })) },
+{ agreed: [...SO_AGREED, { id: 'R-comp-4', text: 'The sign-up data stays in the EU', example: 'rows live in eu-west' }] }).outline;
+async function shipOnePhase() {
+  try { await addProject({ name: 'Proof', path: proj }); } catch { /* already onboarded */ }
+  const seed = (tag, title) => {
+    const x = seedFeature(tag, title, ['done', 'done', 'done', 'done', 'done'], { withOutline: soOutline, titles: SO_TITLES,
+      requirementKinds: { 'R-comp-4': { kind: 'confirmed', role: 'compliance' } } });
+    setFeatureAcceptance(x.f.id, [COMP_MET]);
+    figures(x.f.id);
+    for (let k = 1; k <= 5; k++) {
+      const br = `feat/${tag}-${k}`;
+      execFileSync('git', ['branch', '-f', br], { cwd: proj });
+      const at = new Date(Date.parse(now) + k * 60_000).toISOString();
+      getDb().prepare('UPDATE pipelines SET branch = ?, updated_at = ? WHERE id = ?')
+        .run(JSON.stringify({ source: k === 1 ? 'main' : `feat/${tag}-${k - 1}`, feature: br }), at, x.pid(k));
+    }
+    const headSha = execFileSync('git', ['rev-parse', `feat/${tag}-5`], { cwd: proj, encoding: 'utf8' }).trim();
+    const vpid = `c5${tag}v0001`;
+    // A pre-slice-11 Verifier run: it keeps its stored title (`… · Verifier`); new rounds are `Verifier · …`.
+    pipeline(vpid, 'done', `${title} · Verifier`);
+    setVerify(x.f, vCheck(x, vpid, 'clean', { head: { index: 5, pipelineId: x.pid(5) }, headSha,
+      result: { held: [...SO_AGREED.map((a) => a.id), 'R-comp-4'], gaps: [] } }));
+    return x;
+  };
+  const prOf = (pid, n) => getDb().prepare("UPDATE pipelines SET pr_url = ?, pr_number = ?, pr_state = 'OPEN' WHERE id = ?")
+    .run(`https://github.com/proof/repo/pull/${n}`, n, pid);
+  const ONE = seed('so', 'Ship one');
+  const OPEN = seed('sp', 'Ship one open');
+  prOf(OPEN.pid(2), 40);
+  const DONE = seed('sa', 'Ship one applied');
+  for (let k = 1; k <= 5; k++) prOf(DONE.pid(k), 41);
+  recordShip(DONE.f.id, { mode: 'one' });
+  // A run of an older feature whose stored outcome has the old reason: the record is kept, the page reads the new words.
+  const OLD = seed('sx', 'Ship one old');
+  getDb().prepare('UPDATE pipelines SET pr_auto = ? WHERE id = ?').run(JSON.stringify({ open: 'ready', slices: 'one', scope: 'project',
+    featureId: OLD.f.id, source: { open: 'feature', slices: 'feature' },
+    outcome: { status: 'skipped', final: true, reason: 'small runs ship a PR per run', at: now } }), OLD.pid(2));
+  getDb().prepare("UPDATE shape_features SET pr_open = 'ready', pr_slices = 'one' WHERE id = ?").run(OLD.f.id);
+
+  // The sandbox repo has no remote: the dialog's base comes from a stubbed /api/pr/remotes, as the unit tests stub it.
+  await cdp('Fetch.enable', { patterns: [{ urlPattern: '*/api/pr/remotes*', requestStage: 'Request' }] });
+  onCdpEvent = (m) => {
+    if (m.method !== 'Fetch.requestPaused') return;
+    const body = Buffer.from(JSON.stringify({ ok: true, chain: ['main'], defaultBase: 'main', remotes: [], defaults: {} })).toString('base64');
+    cdp('Fetch.fulfillRequest', { requestId: m.params.requestId, responseCode: 200,
+      responseHeaders: [{ name: 'content-type', value: 'application/json' }], body }).catch(() => {});
+  };
+  const capture = async (name) => {
+    await ev("(() => { for (const b of document.querySelectorAll('button[aria-label=\"Dismiss\"]')) if (b.offsetParent) b.click(); return 0; })()");
+    await sleep(400);
+    const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+    const file = path.join(SHOTS, name);
+    await writeFile(file, Buffer.from(data, 'base64'));
+    results.shots.push(file);
+  };
+  const LINE = "(() => { const l = [...document.querySelectorAll('#group-detail .gpage-ship')].find((x) => x.offsetParent); return l ? l.textContent : null; })()";
+  const DIALOG = `(() => { const m = document.getElementById('shipit-modal'); if (!m || m.classList.contains('hidden')) return null;
+    const one = m.querySelector('.shipit-prs input[value="one"]'); const st = m.querySelector('.shipit-prs input[value="stacked"]');
+    const why = m.querySelector('.shipit-prs-one-why');
+    return { oneDisabled: one.disabled, stackedDisabled: st.disabled, why: why.hidden ? '' : why.textContent,
+      more: (m.querySelector('.shipit-prs-stacked-label') || {}).textContent || null }; })()`;
+  const closeDialog = () => ev(`(() => { const m = document.getElementById('shipit-modal'); const c = m && [...m.querySelectorAll('button')]
+    .find((b) => b.offsetParent && b.textContent.trim() === 'Cancel'); if (c) c.click(); return !!c; })()`);
+  const openDialog = async (x, name, q, theme) => {
+    await open(`${base}/?${q}-${theme}#feature/${encodeURIComponent(x.f.id)}`);
+    await skipWelcome(); await setTheme(theme);
+    if (!(await waitFor(`!!${LINE}`, `the ${name} feature page line (${theme})`))) return null;
+    await sleep(400);
+    const line = await ev(LINE);
+    // The slot's Create PR (a run with a PR of its own also shows View PR beside it).
+    await ev("(() => { const b = [...document.querySelectorAll('#group-detail .gpage-card button')].find((x) => x.offsetParent && /^Create (PR|\\d+ PRs)$/.test(x.textContent.trim())); if (b) b.click(); return !!b; })()");
+    if (!(await waitFor(`!!${DIALOG}`, `the ${name} Create PR dialog (${theme})`))) return { line, dialog: null };
+    await sleep(300);
+    return { line, dialog: await ev(DIALOG) };
+  };
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  for (const theme of THEMES) {
+    // The group page line and the dialog, no PR: One enabled.
+    {
+      const r = await openDialog(ONE, 'Ship one', 'shiponeline', theme);
+      check(r && r.line === 'Merge in order 1 → 2 → 3 → 4 → 5, or ship as one PR',
+        `ship one, ${theme}: the feature page line offers ", or ship as one PR" (${JSON.stringify(r && r.line)})`);
+      check(r && r.dialog && r.dialog.oneDisabled === false && r.dialog.stackedDisabled === false && r.dialog.why === '',
+        `ship one, ${theme}: One is not disabled, Stacked too, no reason (${JSON.stringify(r && r.dialog)})`);
+      await capture(`app-ship-one-enabled-${theme}.png`);
+      await closeDialog(); await sleep(400);
+      await capture(`app-ship-one-group-line-${theme}.png`);
+    }
+    // Run 2's PR #40 open: One disabled with its reason in .shipit-prs-one-why, Stacked enabled.
+    {
+      const r = await openDialog(OPEN, 'Ship one open', 'shiponeopen', theme);
+      check(r && r.dialog && r.dialog.oneDisabled === true && r.dialog.stackedDisabled === false
+        && r.dialog.why === 'Run 2 already has pull request #40 open' && r.dialog.more === '4 stacked',
+      `ship one open, ${theme}: One disabled, "Run 2 already has pull request #40 open" in .shipit-prs-one-why, 4 stacked enabled (${JSON.stringify(r && r.dialog)})`);
+      await capture(`app-ship-one-disabled-${theme}.png`);
+      await closeDialog(); await sleep(300);
+    }
+    // Shipped as One: the Chat card's Ship card counts the one PR once.
+    if (await card(DONE.threadId, 'shiponeapplied', 'the Ship one applied card', theme) && await SHIP_READY('the Ship one applied card', theme)) {
+      const f = await ev(SHIP_FACTS);
+      check(f && f.stateDetail === '1 PR open' && f.prs.length === 1 && f.prs[0][0] === '#41' && f.stats === 'one PR holding every run',
+        `ship one applied, ${theme}: 1 PR open, one row #41, one PR holding every run (${JSON.stringify(f && [f.stateDetail, f.prs, f.stats])})`);
+      await reveal(SHIP);
+      await capture(`app-ship-one-applied-${theme}.png`);
+    }
+    // The stored old reason, on run 2's saved page.
+    await open(`${base}/?shiponeold-${theme}#history/${key}/${OLD.pid(2)}`);
+    await skipWelcome(); await setTheme(theme);
+    const OUT = "(() => { const o = [...document.querySelectorAll('.hd-pr-auto-outcome')].find((x) => x.offsetParent); return o ? o.textContent : null; })()";
+    if (await waitFor(`!!${OUT}`, `the old outcome line (${theme})`)) {
+      const t = await ev(OUT);
+      check(t === 'Not opened: each run of this feature ships its own pull request', `ship one outcome, ${theme}: the old reason reads in the new words (${JSON.stringify(t)})`);
+      await reveal('.hd-pr-auto-outcome');
+    }
+    await capture(`app-ship-one-outcome-${theme}.png`);
+    // The Labs entry's ship clause.
+    await open(`${base}/?shiponelabs-${theme}#settings/experimental/shaperSmallRuns`);
+    await skipWelcome(); await setTheme(theme);
+    const LABS = "(() => { const e = [...document.querySelectorAll('*')].find((x) => x.offsetParent && x.children.length === 0 && x.textContent.includes('shipped as one PR or as stacked PRs')); if (e) e.scrollIntoView({ block: 'center' }); return !!e; })()";
+    check(await waitFor(LABS, `the Labs entry (${theme})`), `ship one labs, ${theme}: the Labs entry reads "shipped as one PR or as stacked PRs"`);
+    await sleep(300);
+    await capture(`app-ship-one-labs-${theme}.png`);
+  }
+  onCdpEvent = null;
+  await cdp('Fetch.disable');
+  const stored = JSON.parse(getDb().prepare('SELECT pr_auto FROM pipelines WHERE id = ?').get(OLD.pid(2)).pr_auto);
+  check(stored.outcome.reason === 'small runs ship a PR per run', `ship one outcome: the stored reason is unchanged (${JSON.stringify(stored.outcome.reason)})`);
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
+// ---- Slice 5: Ship names the carried runs and counts the PRs it will open (the flag on, 1280px, the classic look, light
+// and dark). A marked 5-run feature finished in run order, run 3 started on run 1's branch and took in run 2's (`tookIn`),
+// so run 3 carries run 2; run 2 has #40 open; R-comp-4 met; a clean Verifier check for run 5's tip. The Ship card reads
+// "Run 2's work ships in run 3's pull request (#40 is open)" in .ask-shipcard-carried and "Create 4 PRs"; the Create PR
+// dialog shows the same line in .shipit-prs-carried, "The open pull request is not counted." and "Create 4 PRs". No carried line overflows
+// its card (scrollWidth <= clientWidth). app-ship-carried-card-THEME.png and app-ship-carried-dialog-THEME.png in
+// SHOTS_DIR, beside the run's prototype (SHIP_CARRIED_PROTOTYPE, its index.html) #screen-requirements and
+// #screen-ship-dialog: prototype-ship-carried-requirements-THEME.png and prototype-ship-carried-dialog-THEME.png.
+const CARRIED_LINE = "Run 2's work ships in run 3's pull request (#40 is open)";
+/** Slice 5's carried-run seed: 5 done runs, run 3 took in run 2, whose #40 is open; a clean check on run 5's head. */
+function seedCarried(tag, title) {
+  const x = seedFeature(tag, title, ['done', 'done', 'done', 'done', 'done'], { withOutline: soOutline, titles: SO_TITLES,
+    requirementKinds: { 'R-comp-4': { kind: 'confirmed', role: 'compliance' } } });
+  setFeatureAcceptance(x.f.id, [COMP_MET]);
+  figures(x.f.id);
+  const br = (k) => `feat/${tag}-${k}`;
+  for (let k = 1; k <= 5; k++) execFileSync('git', ['branch', '-f', br(k)], { cwd: proj });
+  const recs = [{ source: 'main', feature: br(1) }, { source: br(1), feature: br(2) },
+    { source: br(1), feature: br(3), tookIn: [{ index: 2, branch: br(2), pipelineId: x.pid(2) }] },
+    { source: br(3), feature: br(4) }, { source: br(4), feature: br(5) }];
+  recs.forEach((rec, i) => getDb().prepare('UPDATE pipelines SET branch = ?, updated_at = ? WHERE id = ?')
+    .run(JSON.stringify(rec), new Date(Date.parse(now) + (i + 1) * 60_000).toISOString(), x.pid(i + 1)));
+  getDb().prepare("UPDATE pipelines SET pr_url = ?, pr_number = 40, pr_state = 'OPEN' WHERE id = ?").run('https://github.com/proof/repo/pull/40', x.pid(2));
+  const headSha = execFileSync('git', ['rev-parse', br(5)], { cwd: proj, encoding: 'utf8' }).trim();
+  pipeline(`c5${tag}v0001`, 'done', `${title} · Verifier`);
+  setVerify(x.f, vCheck(x, `c5${tag}v0001`, 'clean', { head: { index: 5, pipelineId: x.pid(5) }, headSha,
+    result: { held: [...SO_AGREED.map((a) => a.id), 'R-comp-4'], gaps: [] } }));
+  return x;
+}
+/** The Create PR dialog asks GET /api/pr/remotes, which a sandbox project with no remote cannot answer fast: stub it. */
+async function stubRemotes() {
+  await cdp('Fetch.enable', { patterns: [{ urlPattern: '*/api/pr/remotes*', requestStage: 'Request' }] });
+  onCdpEvent = (m) => {
+    if (m.method !== 'Fetch.requestPaused') return;
+    const body = Buffer.from(JSON.stringify({ ok: true, chain: ['main'], defaultBase: 'main', remotes: [], defaults: {} })).toString('base64');
+    cdp('Fetch.fulfillRequest', { requestId: m.params.requestId, responseCode: 200,
+      responseHeaders: [{ name: 'content-type', value: 'application/json' }], body }).catch(() => {});
+  };
+}
+async function shipCarriedPhase() {
+  try { await addProject({ name: 'Proof', path: proj }); } catch { /* already onboarded */ }
+  const x = seedCarried('cy', 'Ship carried');
+  const run3 = JSON.parse(getDb().prepare('SELECT branch FROM pipelines WHERE id = ?').get(x.pid(3)).branch);
+  check(run3.tookIn && run3.tookIn[0].index === 2, `seed: run 3 took in run 2 (${JSON.stringify(run3.tookIn)})`);
+  await stubRemotes();
+  const capture = async (name) => {
+    await sleep(400);
+    const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+    const file = path.join(SHOTS, name);
+    await writeFile(file, Buffer.from(data, 'base64'));
+    results.shots.push(file);
+  };
+  /** The visible lines under `sel` and whether any overflows its own box or the card around it. */
+  const linesOf = (sel, boxSel) => ev(`(() => { const els = [...document.querySelectorAll(${JSON.stringify(sel)})].filter((x) => x.offsetParent);
+    const box = els[0] && els[0].closest(${JSON.stringify(boxSel)});
+    return { lines: els.map((x) => x.textContent), fits: els.every((x) => x.scrollWidth <= x.clientWidth + 1)
+      && (!box || box.scrollWidth <= box.clientWidth + 1) }; })()`);
+  const CARD_FACTS = `(() => { const r = [...document.querySelectorAll(${JSON.stringify(SHIP)})].find((x) => x.offsetParent); if (!r) return null;
+    const c = r.querySelector('[data-act="ship-create"]'); const l = r.querySelector('.ask-shipcard-carried');
+    return { create: c ? c.textContent : null, after: !!l && r.querySelector('.ask-shipcard-stats').nextElementSibling === l }; })()`;
+  const DIALOG = `(() => { const m = document.getElementById('shipit-modal'); if (!m || m.classList.contains('hidden')) return null;
+    const kept = m.querySelector('.shipit-prs-kept');
+    return { ok: (m.querySelector('.shipit-ok') || {}).textContent || null, kept: kept && !kept.hidden ? kept.textContent : null }; })()`;
+  const proto = process.env.SHIP_CARRIED_PROTOTYPE || '';
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  for (const theme of THEMES) {
+    // The Ship card, ready: the carried line under the state line, and Create 4 PRs.
+    if (await card(x.threadId, 'shipcarried', 'the Ship carried card', theme) && await SHIP_READY('the Ship carried card', theme)) {
+      await waitFor(`!!document.querySelector(${JSON.stringify(`${SHIP} .ask-shipcard-carried`)})`, `the carried list (${theme})`);
+      const f = await ev(CARD_FACTS);
+      const l = await linesOf(`${SHIP} .ask-shipcard-carried li`, '.ask-shipcard');
+      check(f && f.create === 'Create 4 PRs' && f.after, `ship carried card, ${theme}: Create 4 PRs, the list right after the state line (${JSON.stringify(f)})`);
+      check(JSON.stringify(l.lines) === JSON.stringify([CARRIED_LINE]) && l.fits,
+        `ship carried card, ${theme}: one line "${CARRIED_LINE}", no overflow (${JSON.stringify(l)})`);
+      await reveal(`${SHIP} .ask-shipcard-carried`);
+      await capture(`app-ship-carried-card-${theme}.png`);
+    }
+    // The Create PR dialog from the feature page: Stacked picked, the line, the note and Create 4 PRs.
+    await open(`${base}/?shipcarried-dialog-${theme}#feature/${encodeURIComponent(x.f.id)}`);
+    await skipWelcome(); await setTheme(theme);
+    const CREATE = "[...document.querySelectorAll('#group-detail .gpage-card button')].find((x) => x.offsetParent && /^Create (PR|\\d+ PRs)$/.test(x.textContent.trim()))";
+    if (await waitFor(`!!${CREATE}`, `the Ship carried feature page's Create (${theme})`)) {
+      await sleep(400);
+      await ev(`(() => { const b = ${CREATE}; b.click(); return true; })()`);
+      if (await waitFor(`!!${DIALOG}`, `the Ship carried Create PR dialog (${theme})`)) {
+        await sleep(300);
+        const d = await ev(DIALOG);
+        const l = await linesOf('#shipit-modal .shipit-prs-carried small.hint', '.shipit-zone');
+        check(d && d.ok === 'Create 4 PRs' && d.kept === 'The open pull request is not counted.',
+          `ship carried dialog, ${theme}: Create 4 PRs, "The open pull request is not counted." (${JSON.stringify(d)})`);
+        check(JSON.stringify(l.lines) === JSON.stringify([CARRIED_LINE]) && l.fits,
+          `ship carried dialog, ${theme}: one line in .shipit-prs-carried, no overflow (${JSON.stringify(l)})`);
+        await capture(`app-ship-carried-dialog-${theme}.png`);
+        await ev(`(() => { const m = document.getElementById('shipit-modal'); const c = [...m.querySelectorAll('button')]
+          .find((b) => b.offsetParent && b.textContent.trim() === 'Cancel'); if (c) c.click(); return !!c; })()`);
+        await sleep(300);
+      }
+    }
+    // The prototype's two screens beside them.
+    if (proto && existsSync(proto)) {
+      for (const [screen, name] of [['screen-requirements', 'requirements'], ['screen-ship-dialog', 'dialog']]) {
+        await open(`${pathToFileURL(proto).href}?carried-${name}-${theme}#${screen}`); await setTheme(theme); await sleep(300);
+        await reveal(`#${screen}`);
+        await capture(`prototype-ship-carried-${name}-${theme}.png`);
+      }
+    } else log(`note the prototype screens (screen-requirements, screen-ship-dialog) are skipped: set SHIP_CARRIED_PROTOTYPE`);
+  }
+  onCdpEvent = null;
+  await cdp('Fetch.disable');
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
+// ---- Feature page slice 6 (R-ux-3, R-arch-2): the marked feature page's Cost tab, its Requirements tab reached with Mark and
+// ship (the Ship card first, focused and in view) and its Log tab, light and dark at 1280px, plus the Cost tab and the
+// page bar at 375px in light. The feature: 5 done runs at $2, a Verifier round at $1 after a failed one at $0.50 (both
+// round 1), clean, and R-comp-4 still waiting for Compliance's mark. feature-cost-tab-…, feature-requirements-ship-card-…,
+// feature-log-tab-… (-light.png, -dark.png), feature-cost-tab-narrow-light.png and feature-requirements-bar-narrow-light.png.
+async function featureTabsPhase() {
+  try { await addProject({ name: 'Proof', path: proj }); } catch { /* already onboarded */ }
+  const tag = 'ft';
+  const x = seedFeature(tag, 'Feature tabs', ['done', 'done', 'done', 'done', 'done'], { withOutline: soOutline, titles: SO_TITLES,
+    requirementKinds: { 'R-comp-4': { kind: 'confirmed', role: 'compliance' } } });
+  figures(x.f.id);
+  for (let k = 1; k <= 5; k++) {
+    const br = `feat/${tag}-${k}`;
+    execFileSync('git', ['branch', '-f', br], { cwd: proj });
+    getDb().prepare('UPDATE pipelines SET branch = ?, updated_at = ?, total_cost_usd = 2 WHERE id = ?')
+      .run(JSON.stringify({ source: k === 1 ? 'main' : `feat/${tag}-${k - 1}`, feature: br }), new Date(Date.parse(now) + k * 60_000).toISOString(), x.pid(k));
+  }
+  const headSha = execFileSync('git', ['rev-parse', `feat/${tag}-5`], { cwd: proj, encoding: 'utf8' }).trim();
+  // Round 1 failed and was run again under the same round (verifier.mjs): two tickets, each with its own pipeline.
+  const round = (vpid, status, usd, minute) => {
+    pipeline(vpid, status, 'Feature tabs · Verifier');
+    getDb().prepare('UPDATE pipelines SET total_cost_usd = ? WHERE id = ?').run(usd, vpid);
+    const at = new Date(Date.parse(now) + minute * 60_000).toISOString();
+    getDb().prepare(`INSERT INTO scheduled_runs (id, status, pipeline_id, request, run_at, created_at, updated_at, title)
+      VALUES (?, 'fired', ?, ?, ?, ?, ?, 'Verifier')`).run(`t-${vpid}`, vpid,
+      JSON.stringify({ workflowId: 'wf_shape_verify', shape: { verify: { featureId: x.f.id, round: 1 } } }), at, at, at);
+  };
+  round(`c5${tag}v0001`, 'error', 0.5, 10);
+  round(`c5${tag}v0002`, 'done', 1, 11);
+  setVerify(x.f, vCheck(x, `c5${tag}v0002`, 'clean', { head: { index: 5, pipelineId: x.pid(5) }, headSha,
+    result: { held: [...SO_AGREED.map((a) => a.id), 'R-comp-4'], gaps: [] } }));
+  const page = `#feature/${encodeURIComponent(x.f.id)}`;
+  const capture = async (name) => {
+    // The sandbox's own toasts (the model defaults notice) would cover the tab: dismiss them first.
+    await ev("(() => { for (const b of document.querySelectorAll('button[aria-label=\"Dismiss\"]')) if (b.offsetParent) b.click(); return 0; })()");
+    await sleep(400);
+    const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+    const file = path.join(SHOTS, name);
+    await writeFile(file, Buffer.from(data, 'base64'));
+    results.shots.push(file);
+  };
+  const go = async (hash) => { await ev(`(() => { location.hash = ${JSON.stringify(hash)}; return true; })()`); await sleep(500); };
+  const TABS = "[...document.querySelectorAll('#group-detail .gpage-tabs .rd-tab')].filter((t) => !t.hidden).map((t) => t.textContent)";
+  const FOOT = "(document.querySelector('#group-detail .gpage-panel[data-tab=\"cost\"]:not([hidden]) .gpage-cost tfoot') || {}).textContent || ''";
+  for (const theme of THEMES) {
+    await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+    await open(`${base}/?feature-tabs-${theme}${page}/cost`);
+    await skipWelcome(); await setTheme(theme);
+    if (await waitFor(`/\\$11\\.50/.test(${FOOT})`, `the Cost tab's Total (${theme})`)) {
+      check(JSON.stringify(await ev(TABS)) === JSON.stringify(['Runs', 'Requirements', 'Decisions', 'Cost', 'Log']), `feature tabs, ${theme}: Runs, Requirements, Decisions, Cost, Log`);
+      const rows = await ev("[...document.querySelectorAll('#group-detail .gpage-cost tbody tr')].map((r) => r.textContent)");
+      check(rows.length === 7 && /round 1 · failed/.test(rows[5]) && /round 1\$1\.00$/.test(rows[6]), `feature cost, ${theme}: 5 runs, the failed round, then its retry (${JSON.stringify(rows)})`);
+      const fact = await ev("(document.querySelector('#group-detail .gpage-card .rd-kv-row[data-fact=\"cost\"] .rd-kv-v') || {}).textContent || ''");
+      check(fact === '$11.50', `feature cost, ${theme}: the Total cost fact reads the same $11.50 (${fact})`);
+      await capture(`feature-cost-tab-${theme}.png`);
+    }
+    await go(`${page}/logs`);
+    if (await waitFor("!!document.querySelector('#group-detail .gpage-panel[data-tab=\"logs\"]:not([hidden]) .gpage-steplog ol.shape-feature-log li')", `the Log tab's step log (${theme})`)) {
+      const after = await ev(`(() => { const p = document.querySelector('#group-detail .gpage-panel[data-tab="logs"]');
+        return !!(p.querySelector('ul.gpage-logs li') && (p.querySelector('ul.gpage-logs').compareDocumentPosition(p.querySelector('ol.shape-feature-log')) & 4)); })()`);
+      check(after, `feature log, ${theme}: the Open logs rows, then the step log`);
+      await capture(`feature-log-tab-${theme}.png`);
+    }
+    // Mark and ship from a scrolled Runs tab: Requirements opens with its Ship card focused and inside the viewport.
+    await go(page);
+    if (await waitFor("!!document.querySelector('#group-detail .gpage-markship')", `Mark and ship (${theme})`)) {
+      await ev(`(() => { for (let n = document.querySelector('#group-detail .gpage'); n; n = n.parentElement) n.scrollTop = n.scrollHeight;
+        document.scrollingElement.scrollTop = document.scrollingElement.scrollHeight; return true; })()`);
+      await ev("(() => { document.querySelector('#group-detail .gpage-markship').click(); return true; })()");
+      if (await waitFor("!!document.activeElement && document.activeElement.matches('#group-detail [data-ship-card]')", `the Ship card focused (${theme})`)) {
+        await sleep(300);
+        const at = await ev(`(() => { const c = document.activeElement; const r = c.getBoundingClientRect();
+          const panel = c.closest('.gpage-panel'); return { hash: location.hash, tab: panel && panel.dataset.tab, first: !!panel && panel.firstElementChild.contains(c)
+            && panel.firstElementChild.querySelector('.shape-feature').firstElementChild === c,
+            inView: r.top >= 0 && r.top < innerHeight && r.left >= 0 && r.right <= innerWidth }; })()`);
+        check(at.hash === `${page}/requirements` && at.tab === 'requirements' && at.first && at.inView,
+          `Mark and ship, ${theme}: Requirements with the Ship card first, focused and inside the viewport (${JSON.stringify(at)})`);
+        await capture(`feature-requirements-ship-card-${theme}.png`);
+      }
+    }
+    if (theme !== 'light') continue;
+    // 375px, light: the Cost table stacks, and the bar with Mark and ship never scrolls sideways.
+    await cdp('Emulation.setDeviceMetricsOverride', { width: 375, height: 900, deviceScaleFactor: 1, mobile: false });
+    await go(`${page}/cost`);
+    if (await waitFor(`/\\$11\\.50/.test(${FOOT})`, 'the narrow Cost tab')) await capture('feature-cost-tab-narrow-light.png');
+    await go(`${page}/requirements`);
+    if (await waitFor("!!document.querySelector('#group-detail .gpage-markship')", 'the narrow page bar')) {
+      const bar = await ev("(() => { const b = document.querySelector('#group-detail .gpage-bar'); return { scrollWidth: b.scrollWidth, clientWidth: b.clientWidth }; })()");
+      check(bar.scrollWidth <= bar.clientWidth, `the page bar at 375px fits (${JSON.stringify(bar)})`);
+      await capture('feature-requirements-bar-narrow-light.png');
+    }
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
+// ---- Shaper slice 7 (R-ux-1, R-ux-2, R-arch-4): confirm in place. A marked feature with no chat, 5 runs done and R-ux-2
+// waiting for Design's confirmation: the head reads "Needs your confirmation: R-ux-2" as a link, the disabled Create N PRs
+// says why in a tip drawn above it (hovered with a real mouse move: the tip never meets the reason or the title, is on top
+// and inside the window), the link opens Requirements at the Ship card. Then the Runs list's Needs you, a chat-less
+// feature's waiting line, the Ship card and dialog naming #40 once, the Chat card's hold and the run panel's Prototype stop
+// of a chat-less feature run. Light and dark at 1280px, the tip and the reason again at 375px in light.
+// feature-confirm-tip-…, feature-confirm-reason-…, runs-confirm-needs-…, feature-chatless-waiting-…, ship-pr-named-once-…,
+// chat-card-confirm-…, prototype-stop-feature-link-… (-light.png, -dark.png), feature-confirm-tip-narrow-light.png.
+const CI_OUTLINE = normalizeOutline({ why: 'proof', leftOut: [], slices: SO_TITLES.map((title, i) => ({ id: `s${i + 1}`, title, goal: `Goal ${i + 1}`,
+  inScope: [], outOfScope: [], acceptance: [`ok ${i + 1}`], dependsOn: [], estimate: 'small', requirements: [SO_AGREED[i].id] })) },
+{ agreed: [...SO_AGREED, { id: 'R-ux-2', text: 'The words say who confirms', example: 'waiting for you to confirm' }] }).outline;
+const CI_KINDS = { 'R-ux-2': { kind: 'confirmed', role: 'design' } };
+const CI_HOLD = 'Needs your confirmation: R-ux-2';
+async function confirmInPlacePhase() {
+  try { await addProject({ name: 'Proof', path: proj }); } catch { /* already onboarded */ }
+  const DONE5 = ['done', 'done', 'done', 'done', 'done'];
+  const opts = { withOutline: CI_OUTLINE, titles: SO_TITLES, requirementKinds: CI_KINDS };
+  /** Runs 1–5 on a straight branch line and a clean Verifier check of run 5's head: ready but for the confirmation. */
+  const checked = (tag, x) => {
+    for (let k = 1; k <= 5; k++) {
+      execFileSync('git', ['branch', '-f', `feat/${tag}-${k}`], { cwd: proj });
+      getDb().prepare('UPDATE pipelines SET branch = ?, updated_at = ? WHERE id = ?')
+        .run(JSON.stringify({ source: k === 1 ? 'main' : `feat/${tag}-${k - 1}`, feature: `feat/${tag}-${k}` }), new Date(Date.parse(now) + k * 60_000).toISOString(), x.pid(k));
+    }
+    const headSha = execFileSync('git', ['rev-parse', `feat/${tag}-5`], { cwd: proj, encoding: 'utf8' }).trim();
+    pipeline(`c5${tag}v0001`, 'done', 'Verifier');
+    setVerify(x.f, vCheck(x, `c5${tag}v0001`, 'clean', { head: { index: 5, pipelineId: x.pid(5) }, headSha,
+      result: { held: [...SO_AGREED.map((a) => a.id), 'R-ux-2'], gaps: [] } }));
+    return x;
+  };
+  const held = checked('ci', seedFeature('ci', 'Confirm in place', DONE5, { ...opts, chat: false }));
+  const live = seedFeature('cl', 'Chat-less live', ['done', 'running', 'planned', 'planned', 'planned'], { ...opts, chat: false });
+  const chatted = checked('cc', seedFeature('cc', 'Confirm in chat', DONE5, opts));
+  const carried = seedCarried('cn', 'Named once');
+  // A chat-less marked feature's planning run waiting at its Prototype stop (the PROTO seed's offered moment, no thread).
+  const protoPid = 'c5cp000001';
+  const protoRec = PROTO_REC('offered', { screens: [], reviewRounds: 0 });
+  pipeline(protoPid, 'running', 'Chat-less prototype', { smallRuns: true, care: careRec, prototype: protoRec });
+  createSliceFeature({ pipelineId: protoPid, projectDir: proj, title: 'Chat-less prototype', outline: soOutline, perspectives: ['product', 'ux'],
+    workflowId: 'wf_shape', smallRuns: true, care });
+  const protoRun = liveRun(protoPid, 'Chat-less prototype', { at: 'n_refine', runShape: { perspectives: ['product', 'ux'] },
+    pendingQuestion: { id: 'proto-n_proto-1-cp-1', kind: 'prototype', nodeId: 'n_proto', prototype: { moment: 'offered', ...prototypeView(protoRec), screens: [] } } });
+  // Slice 19 (R-arch-4): a chat-less marked feature's Verifier run waiting at its gap stop (slice 8's VPQ, two gaps).
+  const vless = seedFeature('cv', 'Chat-less gaps', ['done', 'done', 'done', 'done'], { chat: false });
+  const VLESS_PID = 'c5cvv00001';
+  const VLESS_TITLE = 'Chat-less gaps · Verifier';
+  pipeline(VLESS_PID, 'running', VLESS_TITLE);
+  getDb().prepare(`INSERT INTO scheduled_runs (id, status, pipeline_id, request, run_at, created_at, updated_at, title)
+    VALUES (?, 'fired', ?, ?, ?, ?, ?, ?)`).run(`t-${VLESS_PID}`, VLESS_PID,
+    JSON.stringify({ workflowId: 'wf_shape_verify', shape: { verify: { featureId: vless.f.id, round: 1 } } }), now, now, now, VLESS_TITLE);
+  setVerify(vless.f, vCheck(vless, VLESS_PID, 'verifying', { round: 1 }));
+  liveRun(VLESS_PID, VLESS_TITLE, { at: 'n_verify', verify: true, pendingQuestion: VPQ, runShape: VERIFY(vless.f.id, 1) });
+  const VLESS_ONLY = process.env.CHAT_HOME_VERIFIER_ONLY === '1';   // runs only this cell of the phase
+  const page = `#feature/${encodeURIComponent(held.f.id)}`;
+  const capture = async (name) => {
+    await ev("(() => { for (const b of document.querySelectorAll('button[aria-label=\"Dismiss\"]')) if (b.offsetParent) b.click(); return 0; })()");
+    await sleep(400);
+    const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+    const file = path.join(SHOTS, name);
+    await writeFile(file, Buffer.from(data, 'base64'));
+    results.shots.push(file);
+  };
+  const LINK = '#group-detail .gpage-card .run-status-link';
+  // The locked button: the PR slot's control, else a head button in its .rd-tip-host.
+  const LOCKED = "(document.querySelector('#group-detail .rd-pr-slot > [data-rd-cta][aria-describedby]') || document.querySelector('#group-detail .rd-tip-host > [aria-describedby]'))";
+  // Every rect of the hovered tip against the reason line and the page title; whether it is on top where it is drawn.
+  const TIP = `(() => { const b = ${LOCKED}; const tip = b && document.getElementById(b.getAttribute('aria-describedby'));
+    const link = document.querySelector(${JSON.stringify(LINK)}); const title = document.querySelector('#group-detail .gpage-title');
+    if (!tip || !link || !title) return { found: false, tip: !!tip, link: !!link, title: !!title };
+    const r = (n) => { const x = n.getBoundingClientRect(); return { left: x.left, top: x.top, right: x.right, bottom: x.bottom, width: x.width, height: x.height }; };
+    const hit = (a, c) => a.left < c.right && c.left < a.right && a.top < c.bottom && c.top < a.bottom;
+    const t = r(tip); const l = r(link); const h = r(title);
+    // .rd-tip takes no pointer events (pointer-events:none), so elementFromPoint would look through it: lift that for the probe.
+    tip.style.pointerEvents = 'auto';
+    const at = document.elementFromPoint(t.left + t.width / 2, t.top + t.height / 2);
+    tip.style.pointerEvents = '';
+    return { found: true, tip: t, link: l, title: h, text: tip.textContent, role: tip.getAttribute('role'), shown: getComputedStyle(tip).display,
+      hitsLink: hit(t, l), hitsTitle: hit(t, h), inside: t.left >= 0 && t.top >= 0 && t.right <= innerWidth && t.bottom <= innerHeight,
+      onTop: !!at && tip.contains(at), titled: b.hasAttribute('title') || link.hasAttribute('title'), linkText: link.textContent,
+      href: link.getAttribute('href') }; })()`;
+  /** A real mouse move onto the locked button (Chrome then applies :hover to it and its host). */
+  const hover = async () => {
+    const c = await ev(`(() => { const b = ${LOCKED}; if (!b) return null; const x = b.getBoundingClientRect(); return { x: x.left + x.width / 2, y: x.top + x.height / 2 }; })()`);
+    if (!c) return false;
+    await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 1, y: 1 });
+    await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: c.x, y: c.y });
+    await sleep(300);
+    return true;
+  };
+  const unhover = () => cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 1, y: 1 });
+  /** The tip, then the reason link to the Ship card, at `width`. */
+  const tipAndReason = async (theme, width) => {
+    const at = `${theme}, ${width}px`;
+    await cdp('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
+    await open(`${base}/?confirm-${theme}-${width}${page}/runs`);
+    await skipWelcome(); await setTheme(theme);
+    if (!await waitFor(`!!document.querySelector(${JSON.stringify(LINK)}) && !!${LOCKED}`, `the held feature's reason link and locked button (${at})`)) return;
+    await sleep(400);
+    const head = await ev("[...document.querySelectorAll('#group-detail .gpage-card .run-status-head')].map((n) => n.innerText).join(' ')");
+    const pageText = await ev("document.querySelector('#group-detail .gpage').innerText");
+    check(head.includes(CI_HOLD) && !/Ready to ship/.test(pageText), `confirm, ${at}: the head reads "${CI_HOLD}", the page nowhere "Ready to ship" (${head})`);
+    const dot = await ev("(() => { const d = document.querySelector('#group-detail .gpage-card .run-status-head .status-dot'); return d ? d.className : ''; })()");
+    check(/\bis-amber\b/.test(dot), `confirm, ${at}: the needs-you tone, the amber dot (${dot})`);
+    check(await hover(), `confirm, ${at}: hovered the disabled Create N PRs`);
+    const f = await ev(TIP);
+    results.lists.push({ list: 'confirm tip', theme, width, ...f });
+    check(f.found && f.shown === 'block' && f.tip.width > 0 && f.role === 'tooltip', `confirm tip, ${at}: shown on hover (${JSON.stringify(f)})`);
+    check(f.found && !f.hitsLink && !f.hitsTitle, `confirm tip, ${at}: its rect meets neither the reason line nor the page title (${JSON.stringify(f && [f.tip, f.link, f.title])})`);
+    check(f.found && f.inside && f.onTop, `confirm tip, ${at}: inside the window and on top where it is drawn (${JSON.stringify(f && [f.inside, f.onTop])})`);
+    check(f.found && f.text === 'Waiting for you to confirm R-ux-2', `confirm tip, ${at}: the ledger's reason (${f && f.text})`);
+    check(f.found && !f.titled && f.href === `${page}/requirements/ship` && f.linkText === CI_HOLD,
+      `confirm, ${at}: no native title on the button or the reason; the reason links to the Ship card (${JSON.stringify(f && [f.titled, f.href])})`);
+    await capture(width === 1280 ? `feature-confirm-tip-${theme}.png` : 'feature-confirm-tip-narrow-light.png');
+    await unhover();
+    await ev(`(() => { document.querySelector(${JSON.stringify(LINK)}).click(); return true; })()`);
+    if (await waitFor("!!document.activeElement && document.activeElement.matches('#group-detail [data-ship-card]')", `the Ship card focused (${at})`)) {
+      await sleep(300);
+      const r = await ev(`(() => { const c = document.activeElement; const panel = c.closest('.gpage-panel'); const top = c.getBoundingClientRect().top;
+        const rows = [...document.querySelectorAll('#group-detail .gpage-requirements [data-key="R-ux-2"] .plan-check-detail')].map((n) => n.textContent);
+        // The scroll left below the card: a page too short to bring it within 120px of the top is reported, not failed.
+        let room = 0;
+        for (let n = c.parentElement; n; n = n.parentElement) {
+          const y = getComputedStyle(n).overflowY;
+          if (/auto|scroll/.test(y) || n === document.scrollingElement) room += Math.max(0, n.scrollHeight - n.clientHeight - n.scrollTop);
+        }
+        return { hash: location.hash, tab: panel && panel.dataset.tab, top, room, inView: top >= 0 && top < innerHeight, rows, card: c.innerText }; })()`);
+      const reachable = r.top - r.room <= 120;
+      check(r.tab === 'requirements' && r.inView && (r.top <= 120 || !reachable) && r.hash === `${page}/requirements`,
+        `confirm reason, ${at}: Requirements, the Ship card focused and in view, at the top where the page is long enough, the address ends /requirements (${JSON.stringify(r && [r.tab, r.top, r.room, r.hash])})`);
+      if (r.top > 120) results.notes.push(`confirm reason, ${at}: the page is too short to bring the Ship card within 120px of the top (top ${r.top}px, ${r.room}px of scroll left)`);
+      check(r.rows.includes('waiting for you to confirm · Design') && r.card.includes('Waiting for you to confirm R-ux-2') && !/confirmed by a person/.test(r.card),
+        `confirm reason, ${at}: the row and the card's reason name you (${JSON.stringify(r.rows)})`);
+      await capture(width === 1280 ? `feature-confirm-reason-${theme}.png` : 'feature-confirm-reason-narrow-light.png');
+    }
+  };
+  for (const theme of THEMES) {
+    // Slice 19 (R-arch-4): Chat home's Answer on the chat-less Verifier tile lands on its feature page, which asks the gaps.
+    await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+    await open(`${base}/?chat-home-verifier-${theme}#chat/new`);
+    await skipWelcome(); await setTheme(theme);
+    const VTILE = `[...document.querySelectorAll('.chat-run-tile')].find((t) => (t.querySelector('.chat-run-tile-open') || {}).textContent === ${JSON.stringify(VLESS_TITLE)})`;
+    await ev(`(() => { const t = document.querySelector('.chat-home-tab[data-tab="needs"]'); if (t) t.click(); return 0; })()`);
+    if (await waitFor(`(() => { const t = ${VTILE}; const a = t && t.querySelector('.chat-run-tile-answer'); return !!a && !a.hidden && !!a.offsetParent; })()`,
+      `the chat-less Verifier's Needs-you tile (${theme})`)) {
+      await ev(`(() => { ${VTILE}.querySelector('.chat-run-tile-answer').click(); return 0; })()`);
+      const want = `#feature/${encodeURIComponent(vless.f.id)}`;
+      if (await waitFor(`location.hash.startsWith(${JSON.stringify(want)}) && (() => { const q = document.querySelector('#group-detail .gpage-question'); return !!q && !q.hidden && !!q.offsetParent; })()`,
+        `the feature page's gap question after Answer (${theme})`)) {
+        await sleep(400);
+        const r = await ev(`(() => { const q = document.querySelector('#group-detail .gpage-question'); const p = document.querySelector('[data-chat-panel]');
+          return { hash: location.hash, text: q.textContent.replace(/\\s+/g, ' ').trim(), panel: !!p && !p.hidden && !!p.offsetParent }; })()`);
+        check(r.hash.startsWith(want) && !r.panel && r.text.includes(GAP.id) && r.text.includes(GAP2.id),
+          `chat home verifier answer, ${theme}: Answer opens the feature page (#feature/…), no run panel, its gap question asks ${GAP.id} and ${GAP2.id} (${JSON.stringify([r.hash, r.panel])})`);
+        await ev("(() => { const q = document.querySelector('#group-detail .gpage-question'); if (q) q.scrollIntoView({ block: 'center' }); return 0; })()");
+        await capture(`chat-home-verifier-answer-${theme}.png`);
+      }
+    }
+    if (VLESS_ONLY) continue;
+    await tipAndReason(theme, 1280);
+    // The Runs list: the feature under Needs you, the badge counting it.
+    await ev("(() => { try { localStorage.removeItem('worca-cc.runs.last'); } catch {} return 0; })()");
+    await open(`${base}/?confirm-runs-${theme}#runs`);
+    await skipWelcome(); await setTheme(theme);
+    const ROW = `.runs-sec[data-section="needs"] .runs-item[data-row-key="chain:${held.f.id}"]`;
+    if (await waitFor(`!!document.querySelector(${JSON.stringify(ROW)})`, `the held feature under Needs you (${theme})`)) {
+      await sleep(400);
+      const r = await ev(`(() => { const row = document.querySelector(${JSON.stringify(ROW)}); const n = document.getElementById('nav-needs-count');
+        return { text: row.innerText, badge: n ? Number(n.textContent) || 0 : null }; })()`);
+      check(r.text.includes(CI_HOLD) && !/Ready to ship/.test(r.text) && r.badge >= 1, `runs list, ${theme}: the row reads the hold under Needs you, the Runs badge counts it (${JSON.stringify(r)})`);
+      await capture(`runs-confirm-needs-${theme}.png`);
+    }
+    // A chat-less feature with runs live: its Ship card comes on its page.
+    await open(`${base}/?confirm-live-${theme}#feature/${encodeURIComponent(live.f.id)}/requirements`);
+    await skipWelcome(); await setTheme(theme);
+    if (await waitFor("!!document.querySelector('#group-detail [data-ship-card=\"waiting\"]')", `the chat-less waiting line (${theme})`)) {
+      const w = await ev("document.querySelector('#group-detail [data-ship-card=\"waiting\"]').textContent");
+      check(w === 'Ship card comes when all 5 runs are done, on this page.', `chat-less, ${theme}: "${w}"`);
+      await capture(`feature-chatless-waiting-${theme}.png`);
+    }
+    // Each pull request named once: the ready Ship card, then the Create PR dialog.
+    const count40 = (sel) => ev(`(() => { const r = [...document.querySelectorAll(${JSON.stringify(sel)})].find((x) => x.getClientRects().length); if (!r) return null;
+      const c = r.cloneNode(true); for (const n of c.querySelectorAll('[hidden]')) n.remove(); return (c.textContent.match(/#40\\b/g) || []).length; })()`);
+    if (await card(carried.threadId, 'named-once', 'the carried Ship card', theme) && await SHIP_READY('the carried Ship card', theme)) {
+      await sleep(400);
+      const n = await count40(SHIP);
+      check(n === 1, `named once, ${theme}: the ready Ship card names #40 once (${n})`);
+    }
+    await stubRemotes();
+    await open(`${base}/?named-once-${theme}#feature/${encodeURIComponent(carried.f.id)}`);
+    await skipWelcome(); await setTheme(theme);
+    const CREATE = "[...document.querySelectorAll('#group-detail .gpage-card button')].find((x) => x.offsetParent && /^Create (PR|\\d+ PRs)$/.test(x.textContent.trim()))";
+    if (await waitFor(`!!${CREATE}`, `the carried feature page's Create (${theme})`)) {
+      await sleep(400);
+      await ev(`(() => { ${CREATE}.click(); return true; })()`);
+      if (await waitFor("!!document.querySelector('#shipit-modal:not(.hidden) .shipit-prs:not([hidden])')", `the carried Create PR dialog (${theme})`)) {
+        await sleep(300);
+        const n = await count40('#shipit-modal');
+        const why = await ev("document.querySelector('#shipit-modal .shipit-prs-one-why').textContent");
+        check(n === 1 && why === 'Run 2 already has a pull request open', `named once, ${theme}: the dialog names #40 once; One's reason "${why}" (${n})`);
+        await capture(`ship-pr-named-once-${theme}.png`);
+        await ev(`(() => { const c = [...document.querySelectorAll('#shipit-modal button')].find((b) => b.offsetParent && b.textContent.trim() === 'Cancel'); if (c) c.click(); return !!c; })()`);
+        await sleep(300);
+      }
+    }
+    onCdpEvent = null;
+    await cdp('Fetch.disable');
+    // The Chat card of a chat-started marked feature with R-ux-2 waiting.
+    if (await card(chatted.threadId, 'confirm-chat', 'the Chat card with a confirmation open', theme)) {
+      // The hold states the state ("Needs your …"), so the status line shows it once, in the word's place, with no detail.
+      const st = await ev(STATUS);
+      const line = await ev("(() => { const s = [...document.querySelectorAll('.chat-rc .chat-rc-status')].find((x) => x.offsetParent); return s ? s.querySelector('.run-status-head').innerText : ''; })()");
+      const dot = await ev("(() => { const s = [...document.querySelectorAll('.chat-rc .chat-rc-status')].find((x) => x.offsetParent); const d = s && s.querySelector('.status-dot'); return d ? d.className : ''; })()");
+      check(st && [st.word, st.detail].includes(CI_HOLD) && line.split(CI_HOLD).length === 2 && !/Ready to ship/.test(line) && /\bis-amber\b/.test(dot),
+        `chat card, ${theme}: "${CI_HOLD}" once, the amber dot, never "Ready to ship" (${JSON.stringify([st, line, dot])})`);
+      await capture(`chat-card-confirm-${theme}.png`);
+    }
+    // The run panel's read-only Prototype stop of a chat-less feature's run: it links its feature page.
+    await open(`${base}/?confirm-proto-${theme}#chat/new/run/${protoRun}`);
+    await skipWelcome(); await setTheme(theme);
+    if (await waitFor(`!!document.querySelector(${JSON.stringify(`${PANEL} .qpanel a.link`)})`, `the Prototype stop's feature link (${theme})`)) {
+      const hrefs = await ev(`[...document.querySelectorAll(${JSON.stringify(`${PANEL} .qpanel a.link`)})].map((a) => a.getAttribute('href'))`);
+      check(hrefs.length === 1 && hrefs[0].startsWith('#feature/'), `prototype stop, ${theme}: one link to the feature page (${JSON.stringify(hrefs)})`);
+      await capture(`prototype-stop-feature-link-${theme}.png`);
+    }
+  }
+  // 375px (WIDTH), light: the narrow head puts the buttons under the status line; the tip still clears the reason.
+  if (!VLESS_ONLY) await tipAndReason('light', WIDTH);
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
+// Slice 9 (R-po-4): the Verifier's note on the feature page's Ship card, before and after its Acknowledge, light and dark at 1280px.
+async function shipNotesPhase() {
+  try { await addProject({ name: 'Proof', path: proj }); } catch { /* already onboarded */ }
+  const x = shipFeature('sv', 'Ship with a note');
+  setFeatureAcceptance(x.f.id, [COMP_MET]);
+  figures(x.f.id);
+  // Runs 1–4 on a straight branch line, and a clean Verifier check of run 4's head with one note: ready but for the note.
+  for (let k = 1; k <= 4; k++) {
+    execFileSync('git', ['branch', '-f', `feat/sv-${k}`], { cwd: proj });
+    getDb().prepare('UPDATE pipelines SET branch = ?, updated_at = ? WHERE id = ?')
+      .run(JSON.stringify({ source: k === 1 ? 'main' : `feat/sv-${k - 1}`, feature: `feat/sv-${k}` }), new Date(Date.parse(now) + k * 60_000).toISOString(), x.pid(k));
+  }
+  const headSha = execFileSync('git', ['rev-parse', 'feat/sv-4'], { cwd: proj, encoding: 'utf8' }).trim();
+  const vpid = 'c5svv00001';
+  pipeline(vpid, 'done', 'Verifier');
+  const NOTE = 'the import test takes 40 s';
+  const seedNote = () => setVerify(x.f, vCheck(x, vpid, 'clean', { headSha, result: { held: HELD.concat(GAP.id), gaps: [], findings: [{ id: 'note-1', text: NOTE }] } }));
+  const CARD = '#group-detail [data-ship-card="ready"]';
+  const state = () => ev(`(() => { const c = document.querySelector(${JSON.stringify(CARD)}); if (!c) return null;
+    const row = c.querySelector('.ask-shipcard-notes .plan-check-row'); const b = c.querySelector('[data-act="ship-create"]');
+    return { row: row ? row.innerText : null, detail: row ? row.querySelector('.plan-check-detail').textContent : null,
+      ack: !!c.querySelector('[data-act="ship-ack-note-1"]'), wait: !!(row && row.querySelector('.plan-check-mark.is-wait')),
+      disabled: !!(b && b.disabled), primary: !!(b && b.classList.contains('btn-primary')),
+      stats: c.querySelector('.ask-shipcard-stats')?.textContent || '',
+      whys: c.querySelectorAll('.ask-shipcard-why:not(.ask-shipcard-gap)').length,
+      describedBy: !!(b && c.querySelector('.ask-shipcard-stats')?.id && b.getAttribute('aria-describedby') === c.querySelector('.ask-shipcard-stats').id) }; })()`);
+  const capture = async (name) => {
+    await sleep(400);
+    const el = await ev(`(() => { const c = document.querySelector(${JSON.stringify(CARD)}); if (c) c.scrollIntoView({ block: 'center' }); return !!c; })()`);
+    const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+    const file = path.join(SHOTS, name);
+    await writeFile(file, Buffer.from(data, 'base64'));
+    results.shots.push(file);
+    return el;
+  };
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  for (const theme of THEMES) {
+    seedNote();
+    await open(`${base}/?ship-note-${theme}#feature/${encodeURIComponent(x.f.id)}/requirements`);
+    await skipWelcome(); await setTheme(theme);
+    if (!await waitFor(`!!document.querySelector(${JSON.stringify(`${CARD} [data-act="ship-ack-note-1"]`)})`, `the Ship card's note and its Acknowledge (${theme})`)) continue;
+    const before = await state();
+    results.lists.push({ list: 'ship note before', theme, ...before });
+    check(before.row && before.row.includes(NOTE) && before.detail === 'from the Verifier' && before.wait && before.ack,
+      `ship note, ${theme}: the note is listed with the wait mark and its Acknowledge (${JSON.stringify(before)})`);
+    check(before.disabled && !before.primary && before.stats === "Your turn: acknowledge the Verifier's note",
+      `ship note, ${theme}: Create is disabled until the note is acknowledged (${JSON.stringify(before)})`);
+    check(before.whys === 0 && before.describedBy,
+      `ship note, ${theme}: the note is said once, no reason line, and Create is described by the state line (${JSON.stringify(before)})`);
+    await capture(`app-ship-note-before-${theme}.png`);
+    await ev(`(() => { document.querySelector(${JSON.stringify(`${CARD} [data-act="ship-ack-note-1"]`)}).click(); return true; })()`);
+    if (!await waitFor(`!!document.querySelector(${JSON.stringify(CARD)}) && !document.querySelector(${JSON.stringify(`${CARD} [data-act="ship-ack-note-1"]`)})`, `the note acknowledged (${theme})`)) continue;
+    await sleep(300);
+    const after = await state();
+    results.lists.push({ list: 'ship note after', theme, ...after });
+    check(/^acknowledged · \d\d:\d\d$/.test(after.detail || '') && !after.wait && !after.ack,
+      `ship note, ${theme}: the row reads acknowledged with a check mark, and no button (${JSON.stringify(after)})`);
+    check(!after.disabled && after.primary && after.stats === 'Ready to ship', `ship note, ${theme}: Create is enabled and primary (${JSON.stringify(after)})`);
+    await capture(`app-ship-note-after-${theme}.png`);
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
+// ---- Shaper slice 15 (R-qa-3): the Labs entry says "small runs" only in its title. Light and dark at 1280px: the row
+// #flag-row-shaperSmallRuns, its title "Shaper small runs", its description the registry's, and no other text, title or
+// aria-label saying small runs. app-labs-words-light.png, -dark.png.
+async function labsWordsPhase() {
+  const { FLAGS } = await imp('../src/shared/flags/registry.mjs');
+  const description = FLAGS.find((f) => f.key === 'shaperSmallRuns').description;
+  const ROW = '#flag-row-shaperSmallRuns';
+  const READ = `(() => { const r = document.querySelector(${JSON.stringify(ROW)}); if (!r || !r.offsetParent) return null;
+    const strip = (t) => (t || '').split('Shaper small runs').join('');
+    const named = [r, ...r.querySelectorAll('*')].flatMap((e) => [e.getAttribute('title'), e.getAttribute('aria-label')]).filter((v) => v != null);
+    return { title: r.querySelector('.flag-row-title')?.textContent || '', desc: r.querySelector('.flag-row-desc')?.textContent || '',
+      leaks: [r.textContent, ...named].map(strip).filter((t) => /small[ -]runs/i.test(t)) }; })()`;
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  for (const theme of THEMES) {
+    await open(`${base}/?labs-words-${theme}#settings/experimental/shaperSmallRuns`);
+    await skipWelcome(); await setTheme(theme);
+    if (!await waitFor(`!!${READ}`, `the Labs entry (${theme})`)) continue;
+    const row = await ev(READ);
+    results.lists.push({ list: 'labs words', theme, ...row });
+    check(row.title.startsWith('Shaper small runs'), `labs words, ${theme}: the title is Shaper small runs (${JSON.stringify(row.title)})`);
+    check(row.desc === description, `labs words, ${theme}: the description is the registry's (${JSON.stringify(row.desc)})`);
+    check(row.leaks.length === 0, `labs words, ${theme}: no text, title or aria-label says small runs but the title (${JSON.stringify(row.leaks)})`);
+    await capture(`app-labs-words-${theme}.png`);
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+  /** The row scrolled into view, then the screenshot into SHOTS_DIR. */
+  async function capture(name) {
+    await ev(`(() => { document.querySelector(${JSON.stringify(ROW)}).scrollIntoView({ block: 'center' }); return 0; })()`);
+    await sleep(400);
+    const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+    const file = path.join(SHOTS, name);
+    await writeFile(file, Buffer.from(data, 'base64'));
+    results.shots.push(file);
+  }
+}
+
+// ---- Shaper slice 11 (R-ux-4): a Verifier round is a check row inside its feature's group. A marked 5-run feature, all
+// done, whose round-2 Verifier run failed with one gap on record: the open group lists runs 1–5, then the check row
+// "Verifier · round 2 · 1 gap"; no top-level row stands for that run; the group row reads "Verifier round 2 failed · 1 gap".
+// Light and dark at 1280px: runs-group-verifier-failed-light.png, -dark.png.
+async function verifierRowsPhase() {
+  try { await addProject({ name: 'Proof', path: proj }); } catch { /* already onboarded */ }
+  const x = seedFeature('vr', 'Verifier rows', ['done', 'done', 'done', 'done', 'done'], { withOutline: soOutline, titles: SO_TITLES, chat: false });
+  const vpid = 'c5vrv00002';
+  pipeline(vpid, 'error', 'Verifier · Verifier rows · round 2');
+  getDb().prepare('UPDATE pipelines SET total_cost_usd = 0.5 WHERE id = ?').run(vpid);
+  getDb().prepare(`INSERT INTO scheduled_runs (id, status, pipeline_id, request, run_at, created_at, updated_at, title)
+    VALUES (?, 'fired', ?, ?, ?, ?, ?, 'Verifier · Verifier rows · round 2')`).run(`t-${vpid}`, vpid,
+    JSON.stringify({ workflowId: 'wf_shape_verify', shape: { verify: { featureId: x.f.id, round: 2 } } }), now, now, now);
+  setVerify(x.f, vCheck(x, vpid, 'gaps', { round: 2, head: { index: 5, pipelineId: x.pid(5) }, result: { held: [], gaps: [GAP] } }));
+  const GROUP = `.runs-item[data-row-key="chain:${x.f.id}"]`;
+  const rows = `(() => { const g = document.querySelector(${JSON.stringify(GROUP)}); if (!g) return null;
+    const inside = [...g.querySelectorAll(':scope > .runs-members > .runs-item')];
+    return { inside: inside.map((it) => it.dataset.level === 'check' ? it.querySelector(':scope > a.runs-row').dataset.line
+      : it.querySelector(':scope > a.runs-row > .runs-row-title').textContent),
+      line: g.querySelector(':scope > a.runs-row').dataset.line, sub: g.querySelector(':scope > a.runs-row > .runs-row-sub').textContent,
+      alone: document.querySelectorAll('.runs-item[data-level="top"] > a.runs-row[data-pipeline-id="${vpid}"]').length }; })()`;
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  for (const theme of THEMES) {
+    await ev("(() => { try { localStorage.removeItem('worca-cc.runs.last'); } catch {} return 0; })()");
+    await open(`${base}/?verifier-rows-${theme}#runs`);
+    await skipWelcome(); await setTheme(theme);
+    if (!await waitFor(`!!document.querySelector(${JSON.stringify(GROUP)})`, `the Verifier rows group row (${theme})`)) continue;
+    await ev(`(() => { const b = document.querySelector(${JSON.stringify(`${GROUP} > .runs-row-tail .runs-expand`)}); if (b && b.getAttribute('aria-expanded') !== 'true') b.click(); return 1; })()`);
+    if (!await waitFor(`!!document.querySelector(${JSON.stringify(`${GROUP} .runs-item[data-level="check"]`)})`, `the check row (${theme})`)) continue;
+    await sleep(500);
+    const m = await ev(rows);
+    results.lists.push({ list: 'runs-list Verifier rows', theme, ...m });
+    check(m.inside.length === 6 && m.inside[5] === 'Verifier · round 2 · 1 gap' && m.inside.slice(0, 5).every((t, i) => t.startsWith(`${i + 1} · `)),
+      `verifier rows, ${theme}: runs 1–5, then the 6th row "Verifier · round 2 · 1 gap" (${JSON.stringify(m.inside)})`);
+    check(m.alone === 0, `verifier rows, ${theme}: no top-level row carries the Verifier run ${vpid} (${m.alone})`);
+    check(m.line === 'Verifier round 2 failed · 1 gap' && m.sub.startsWith('Verifier round 2 failed · 1 gap') && !/Ready to ship/.test(m.sub),
+      `verifier rows, ${theme}: the group line reads "Verifier round 2 failed · 1 gap" (${JSON.stringify([m.line, m.sub])})`);
+    await ev(`(() => { for (const b of document.querySelectorAll('button[aria-label="Dismiss"]')) if (b.offsetParent) b.click();
+      document.querySelector(${JSON.stringify(`${GROUP} .runs-item[data-level="check"]`)}).scrollIntoView({ block: 'center' }); return 0; })()`);
+    await sleep(400);
+    const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+    const file = path.join(SHOTS, `runs-group-verifier-failed-${theme}.png`);
+    await writeFile(file, Buffer.from(data, 'base64'));
+    results.shots.push(file);
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
+// ---- Shaper small runs slice 12 (R-ux-5): one line per open stop, one step card for the opened stop. A marked 5-run
+// feature: runs 2, 3 and 4 live at a stop (a plan check, a check gate, a requirement), run 5 live and paused. The Chat
+// card and the feature page's Runs tab list 3 closed lines and no step card, and no line for run 5; opening line 2 mounts
+// exactly one step card, in run 3's line. 1280px, the classic look, light and dark: stop-list-card-closed-…,
+// stop-list-card-open-…, stop-list-feature-closed-… and stop-list-feature-open-… .png, plus stop-list-card-closed-light-360.png.
+const SL_CHECK = { ok: false, passed: 3, total: 8, items: [{ id: 'tests', label: 'Names its tests', pass: false, detail: 'no test is named' }] };
+async function stopListPhase() {
+  try { await addProject({ name: 'Proof', path: proj }); } catch { /* already onboarded */ }
+  const x = seedFeature('sl', 'Stop list', ['done', 'running', 'running', 'running', 'paused'], { withOutline: soOutline, titles: SO_TITLES });
+  const shape = (k) => ({ slice: { feature: x.f.id, index: k } });
+  const planAsk = (k, stop) => ({ id: `plan-sl-${k}`, kind: 'plan', nodeId: 'n_refine', executionId: 'x:n_refine:1',
+    plan: { nodeId: 'n_refine', port: 'plan', file: 'plan.md', round: 1, revisable: true, check: SL_CHECK }, stop });
+  liveRun(x.pid(2), `Run 2 · ${SO_TITLES[1]}`, { at: 'n_refine', runShape: shape(2), pendingQuestion: planAsk(2, planStop({ run: 2, check: SL_CHECK, node: 'n_refine' })) });
+  liveRun(x.pid(3), `Run 3 · ${SO_TITLES[2]}`, { at: 'n_review', runShape: shape(3), pendingQuestion: { id: 'gate-sl-3', kind: 'gate', nodeId: 'n_review',
+    executionId: 'x:n_review:1', issues: ISSUES, stop: gateStop({ run: 3, issues: ISSUES, fixCycles: 2, nodeId: 'n_review' }) } });
+  liveRun(x.pid(4), `Run 4 · ${SO_TITLES[3]}`, { at: 'n_refine', runShape: shape(4),
+    pendingQuestion: planAsk(4, planStop({ run: 4, outlineChange: 'the export needs its own run', node: 'n_refine' })) });
+  liveRun(x.pid(5), `Run 5 · ${SO_TITLES[4]}`, { at: 'n_impl', runShape: shape(5), status: 'paused' });
+  const capture = async (name) => {
+    await ev("(() => { for (const b of document.querySelectorAll('button[aria-label=\"Dismiss\"]')) if (b.offsetParent) b.click(); return 0; })()");
+    await sleep(400);
+    const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+    const file = path.join(SHOTS, name);
+    await writeFile(file, Buffer.from(data, 'base64'));
+    results.shots.push(file);
+  };
+  const FACTS = (scope) => `(() => { const root = [...document.querySelectorAll(${JSON.stringify(scope)})].find((r) => r.offsetParent);
+    const list = root && root.querySelector('ol.chat-rc-stops');
+    if (!list) return null;
+    const vis = (els) => [...els].filter((e) => !e.closest('[hidden], .hidden'));
+    return { runs: [...list.querySelectorAll(':scope > li.chat-rc-stop')].map((li) => li.dataset.run),
+      lines: list.querySelectorAll('button.chat-rc-stop-line').length,
+      cards: list.querySelectorAll('.chat-rc-stop-q').length, in3: list.querySelectorAll('li[data-run="3"] .chat-rc-stop-q').length,
+      paused: list.querySelectorAll('li[data-run="5"]').length,
+      outside: vis(root.querySelectorAll('.qpanel[data-qid]')).filter((q) => !q.closest('.chat-rc-stops')).length,
+      answer: vis(root.querySelectorAll('button')).filter((b) => b.dataset.modelAction === 'answer' || /^Answer/.test(b.textContent.trim())).filter((b) => !b.closest('.chat-rc-stops')).length,
+      first: !!list.parentElement.matches('.gpage-panel') ? list.parentElement.firstElementChild === list : null,
+      overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth }; })()`;
+  const surfaces = [
+    { name: 'card', scope: '.chat-rc', go: (theme) => card(x.threadId, `slc-${theme}`, 'the stop list card', theme) },
+    { name: 'feature', scope: '.gpage', go: async (theme) => {
+      await open(`${base}/?slf-${theme}#feature/${encodeURIComponent(x.f.id)}`);
+      await skipWelcome(); await setTheme(theme);
+      return waitFor("!!document.querySelector('.gpage-panel[data-tab=\"runs\"] > ol.chat-rc-stops li[data-run=\"3\"]')", `the feature page's stop list (${theme})`);
+    } },
+  ];
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  for (const theme of THEMES) {
+    for (const sf of surfaces) {
+      const { name } = sf;
+      if (!(await sf.go(theme))) continue;
+      if (!(await waitFor(`(() => { const f = ${FACTS(sf.scope)}; return !!f && f.runs.length === 3; })()`, `3 stop lines on the ${sf.name} (${theme})`))) continue;
+      await sleep(400);
+      const c = await ev(FACTS(sf.scope));
+      check(c.runs.join() === '2,3,4' && c.lines === 3 && c.cards === 0 && c.paused === 0 && c.outside === 0 && c.answer === 0 && c.first !== false && !c.overflow,
+        `stop list, ${sf.name}, ${theme}: 3 closed lines (runs 2, 3, 4), 0 step cards, no line for paused run 5, no Answer, no question outside the list (${JSON.stringify(c)})`);
+      if (sf.name === 'card' && theme === 'light') {
+        // The wash and the focus ring stay inside the line button's inset: hover, then keyboard focus, line 1.
+        const ring = await ev(`(() => { const b = document.querySelector('.chat-rc ol.chat-rc-stops li[data-run="2"] button.chat-rc-stop-line');
+          const r = b.getBoundingClientRect(), dot = b.querySelector('.status-dot').getBoundingClientRect(), t = b.querySelector('.chat-rc-stop-text').getBoundingClientRect();
+          // A scripted focus() is not :focus-visible, so the served rule is read instead of the focused button's style.
+          const rules = [...document.styleSheets].flatMap((sh) => { try { return [...sh.cssRules]; } catch { return []; } });
+          const ring = rules.find((x) => x.selectorText === '.row-btn:focus-visible');
+          const wash = rules.find((x) => x.selectorText === '.row-btn:hover');
+          return { inset: [dot.left - r.left, r.right - t.right], offset: ring ? ring.style.outlineOffset : null, wash: !!wash && !!wash.style.background,
+            radius: getComputedStyle(b).borderRadius }; })()`);
+        check(ring.inset[0] >= 4 && ring.inset[1] >= 4 && ring.offset === '-2px' && ring.wash,
+          `stop list, card, light: the hover wash and the inset ring keep off the dot and the text (${JSON.stringify(ring)})`);
+      }
+      await reveal(`${sf.scope} ol.chat-rc-stops`);
+      await capture(`stop-list-${name}-closed-${theme}.png`);
+      await ev(`(() => { const b = [...document.querySelectorAll(${JSON.stringify(`${sf.scope} ol.chat-rc-stops button.chat-rc-stop-line`)})].filter((x) => x.offsetParent)[1]; if (b) b.click(); return !!b; })()`);
+      if (!(await waitFor(`(() => { const f = ${FACTS(sf.scope)}; return !!f && f.cards === 1; })()`, `one step card on the ${sf.name} (${theme})`))) continue;
+      await sleep(800);
+      const o = await ev(FACTS(sf.scope));
+      check(o.cards === 1 && o.in3 === 1 && o.runs.join() === '2,3,4' && o.paused === 0 && o.outside === 0 && !o.overflow,
+        `stop list, ${sf.name}, ${theme}: opening line 2 mounts exactly 1 step card, in run 3's line (${JSON.stringify(o)})`);
+      await reveal(`${sf.scope} ol.chat-rc-stops li[data-run="3"]`);
+      await capture(`stop-list-${name}-open-${theme}.png`);
+    }
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 360, height: 900, deviceScaleFactor: 1, mobile: false });
+  if (await card(x.threadId, 'slc-narrow', 'the stop list card at 360px', 'light')) {
+    await waitFor(`(() => { const f = ${FACTS('.chat-rc')}; return !!f && f.runs.length === 3; })()`, 'the 3 stop lines at 360px');
+    const n = await ev(`(() => [...document.querySelectorAll('.chat-rc ol.chat-rc-stops button.chat-rc-stop-line')].filter((b) => b.offsetParent).map((b) => {
+      const r = b.getBoundingClientRect(), c = b.querySelector('.chat-rc-stop-chev').getBoundingClientRect(), t = b.querySelector('.chat-rc-stop-text');
+      return { inside: c.right <= r.right + 0.5 && c.left >= r.left, title: t.title === t.textContent && !!t.title, cards: document.querySelectorAll('.chat-rc .chat-rc-stop-q').length }; }))()`);
+    check(n.length === 3 && n.every((l) => l.inside && l.title && l.cards === 0) && !(await ev('document.documentElement.scrollWidth > document.documentElement.clientWidth')),
+      `stop list, card, light, 360px: each chevron inside its button, each text keeps its title, no step card, no overflow (${JSON.stringify(n)})`);
+    await reveal('.chat-rc ol.chat-rc-stops');
+    await capture('stop-list-card-closed-light-360.png');
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
+// D2_ONLY=1 runs the D2 cases alone, D3_ONLY=1 the D3 cases, HELD_ONLY=1 the clash-held row, TAKEIN_ONLY=1 the take-in, SHIP_LIST_ONLY=1
+// the Ship list along the real branches, HELD_RESUME_ONLY=1 the held resume, AFTER_RUN_ONLY=1 the after-run row and Resume wording, STOP_FINDINGS_ONLY=1 a stop's findings on every surface, SHIP_ONE_ONLY=1 Ship as one PR, SHIP_CARRIED_ONLY=1 the carried runs Ship names, FEATURE_TABS_ONLY=1 the feature page's Cost, Requirements and Log tabs, CONFIRM_ONLY=1 confirm in place (CHAT_HOME_VERIFIER_ONLY=1 only its chat-less Verifier Answer cell), VERIFIER_ROWS_ONLY=1 the Verifier's check row, STOP_LIST_ONLY=1 the stop list's closed lines and one opened step card (each command stays under 10 minutes); unset, every case runs, D2 before D3, the held row, then the take-in last.
+// ---- Shaper slice 10 (R-po-5): Away mode answered a plain gap, the person a judgement call. The feature page's Log tab and
+// the Chat card's log say who decided each gap; a live gap stop lists Away's answer above the question and says why the
+// held gap waits. Light and dark: app-verifier-away-log-… (1280px, the Log tab), app-verifier-away-card-log-… and
+// app-verifier-away-question-… (375px, the Chat card).
+async function gapAwayPhase() {
+  try { await addProject({ name: 'Proof', path: proj }); } catch { /* already onboarded */ }
+  const G1 = { id: 'R-po-1', why: 'the stored sign-up skips the email field', title: 'Store the email field' };
+  const G2 = { id: 'R-po-2', why: 'the welcome email reads as a judgement call', title: 'Reword the welcome email', kind: 'judgement' };
+  const x = seedFeature('aw', 'Away answers', ['done', 'done', 'done', 'done']);
+  const vpid = 'c5awv00001';
+  pipeline(vpid, 'done', 'Away answers · Verifier');
+  const fixRun = changeAgreedRequirements(x.f.id, { changes: [], appendFor: [{ ownerIndex: 1, title: G1.title, goal: G1.why, ids: [G1.id] }] }).added[0];
+  setVerify(x.f, vCheck(x, vpid, 'gaps', { result: { held: ['R-po-3', 'R-po-4'], gaps: [G1, G2] }, gapRuns: [fixRun.index],
+    answers: [{ id: G1.id, answer: 'fix' }, { id: G2.id, answer: 'ship', reason: 'the copy is reviewed later' }],
+    shipped: [{ id: G2.id, reason: 'the copy is reviewed later' }], gapRunOf: { [G1.id]: fixRun.index },
+    answeredBy: { 'R-po-1': 'away', 'R-po-2': 'you' } }));
+  const want = [`Gap R-po-1 → fix, run ${fixRun.index} added · decided by Away mode`, 'Gap R-po-2 → ships with the gap · decided by you'];
+  // The live stop: R-po-1 answered by Away mode, R-po-2 (a judgement call) held for the person.
+  const q = seedFeature('aq', 'Away question', ['done', 'done', 'done', 'done']);
+  const qpid = 'c5aqv00001';
+  pipeline(qpid, 'running', 'Away question · Verifier');
+  setVerify(q.f, vCheck(q, qpid, 'verifying', { round: 1 }));
+  const stop = verifyStop({ gaps: [G2], round: 1, texts: Object.fromEntries(AGREED.map((a) => [a.id, a.text])), decided: [{ id: G1.id, answer: 'fix' }] });
+  liveRun(qpid, 'Away question · Verifier', { at: 'n_verify', verify: true, runShape: VERIFY(q.f.id, 1),
+    pendingQuestion: { id: 'verify-1-x:n_verify:1', kind: 'gate', nodeId: 'n_verify', executionId: 'x:n_verify:1', issues: [], stop } });
+  const page = `#feature/${encodeURIComponent(x.f.id)}/logs`;
+  const FEATURE_LOG = "[...document.querySelectorAll('#group-detail .gpage-panel[data-tab=\"logs\"]:not([hidden]) ol.shape-feature-log li')].map((n) => n.textContent.replace(/\\s+/g, ' ').trim())";
+  const has = (lines, line) => lines.some((t) => t.includes(line));
+  for (const theme of THEMES) {
+    await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+    await open(`${base}/?away-log-${theme}${page}`);
+    await skipWelcome(); await setTheme(theme);
+    if (await waitFor(`${FEATURE_LOG}.length > 0`, `the feature Log tab (${theme})`)) {
+      await sleep(400);
+      const lines = await ev(FEATURE_LOG);
+      results.lists.push({ list: 'away log, feature page', theme, lines });
+      check(want.every((w) => has(lines, w)), `away log, ${theme}: the Log tab says decided by Away mode and decided by you (${JSON.stringify(lines)})`);
+      const order = want.map((w) => lines.findIndex((t) => t.includes(w)));
+      const receipt = lines.findIndex((t) => t.includes('Verifier: 2 of 4 hold'));
+      check(receipt >= 0 && order[0] === receipt + 1 && order[1] === receipt + 2, `away log, ${theme}: the two gap lines follow the Verifier's line (${JSON.stringify({ receipt, order })})`);
+      await ev("(() => { const l = document.querySelector('#group-detail ol.shape-feature-log'); if (l) l.scrollIntoView({ block: 'center' }); return 0; })()");
+      await shot(`app-verifier-away-log-${theme}`);
+    }
+    await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+    if (await card(x.threadId, 'away-card', 'the Away answers card', theme)) {
+      const logs = await ev(LOGS);
+      check(want.every((w) => has(logs, w)), `away log, ${theme}: the Chat card's log says both (${JSON.stringify(logs)})`);
+      await reveal('.chat-rc .chat-rc-log-verify');
+      await shot(`app-verifier-away-card-log-${theme}`);
+    }
+    if (await card(q.threadId, 'away-q', 'the Away gap question card', theme)
+      && await waitFor("!!document.querySelector('.chat-rc .qpanel[data-kind=\"gaps\"]')", `the Away gap question (${theme})`)) {
+      await reveal('.chat-rc .qpanel[data-kind="gaps"]');
+      const g = await ev(`(() => { const p = document.querySelector('.chat-rc .qpanel[data-kind="gaps"]');
+        const t = (n) => n.textContent.replace(/\\s+/g, ' ').trim();
+        return { decided: [...p.querySelectorAll('.meta')].filter((n) => n.offsetParent).map(t),
+          held: [...p.querySelectorAll('.qblock .qwhy')].filter((n) => n.offsetParent).map(t),
+          blocks: [...p.querySelectorAll('.qblock')].map((b) => b.dataset.q),
+          above: !!(p.querySelector('.meta') && p.querySelector('.qblock') && (p.querySelector('.meta').compareDocumentPosition(p.querySelector('.qblock')) & 4)),
+          overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth }; })()`);
+      results.lists.push({ list: 'away gap question', theme, ...g });
+      check(g.decided.length === 1 && g.decided[0] === 'R-po-1 → fix · decided by Away mode' && g.above,
+        `away question, ${theme}: one decided row above the question (${JSON.stringify(g)})`);
+      check(JSON.stringify(g.blocks) === JSON.stringify(['R-po-2']) && g.held.includes('Held for you: the Verifier calls this a judgement call'),
+        `away question, ${theme}: only the judgement call is asked, with Held for you (${JSON.stringify(g)})`);
+      check(!g.overflow, `away question, ${theme}: no horizontal overflow`);
+      await shot(`app-verifier-away-question-${theme}`);
+    }
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
+// ---- Shaper slice 18 (D10, D11): a failed Verifier round or an open confirmation outranks In review. Two marked
+// features, 5 runs done, each run in an open pull request: one whose round-2 Verifier run failed with one gap (its Runs
+// group row reads "Verifier round 2 failed · 1 gap"), one waiting for Design's confirmation of R-ux-2 (its page head
+// reads "Needs your confirmation: R-ux-2"); neither reads In review. Light and dark at 1280px:
+// runs-group-in-review-failed-round-…, feature-head-in-review-confirm-… (-light.png, -dark.png).
+async function inReviewPhase() {
+  try { await addProject({ name: 'Proof', path: proj }); } catch { /* already onboarded */ }
+  const DONE5 = ['done', 'done', 'done', 'done', 'done'];
+  const withPrs = (x) => [1, 2, 3, 4, 5].forEach((k) => getDb().prepare("UPDATE pipelines SET pr_url = ?, pr_number = ?, pr_state = 'OPEN' WHERE id = ?")
+    .run(`https://github.com/proof/repo/pull/${60 + k}`, 60 + k, x.pid(k)));
+  // The failed round: as the Verifier rows phase seeds it.
+  const failed = seedFeature('ix', 'Reviewed then failed', DONE5, { withOutline: soOutline, titles: SO_TITLES, chat: false });
+  const vpid = 'c5ixv00002';
+  pipeline(vpid, 'error', 'Verifier · Reviewed then failed · round 2');
+  getDb().prepare(`INSERT INTO scheduled_runs (id, status, pipeline_id, request, run_at, created_at, updated_at, title)
+    VALUES (?, 'fired', ?, ?, ?, ?, ?, 'Verifier · Reviewed then failed · round 2')`).run(`t-${vpid}`, vpid,
+    JSON.stringify({ workflowId: 'wf_shape_verify', shape: { verify: { featureId: failed.f.id, round: 2 } } }), now, now, now);
+  setVerify(failed.f, vCheck(failed, vpid, 'gaps', { round: 2, head: { index: 5, pipelineId: failed.pid(5) }, result: { held: [], gaps: [GAP] } }));
+  withPrs(failed);
+  // The open confirmation: as the confirm-in-place phase seeds it (a clean check of run 5's head, R-ux-2 waiting).
+  const held = seedFeature('iy', 'Reviewed and waiting', DONE5, { withOutline: CI_OUTLINE, titles: SO_TITLES, requirementKinds: CI_KINDS, chat: false });
+  for (let k = 1; k <= 5; k++) {
+    execFileSync('git', ['branch', '-f', `feat/iy-${k}`], { cwd: proj });
+    getDb().prepare('UPDATE pipelines SET branch = ?, updated_at = ? WHERE id = ?')
+      .run(JSON.stringify({ source: k === 1 ? 'main' : `feat/iy-${k - 1}`, feature: `feat/iy-${k}` }), new Date(Date.parse(now) + k * 60_000).toISOString(), held.pid(k));
+  }
+  const headSha = execFileSync('git', ['rev-parse', 'feat/iy-5'], { cwd: proj, encoding: 'utf8' }).trim();
+  pipeline('c5iyv0001', 'done', 'Verifier');
+  setVerify(held.f, vCheck(held, 'c5iyv0001', 'clean', { head: { index: 5, pipelineId: held.pid(5) }, headSha,
+    result: { held: [...SO_AGREED.map((a) => a.id), 'R-ux-2'], gaps: [] } }));
+  withPrs(held);
+  const FAILED_LINE = 'Verifier round 2 failed · 1 gap';
+  const capture = async (name, sel) => {
+    await ev(`(() => { for (const b of document.querySelectorAll('button[aria-label="Dismiss"]')) if (b.offsetParent) b.click();
+      const n = document.querySelector(${JSON.stringify(sel)}); if (n) n.scrollIntoView({ block: 'center' }); return 0; })()`);
+    await sleep(400);
+    const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+    const file = path.join(SHOTS, name);
+    await writeFile(file, Buffer.from(data, 'base64'));
+    results.shots.push(file);
+  };
+  const GROUP = `.runs-item[data-row-key="chain:${failed.f.id}"]`;
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  for (const theme of THEMES) {
+    await ev("(() => { try { localStorage.removeItem('worca-cc.runs.last'); } catch {} return 0; })()");
+    await open(`${base}/?in-review-runs-${theme}#runs`);
+    await skipWelcome(); await setTheme(theme);
+    if (await waitFor(`!!document.querySelector(${JSON.stringify(`${GROUP} > a.runs-row > .runs-row-sub`)})`, `the failed-round group row (${theme})`)) {
+      await sleep(400);
+      const r = await ev(`(() => { const g = document.querySelector(${JSON.stringify(GROUP)}); const a = g.querySelector(':scope > a.runs-row');
+        return { line: a.dataset.line, sub: a.querySelector('.runs-row-sub').textContent, needs: !!g.closest('.runs-sec[data-section="needs"]') }; })()`);
+      results.lists.push({ list: 'in review, failed round', theme, ...r });
+      check(r.line === FAILED_LINE && r.sub.startsWith(FAILED_LINE) && !/In review/.test(r.sub) && r.needs,
+        `in review, failed round, ${theme}: the group row reads "${FAILED_LINE}" under Needs you, not In review (${JSON.stringify(r)})`);
+      await capture(`runs-group-in-review-failed-round-${theme}.png`, GROUP);
+    }
+    await open(`${base}/?in-review-head-${theme}#feature/${encodeURIComponent(held.f.id)}/runs`);
+    await skipWelcome(); await setTheme(theme);
+    const HEAD = '#group-detail .gpage-card .run-status-head';
+    if (await waitFor(`!!document.querySelector('#group-detail .gpage-card .run-status-link')`, `the confirmation's head link (${theme})`)) {
+      await sleep(400);
+      const h = await ev(`(() => { const n = document.querySelector(${JSON.stringify(HEAD)}); const d = n && n.querySelector('.status-dot');
+        return { text: n ? n.innerText : '', dot: d ? d.className : '' }; })()`);
+      results.lists.push({ list: 'in review, confirmation', theme, ...h });
+      check(h.text.includes('Needs your confirmation: R-ux-2') && !/In review/.test(h.text) && /\bis-amber\b/.test(h.dot),
+        `in review, confirmation, ${theme}: the page head reads "Needs your confirmation: R-ux-2" in the needs-you tone, not In review (${JSON.stringify(h)})`);
+      await capture(`feature-head-in-review-confirm-${theme}.png`, HEAD);
+    }
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
+if (process.env.IN_REVIEW_ONLY === '1') { await inReviewPhase(); await finish(); }
 if (process.env.D2_ONLY === '1') { await d2Phase(); await finish(); }
+if (process.env.GAP_AWAY_ONLY === '1') { await gapAwayPhase(); await finish(); }
 if (process.env.D3_ONLY === '1') { await d3Phase(); await finish(); }
+if (process.env.HELD_ONLY === '1') { await heldPhase(); await finish(); }
+if (process.env.TAKEIN_ONLY === '1') { await takeInPhase(); await finish(); }
+if (process.env.SHIP_LIST_ONLY === '1') { await shipListPhase(); await finish(); }
+if (process.env.HELD_RESUME_ONLY === '1') { await heldResumePhase(); await finish(); }
+if (process.env.AFTER_RUN_ONLY === '1') { await afterRunPhase(); await finish(); }
+if (process.env.STOP_FINDINGS_ONLY === '1') { await stopFindingsPhase(); await finish(); }
+if (process.env.SHIP_ONE_ONLY === '1') { await shipOnePhase(); await finish(); }
+if (process.env.SHIP_CARRIED_ONLY === '1') { await shipCarriedPhase(); await finish(); }
+if (process.env.FEATURE_TABS_ONLY === '1') { await featureTabsPhase(); await finish(); }
+if (process.env.CONFIRM_ONLY === '1') { await confirmInPlacePhase(); await finish(); }
+if (process.env.CHAT_HOME_VERIFIER_ONLY === '1') { await confirmInPlacePhase(); await finish(); }
+if (process.env.SHIP_NOTES_ONLY === '1') { await shipNotesPhase(); await finish(); }
+if (process.env.VERIFIER_ROWS_ONLY === '1') { await verifierRowsPhase(); await finish(); }
+if (process.env.STOP_LIST_ONLY === '1') { await stopListPhase(); await finish(); }
+if (process.env.LABS_WORDS_ONLY === '1') { await labsWordsPhase(); await finish(); }
 
 for (const theme of THEMES) {
   for (const width of [1280, WIDTH]) {
@@ -906,7 +2280,7 @@ for (const theme of THEMES) {
     await shipCells(theme, width);
   }
   await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
-  // ---- C5: verifying, gap found, the bound stop, no gap; the Verifier's and a gap run's run page and side panel.
+  // ---- C5: verifying, gap found, the gap question, no gap; the Verifier's and a gap run's run page and side panel.
   if (await card(VW.threadId, 'vw', 'the verifying card', theme)) {
     const s = await ev(STATUS);
     check(s && s.word === 'Verifying' && s.detail === 'the Verifier walks the main flow · 4 of 4 runs done', `verifying, ${theme}: word and detail (${JSON.stringify(s)})`);
@@ -931,17 +2305,19 @@ for (const theme of THEMES) {
     await shot(`app-verifier-gap-found-${theme}`);
   }
   await prototypeShot('verifier', '[data-vf="vf"]', 'verifier-gap-found', theme);
-  if (await card(VA.threadId, 'va', 'the bound stop card', theme)) {
-    if (await waitFor("!!document.querySelector('.chat-rc .qpanel .verify-gaps')", `the bound stop's question (${theme})`)) {
+  if (await card(VA.threadId, 'va', 'the gap question card', theme)) {
+    if (await waitFor("!!document.querySelector('.chat-rc .qpanel[data-kind=\"gaps\"]')", `the gap question (${theme})`)) {
       await reveal('.chat-rc .qopt');
       const s = await ev(STATUS);
-      check(s && s.word === 'Needs you', `bound stop, ${theme}: Needs you (${JSON.stringify(s)})`);
+      check(s && s.word === 'Needs you', `gap question, ${theme}: Needs you (${JSON.stringify(s)})`);
       const c = await ev(COUNTS('.chat-rc'));
-      check(c && c.questions === 1 && c.primaries.length === 1 && c.primaries[0] === 'Add a run for the gap' && c.answer === 0 && c.gapLists === 1,
-        `bound stop, ${theme}: one question, one primary naming the pick, no Answer, one gap list (${JSON.stringify(c)})`);
-      check(c && /Add a run for the gap/.test(c.preset || ''), `bound stop, ${theme}: Worca's pick preselected`);
-      judge('bound stop gap list', theme, await ev(MEASURE(...GAP_ROWS('.chat-rc .qpanel'))), { oneLine: false });
-      await shot(`app-verifier-bound-stop-${theme}`);
+      check(c && c.questions === 1 && c.primaries.length === 1 && c.primaries[0] === 'Send answers' && c.answer === 0 && c.gapLists === 0,
+        `gap question, ${theme}: one question, one primary Send answers, no Answer, no second gap list (${JSON.stringify(c)})`);
+      check(c && /Add a fix run/.test(c.preset || ''), `gap question, ${theme}: a fix run preset`);
+      const g = await ev(`(() => { const p = document.querySelector('.chat-rc .qpanel[data-kind="gaps"]');
+        return { blocks: p.querySelectorAll('.qblock').length, tiles: p.querySelectorAll('.qopt').length }; })()`);
+      check(g && g.blocks === 2 && g.tiles === 6, `gap question, ${theme}: two gaps, three answers each (${JSON.stringify(g)})`);
+      await shot(`app-verifier-gap-question-${theme}`);
     }
   }
   if (await card(VC.threadId, 'vc', 'the no-gap card', theme)) {
@@ -1083,6 +2459,13 @@ const LIVE_ROWS = "[...document.querySelectorAll('.chat-rc .proto-rows .plan-che
   await cdp('Emulation.setEmulatedMedia', { features: [] });
 }
 
+await shipListPhase();
+await heldResumePhase();
+await afterRunPhase();
+await stopFindingsPhase();
+await shipOnePhase();
 await d2Phase();
 await d3Phase();
+await heldPhase();
+await takeInPhase();
 await finish();

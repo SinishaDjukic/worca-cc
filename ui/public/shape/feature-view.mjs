@@ -4,7 +4,7 @@
 // (feature-actions.mjs). featureHeadline stays for the Plans row's summary line.
 import { featureCardModel, paintFeatureLog } from './feature-card.mjs';
 import { paintFeatureActions } from './feature-actions.mjs';
-import { renderShipCard, saveAcceptance, confirmRequirement } from './ship-card.mjs';
+import { renderShipCard, saveAcceptance, confirmRequirement, acknowledgeNote } from './ship-card.mjs';
 import { buildRequirementRoleFolds } from './role-rows.mjs';
 import { reasonLine } from '../../../src/shared/shape/ship-ledger.mjs';
 import { CONFIRM_ROLES, roleOfPerspective, perspectiveOfRole } from '../../../src/shared/shape/feature-record.mjs';
@@ -38,19 +38,29 @@ function shipBlock(doc, f) {
   // Feature D1 (D14): a marked feature's Ship is the small-runs card, the one card's ship step's; Mark confirmed posts
   // through the one helper both use.
   const sr = s.smallRuns && phase !== 'waiting' ? s.smallRuns : null;
-  const card = renderShipCard(doc, { phase, featureId: f.id, title: f.title, runs: f.total, files: s.files, added: s.linesAdded,
+  const card = renderShipCard(doc, { phase, featureId: f.id, title: f.title, runs: f.total, ...(typeof f.hasChat === 'boolean' ? { hasChat: f.hasChat } : {}), files: s.files, added: s.linesAdded,
     deleted: s.linesRemoved, suggested: s.suggested, result: s.result || null, ...(s.acceptance ? { acceptance: s.acceptance } : {}),
-    ...(sr ? { smallRuns: sr } : {}) },
-  sr ? { onConfirm: (id, mark, reason) => confirmRequirement(f.id, id, mark, reason) } : s.acceptance ? { onMark: (entries) => saveAcceptance(f.id, entries) } : {});
+    ...(sr ? { smallRuns: sr, shipMode: s.mode || null } : {}) },
+  sr ? { onConfirm: (id, mark, reason) => confirmRequirement(f.id, id, mark, reason),
+    onAcknowledge: (note) => acknowledgeNote(f.id, sr.findings?.checkAt, note) } : s.acceptance ? { onMark: (entries) => saveAcceptance(f.id, entries) } : {});
   card.dataset.needsGit = '';   // shipping opens pull requests: hidden while git is missing (git-gate.mjs)
   return card;
+}
+
+/** Feature page slice 6 (D13): a mark is open while the feature is ready to ship, not shipped, and a confirmed
+ *  requirement still waits for its mark or for a reason. The page bar then offers Mark and ship. */
+export function markOpen(f) {
+  const s = f && f.ship;
+  if (!s || !s.smallRuns || !s.ready || s.mode) return false;
+  return (s.smallRuns.confirmed || []).some((e) => e && (e.state === 'waiting' || e.state === 'needs-reason'));
 }
 
 /**
  * deps: { act(action, body, {focus}) → Promise<{ok, error?}>, confirm, openRun(ref), openPlan(controls), snapOf?(pid),
  *         pause?(target, btn), stop?(target), mountAsk?(slot, step), runsOpen?: boolean, error?: string,
  *         omit?: string[] (feature-actions keys the host's model footer already shows), inGroup?: boolean (the group page:
- *         no merge-order line and no ⋯, the page header owns both) }
+ *         no merge-order line and no ⋯, the page header owns both), shipFirst?: boolean (slice 6: the Ship card first, no
+ *         step log or merge-order line: the feature page's Requirements tab) }
  */
 export function renderFeature(doc, f, deps) {
   const h = (tag, cls, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
@@ -61,16 +71,21 @@ export function renderFeature(doc, f, deps) {
   if (f.replanOf) el.appendChild(h('div', 'shape-feature-replanned', 'Re-planned: the runs below replace the earlier outline'));
   // A slot only: the host swaps in its persistent ask element (P12), so a repaint never wipes a typed answer.
   if (m.step && deps.mountAsk) { const slot = h('div', 'shape-feature-ask'); el.appendChild(slot); deps.mountAsk(slot, m.step); }
-  const log = h('ol', 'chat-rc-log shape-feature-log'); log.setAttribute('aria-label', 'Steps');
-  el.appendChild(log);
-  paintFeatureLog(doc, log, m.log);
-  // Run 4 (D17): the group page states the merge order on its Runs tab and owns the ⋯ in its header.
-  if (f.slices.length > 1 && !deps.inGroup) {
-    const order = h('div', 'shape-feature-order', 'Merge in order: each run\'s branch starts from the one before.');
-    order.dataset.needsGit = '';
-    el.appendChild(order);
+  // Feature page slice 6 (D4): the Requirements tab shows the Ship card first; the step log lives on the Log tab, and
+  // the Runs tab states the merge order.
+  if (deps.shipFirst) el.prepend(shipBlock(doc, f));
+  else {
+    const log = h('ol', 'chat-rc-log shape-feature-log'); log.setAttribute('aria-label', 'Steps');
+    el.appendChild(log);
+    paintFeatureLog(doc, log, m.log);
+    // Run 4 (D17): the group page states the merge order on its Runs tab and owns the ⋯ in its header.
+    if (f.slices.length > 1 && !deps.inGroup) {
+      const order = h('div', 'shape-feature-order', 'Merge in order: each run\'s branch starts from the one before.');
+      order.dataset.needsGit = '';
+      el.appendChild(order);
+    }
+    el.appendChild(shipBlock(doc, f));
   }
-  el.appendChild(shipBlock(doc, f));
   const foot = h('div', 'shape-feature-actions');
   el.appendChild(foot);
   paintFeatureActions(doc, foot, m.controls, deps, { omit: deps.omit || [], menu: !deps.inGroup });
@@ -111,7 +126,7 @@ export function renderFeatureRequirements(doc, f, { runHref = () => null } = {})
   const byPerson = all.filter((x) => !x.owned).length;
   const byNone = all.filter((x) => x.owned && x.e.status === 'unowned').length;
   box.appendChild(h('p', 'cap shape-feature-reqs-cap', all.length
-    ? `${plural(all.length, 'requirement')} · ${all.length - byPerson - byNone} owned by a run · ${byPerson} confirmed by a person${byNone ? ` · ${byNone} owned by no run` : ''}` : '0 requirements'));
+    ? `${plural(all.length, 'requirement')} · ${all.length - byPerson - byNone} owned by a run · ${byPerson} you confirm${byNone ? ` · ${byNone} owned by no run` : ''}` : '0 requirements'));
   if (!all.length) return box;
   const roles = [...CONFIRM_ROLES, RELEASE];
   const groups = roles.map((role) => ({ role, rows: all.filter((x) => x.role === role.key) })).filter((g) => g.rows.length).map(({ role, rows }) => {

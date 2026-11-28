@@ -59,9 +59,41 @@ const ARTIFACT_FRAMES = [
 const stateFrame = (over = {}) => ({ type: 'state', runId: 'r1', id: 'p1', status: 'running', steps: [], subAgents: [],
   sessionHosts: { s1: {} }, branch: { source: 'main', feature: 'worca-cc/dark-p1', worktreeDir: '/tmp/wt' }, ...over });
 
+/** jsdom does no layout: a width for every run-page tab and its More button, a bar as wide as the test says, and a
+ *  ResizeObserver and frames the test drives. The default split draws 470px. */
+function fakeLayout(window) {
+  const widths = { overview: 80, task: 50, diff: 70, artifacts: 100, qa: 55, clarify: 55, logs: 55, actions: 70, workflow: 80, sessions: 80, agents: 60 };
+  let room = 0;
+  const bars = (node) => node.classList.contains('rd-tabs') || node.classList.contains('hd-tabs');
+  Object.defineProperty(window.HTMLElement.prototype, 'clientWidth', { configurable: true, get() { return bars(this) ? room : 0; } });
+  window.HTMLButtonElement.prototype.getBoundingClientRect = function () {
+    return { width: this.classList.contains('tab-more') ? 60 : widths[this.dataset.sec] || 0 };
+  };
+  const observers = [];
+  window.ResizeObserver = class {
+    constructor(cb) { this.cb = cb; this.targets = []; this.live = true; observers.push(this); }
+    observe(el) { this.targets.push(el); }
+    unobserve() {}
+    disconnect() { this.live = false; }
+  };
+  const frames = [];
+  window.requestAnimationFrame = (fn) => frames.push(fn);
+  window.cancelAnimationFrame = () => {};
+  /** The bar is now `px` wide: its observer reports it, and the frame runs. */
+  const resize = (bar, px) => {
+    room = px;
+    const watching = observers.filter((o) => o.live && o.targets.includes(bar));
+    assert.equal(watching.length, 1, 'one live observer on the bar');
+    watching[0].cb([]);
+    for (const fn of frames.splice(0)) fn(0);
+  };
+  return { resize };
+}
+
 /** A live git run with two artifacts and one session, open on its page. */
-async function openLive({ level = 'expert', route = 'running/r1', hello = {}, state = {}, git = 'on', frames = ARTIFACT_FRAMES } = {}) {
+async function openLive({ level = 'expert', route = 'running/r1', hello = {}, state = {}, git = 'on', frames = ARTIFACT_FRAMES, layout = false } = {}) {
   const ctx = await bootApp();
+  const fake = layout ? fakeLayout(ctx.window) : null;
   const root = ctx.window.document.documentElement;
   root.dataset.level = level;
   if (git === 'off') root.dataset.git = 'off';
@@ -71,7 +103,8 @@ async function openLive({ level = 'expert', route = 'running/r1', hello = {}, st
   ctx.dispatch(stateFrame(state));                        // a full repaint: the badges read the artifacts
   ctx.go(route);
   await ctx.settle(8);
-  return { ctx, ...page(ctx.window, 'rd') };
+  const p = page(ctx.window, 'rd');
+  return { ctx, ...p, resize: (px) => fake.resize(p.bar(), px) };
 }
 
 const SAVED = {
@@ -81,31 +114,33 @@ const SAVED = {
 };
 
 /** The saved twin of openLive. */
-async function openSaved({ level = 'expert', route = 'details/overview', detail = SAVED, row = ROW, git = 'on', arms = null } = {}) {
+async function openSaved({ level = 'expert', route = 'details/overview', detail = SAVED, row = ROW, git = 'on', arms = null, layout = false } = {}) {
   const ctx = await bootDetail({ detail, rows: [row], arms });
+  const fake = layout ? fakeLayout(ctx.window) : null;
   const root = ctx.window.document.documentElement;
   root.dataset.level = level;
   if (git === 'off') root.dataset.git = 'off';
   await openDetail(ctx, route);
   for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0));
-  return { ctx, ...page(ctx.window, 'hd') };
+  const p = page(ctx.window, 'hd');
+  return { ctx, ...p, resize: (px) => fake.resize(p.bar(), px) };
 }
 
-const LIVE_ROW = ['overview', 'task', 'diff', 'qa', 'logs'];
-const SAVED_ROW = ['overview', 'task', 'diff', 'clarify', 'logs'];
+const LIVE_ROW = ['overview', 'task', 'diff', 'artifacts', 'qa', 'logs'];
+const SAVED_ROW = ['overview', 'task', 'diff', 'artifacts', 'clarify', 'logs'];
 
 test('row and menu per interface level, live and saved', async () => {
   await checkRows([
     { name: 'live, Expert', run: async () => {
       const p = await openLive();
       assert.deepEqual(p.row(), LIVE_ROW);
-      assert.deepEqual(p.menu(), ['Artifacts 2', 'Actions', 'Workflow', 'Sessions 1', 'Agents']);
+      assert.deepEqual(p.menu(), ['Actions', 'Workflow', 'Sessions 1', 'Agents']);
       assert.equal(p.active(), 'overview');
     } },
     { name: 'live, Advanced: Agents is gone', run: async () => {
       const p = await openLive({ level: 'advanced' });
       assert.deepEqual(p.row(), LIVE_ROW);
-      assert.deepEqual(p.menu(), ['Artifacts 2', 'Actions', 'Workflow', 'Sessions 1']);
+      assert.deepEqual(p.menu(), ['Actions', 'Workflow', 'Sessions 1']);
     } },
     { name: 'live, Simple: Workflow alone stays in the row, in its usual place', run: async () => {
       const p = await openLive({ level: 'simple' });
@@ -115,12 +150,12 @@ test('row and menu per interface level, live and saved', async () => {
     { name: 'saved, Expert', run: async () => {
       const p = await openSaved();
       assert.deepEqual(p.row(), SAVED_ROW);
-      assert.deepEqual(p.menu(), ['Artifacts 2', 'Actions', 'Workflow', 'Sessions 1', 'Agents 2']);
+      assert.deepEqual(p.menu(), ['Actions', 'Workflow', 'Sessions 1', 'Agents 2']);
     } },
     { name: 'saved, Advanced: the saved Logs tab is Expert, so it is gone', run: async () => {
       const p = await openSaved({ level: 'advanced' });
-      assert.deepEqual(p.row(), ['overview', 'task', 'diff', 'clarify']);
-      assert.deepEqual(p.menu(), ['Artifacts 2', 'Actions', 'Workflow', 'Sessions 1']);
+      assert.deepEqual(p.row(), ['overview', 'task', 'diff', 'artifacts', 'clarify']);
+      assert.deepEqual(p.menu(), ['Actions', 'Workflow', 'Sessions 1']);
     } },
     { name: 'saved, Simple', run: async () => {
       const p = await openSaved({ level: 'simple' });
@@ -134,8 +169,8 @@ test('git off: Diff and Actions are in neither the row nor the menu', async () =
   await checkRows([
     { name: 'live, Expert', run: async () => {
       const p = await openLive({ git: 'off' });
-      assert.deepEqual(p.row(), ['overview', 'task', 'qa', 'logs']);
-      assert.deepEqual(p.menu(), ['Artifacts 2', 'Workflow', 'Sessions 1', 'Agents']);
+      assert.deepEqual(p.row(), ['overview', 'task', 'artifacts', 'qa', 'logs']);
+      assert.deepEqual(p.menu(), ['Workflow', 'Sessions 1', 'Agents']);
     } },
     { name: 'live, Simple: no More', run: async () => {
       const p = await openLive({ git: 'off', level: 'simple' });
@@ -144,8 +179,8 @@ test('git off: Diff and Actions are in neither the row nor the menu', async () =
     } },
     { name: 'saved, Expert', run: async () => {
       const p = await openSaved({ git: 'off' });
-      assert.deepEqual(p.row(), ['overview', 'task', 'clarify', 'logs']);
-      assert.deepEqual(p.menu(), ['Artifacts 2', 'Workflow', 'Sessions 1', 'Agents 2']);
+      assert.deepEqual(p.row(), ['overview', 'task', 'artifacts', 'clarify', 'logs']);
+      assert.deepEqual(p.menu(), ['Workflow', 'Sessions 1', 'Agents 2']);
     } },
     { name: 'git goes missing while the page is open, with an overflow tab open', run: async () => {
       const p = await openLive({ route: 'running/r1/details/actions' });
@@ -153,10 +188,10 @@ test('git off: Diff and Actions are in neither the row nor the menu', async () =
       applyGit({ available: false }, p.doc);
       await p.ctx.settle(6);
       assert.equal(p.active(), 'overview');
-      assert.deepEqual(p.menu(), ['Artifacts 2', 'Workflow', 'Sessions 1', 'Agents']);
+      assert.deepEqual(p.menu(), ['Workflow', 'Sessions 1', 'Agents']);
       applyGit({ available: true }, p.doc);
       await p.ctx.settle(6);
-      assert.deepEqual(p.menu(), ['Artifacts 2', 'Actions', 'Workflow', 'Sessions 1', 'Agents']);
+      assert.deepEqual(p.menu(), ['Actions', 'Workflow', 'Sessions 1', 'Agents']);
     } },
   ]);
 });
@@ -165,14 +200,14 @@ test('a folder run: Changes in the row, no Actions under More', async () => {
   await checkRows([
     { name: 'live', run: async () => {
       const p = await openLive({ hello: { workMode: 'folder', projectDir: '/tmp/tax' }, state: { workMode: 'folder', branch: { workMode: 'folder', copyDir: '/tmp/copy' } } });
-      assert.deepEqual(p.row(), ['overview', 'task', 'changes', 'qa', 'logs']);
-      assert.deepEqual(p.menu(), ['Artifacts 2', 'Workflow', 'Sessions 1', 'Agents']);
+      assert.deepEqual(p.row(), ['overview', 'task', 'changes', 'artifacts', 'qa', 'logs']);
+      assert.deepEqual(p.menu(), ['Workflow', 'Sessions 1', 'Agents']);
     } },
     { name: 'saved', run: async () => {
       const detail = { ...SAVED, results: null, state: { ...SAVED.state, workMode: 'folder', branch: { workMode: 'folder' } } };
       const p = await openSaved({ detail, row: { ...ROW, workMode: 'folder', branch: null } });
-      assert.deepEqual(p.row(), ['overview', 'task', 'changes', 'clarify', 'logs']);
-      assert.deepEqual(p.menu(), ['Artifacts 2', 'Workflow', 'Sessions 1', 'Agents 2']);
+      assert.deepEqual(p.row(), ['overview', 'task', 'changes', 'artifacts', 'clarify', 'logs']);
+      assert.deepEqual(p.menu(), ['Workflow', 'Sessions 1', 'Agents 2']);
     } },
   ]);
 });
@@ -253,11 +288,10 @@ test('a menu pick opens the tab, puts it in the address and focuses it; Esc retu
 
 test('counts update: the menu reads the badge when it opens, and every tab keeps its button in the row', async () => {
   const p = await openLive();
-  assert.ok(p.menu().includes('Artifacts 2'));
+  assert.equal(p.btn('artifacts').querySelector('.rd-tab-badge').textContent, '2');
   p.ctx.dispatch({ type: 'artifact', runId: 'r1', kind: 'review', path: 'reviews/review.md', nodeId: null, executionId: null, cycle: null });
   p.ctx.dispatch(stateFrame({ subAgents: [{ id: 'a1', label: 'Explore', status: 'running' }] }));
   await p.ctx.settle(6);
-  assert.ok(p.menu().includes('Artifacts 3'));
   assert.ok(p.menu().includes('Agents 1'));
   for (const k of ['artifacts', 'actions', 'workflow', 'sessions', 'agents']) assert.ok(p.btn(k), k);
   assert.equal(p.btn('artifacts').querySelector('.rd-tab-badge').textContent, '3');
@@ -303,7 +337,61 @@ test('a tab hidden while the page is open leaves the menu: a Care run merges Age
   await p.ctx.settle(8);
   assert.equal(p.btn('agents').hidden, true);
   assert.equal(p.active(), 'overview');
-  assert.deepEqual(p.menu(), ['Artifacts 2', 'Actions', 'Workflow', 'Sessions 1']);
+  assert.deepEqual(p.menu(), ['Actions', 'Workflow', 'Sessions 1']);
+});
+
+// --- the width fit (tab-fold.mjs) --------------------------------------------
+
+// A 375px screen leaves the bar 311px inside the page's 32px gutters.
+const NARROW = 311;
+const PAGES = [
+  { name: 'live', open: openLive, route: 'running/r1/details/logs', row: LIVE_ROW, qa: 'qa', agents: 'Agents' },
+  { name: 'saved', open: openSaved, route: 'details/logs', row: SAVED_ROW, qa: 'clarify', agents: 'Agents 2' },
+];
+/** A menu row's name, without its count and check. */
+const names = (rows) => rows.map((r) => r.replace(/^✓ /, '').replace(/ \d+$/, ''));
+
+test('wide: the default row, with Artifacts in it and the rest under More', async () => {
+  await checkRows(PAGES.map(({ name, open, row, agents }) => ({ name, run: async () => {
+    const p = await open({ layout: true });
+    p.resize(1200);
+    assert.deepEqual(p.row(), row);
+    assert.deepEqual(p.menu(), ['Actions', 'Workflow', 'Sessions 1', agents]);
+  } })));
+});
+
+test('narrow (375px): the right-most row tabs fold, Overview and the open tab stay, widening restores the default', async () => {
+  await checkRows(PAGES.map(({ name, open, route, row, qa }) => ({ name, run: async () => {
+    const p = await open({ route, layout: true });
+    assert.equal(p.active(), 'logs');
+    p.resize(NARROW);
+    assert.deepEqual(p.row(), ['overview', 'task', 'logs']);
+    assert.equal(p.active(), 'logs');
+    assert.deepEqual(names(p.menu()), ['Diff', 'Artifacts', 'Actions', 'Workflow', 'Q&A', 'Sessions', 'Agents']);
+    assert.ok(p.menu().includes('Artifacts 2'), 'a folded tab keeps its count');
+    p.resize(1);
+    assert.deepEqual(p.row(), ['overview', 'logs']);
+    assert.ok(p.more());
+    p.resize(360);
+    assert.deepEqual(p.row(), ['overview', 'task', 'diff', 'logs'], 'back in reverse order');
+    assert.ok(p.btn('artifacts').hasAttribute('data-overflow') && p.btn(qa).hasAttribute('data-overflow'));
+    p.resize(1200);
+    assert.deepEqual(p.row(), row);
+    assert.deepEqual(names(p.menu()), ['Actions', 'Workflow', 'Sessions', 'Agents']);
+  } })));
+});
+
+test('open a folded tab from More: it returns to the row, lit, and another gives way', async () => {
+  await checkRows(PAGES.map(({ name, open }) => ({ name, run: async () => {
+    const p = await open({ layout: true });
+    p.resize(NARROW);
+    assert.deepEqual(p.row(), ['overview', 'task', 'diff']);
+    p.pick('Artifacts');
+    for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0));
+    assert.equal(p.active(), 'artifacts');
+    assert.deepEqual(p.row(), ['overview', 'task', 'artifacts']);
+    assert.equal(p.doc.activeElement, p.btn('artifacts'));
+  } })));
 });
 
 // --- the plain header (CSS) ------------------------------------------------

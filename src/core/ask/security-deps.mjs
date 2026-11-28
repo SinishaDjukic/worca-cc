@@ -22,6 +22,7 @@ import { mockEnabled } from '../claude-runner.mjs';
 import { execEnvOfRow } from '../artifacts.mjs';
 import { REMOTE_ENGINES } from '../../shared/exec-env.mjs';
 import { validateEnvSpecChange, validateEnvBuild, validateSandboxConfig } from './env-proposal.mjs';
+import { flagEnabled } from '../flags.mjs';
 import { securityToolFamily } from './security-tools.mjs';
 
 /** The docs the chat cites for these questions (by path, as it cites every doc). */
@@ -88,6 +89,50 @@ export function securityLineFacts(posture) {
   };
 }
 
+// ── the secret vault (the secretVault flag; docs/secrets.md) ──
+// Read with no OS key store call: where Worca runs, the flag, the counts by kind from the config files and the server's
+// last status (last-status.mjs). Its modules load only with the flag on.
+const VAULT_STATE_WORD = Object.freeze({ on: 'on', off: 'off', interrupted: 'migration-pending', locked: 'locked',
+  unavailable: 'key-store-unavailable', unreadable: 'unreadable', container: 'not-available-in-container' });
+
+/** The security: line's vault item: on | off | pending | container, or null with the flag off. Never throws. */
+export async function vaultLineFact({ env = process.env } = {}) {
+  try {
+    if (!flagEnabled('secretVault')) return null;
+    const { vaultUnavailableHere } = await import('../secrets/place.mjs');
+    if (vaultUnavailableHere(env)) return 'container';
+    const { secretCounts } = await import('../secrets/summary.mjs');
+    const { totalOf } = await import('../../shared/secret-vault-view.mjs');
+    const c = secretCounts();
+    const inFiles = totalOf(c.files);
+    return inFiles === 0 ? 'on' : totalOf(c.vault) > 0 ? 'pending' : 'off';
+  } catch { return null; }
+}
+
+/**
+ * get_secrets_status's answer: the vault's state in words, the key store's name, how many secrets of each kind are in
+ * the vault and still in files, and the last check. Never a value, a secret's name, a key or a path into the key store.
+ */
+export async function secretsForChat({ env = process.env } = {}) {
+  if (!flagEnabled('secretVault')) return { state: 'flag-off', docs: ['docs/secrets.md'] };
+  const { vaultUnavailableHere } = await import('../secrets/place.mjs');
+  const { vaultModel } = await import('../../shared/secret-vault-view.mjs');
+  const changeFromChat = 'Turning the vault on, Check now, Reset and Export are the user\'s own steps: Settings › General › Secret vault, or worca secrets in a terminal. The chat changes nothing here.';
+  if (vaultUnavailableHere(env)) {
+    const m = vaultModel({ state: 'container' });
+    return { state: VAULT_STATE_WORD.container, summary: m.value, detail: m.detail, changeFromChat, docs: ['docs/secrets.md', 'docs/credential-broker.md'] };
+  }
+  const { secretCounts } = await import('../secrets/summary.mjs');
+  const { lastStatus } = await import('../secrets/last-status.mjs');
+  const counts = secretCounts();
+  const last = lastStatus();
+  const m = vaultModel(last ? { state: last.state, vault: last.vault, label: last.label } : { state: 'ready', vault: 'unknown' }, counts);
+  return { state: VAULT_STATE_WORD[m.state] || m.state, summary: m.value, detail: m.detail,
+    ...(last && last.label ? { keyStore: last.label } : {}), inVault: counts.vault, inFiles: counts.files,
+    lastCheck: last && last.checkedAt ? last.checkedAt : 'not checked yet (Settings › General › Secret vault checks it)',
+    changeFromChat, docs: ['docs/secrets.md'] };
+}
+
 /** The header's facts for this message: the posture with the proxy state asked for at most `timeoutMs` (a sidecar
  *  that does not answer drops the proxy item, never the message). Never throws: null when nothing can be read. */
 export async function askSecurityFacts({ env = process.env, proxyStatus = null, timeoutMs = 400 } = {}) {
@@ -95,7 +140,9 @@ export async function askSecurityFacts({ env = process.env, proxyStatus = null, 
     let timer;
     const bounded = typeof proxyStatus === 'function' ? () => Promise.race([Promise.resolve().then(proxyStatus),
       new Promise((resolve) => { timer = setTimeout(() => resolve(null), timeoutMs); timer.unref?.(); })]).finally(() => clearTimeout(timer)) : null;
-    return securityLineFacts(await postureForChat({ env, proxyStatus: bounded }));
+    const facts = securityLineFacts(await postureForChat({ env, proxyStatus: bounded }));
+    const vault = facts ? await vaultLineFact({ env }) : null;
+    return facts && vault ? { ...facts, vault } : facts;
   } catch { return null; }
 }
 
@@ -166,12 +213,13 @@ export function execEnvPreflightErrors({ name, engine = 'claude', isWorkspace = 
 }
 
 /** The bridge's ops (ui/routes/chat/ask.mjs): the same answers the in-process readers give, in the server. */
-export const SECURITY_BRIDGE_OPS = Object.freeze(['security-posture', 'exec-envs', 'project-env', 'run-exec-env', 'exec-preflight']);
+export const SECURITY_BRIDGE_OPS = Object.freeze(['security-posture', 'exec-envs', 'project-env', 'run-exec-env', 'exec-preflight', 'secrets-status']);
 export async function securityBridgeOp(op, body = {}, { proxyStatus = null, liveRun = () => null, env = process.env } = {}) {
   if (op === 'security-posture') return postureForChat({ env, proxyStatus });
   if (op === 'exec-envs') return execEnvsForChat({ env });
   if (op === 'project-env') return projectEnvForChat(String(body.projectKey || ''), { env });
   if (op === 'run-exec-env') { const live = liveRun(String(body.runId || '')); return liveExecEnvView(live && live.orch ? live.orch.state : null); }
+  if (op === 'secrets-status') return secretsForChat({ env });
   if (op === 'exec-preflight') return execEnvPreflightErrors({ name: body.name, engine: body.engine || 'claude', isWorkspace: body.isWorkspace === true, workMode: body.workMode || 'git', env });
   throw new Error(`security: unknown op "${op}"`);
 }
@@ -218,6 +266,9 @@ export function defaultSecurityDeps({ env = process.env, fetchImpl = globalThis.
       posture: ({ proxyStatus = null } = {}) => (bridge ? bridge('security-posture') : postureForChat({ env, proxyStatus })),
       execEnvs: () => (bridge ? bridge('exec-envs') : execEnvsForChat({ env })),
       projectEnv: (projectKey) => (bridge ? bridge('project-env', { projectKey }) : projectEnvForChat(projectKey, { env })),
+      // The secret vault (the secretVault flag): the tool is listed only while it is on; the server answers it.
+      secretsEnabled: () => { try { return flagEnabled('secretVault'); } catch { return false; } },
+      secrets: () => (bridge ? bridge('secrets-status') : secretsForChat({ env })),
     },
     // get_run's sandbox fields (tools.mjs): where a run executed (its row) and, while it is live, its state.
     // A live run's state names its sandbox before its row does (the row records it at the resume point or the end).

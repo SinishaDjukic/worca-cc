@@ -4,7 +4,7 @@
 import { createInterface } from 'node:readline';
 import { readSettings, networkProxyEnabled } from '../core/settings.mjs';
 import { checkUpstream, resolveUpstream, fixedPortOf, localProxyUrl, PASSWORD_MODES } from '../core/upstream-proxy.mjs';
-import { parseAccount, saveProxyLogin, readProxyLogin, clearProxyLogin, markLoginRejected, proxyState,
+import { parseAccount, saveProxyLogin, readProxyLogin, clearProxyLogin, clearProxyLoginPlain, markLoginRejected, proxyState,
   upstreamEnv, assertProxyLoginInput, ProxyLoginError } from '../core/proxy-credentials.mjs';
 import { ntHash } from '../core/ntlm.mjs';
 import { sidecarConfigured, sidecarApiConfig, callSidecar, SidecarError } from '../core/egress-sidecar-client.mjs';
@@ -111,12 +111,12 @@ export async function cmdProxy(argv, {
         }
         return await viaSidecar(() => callSidecar(sidecarApiConfig(env), 'POST', '/v1/login', { ...got.account, password: got.password }), (b) => {
           // A login an older Worca saved in the box moves out with this one: the sidecar holds it now.
-          const moved = clearProxyLogin(at);
+          const moved = clearProxyLoginPlain(at);
           out(`Saved the login for ${b.login ? b.login.label : 'that account'} in the egress sidecar (domain, user and NT hash; never in Worca's box)${moved ? '; the old login in the box was deleted' : ''}. Check it with: worca proxy test`);
           return 0;
         }, { out, err });
       } catch (e) {
-        if (e instanceof ProxyLoginError) { err(`worca: ${e.message}`); return 1; }
+        if (e instanceof ProxyLoginError || e?.name === 'SettingsVaultError') { err(`worca: ${e.message}`); return 1; }
         throw e;
       } finally { got.password = ''; }
     }
@@ -148,7 +148,7 @@ export async function cmdProxy(argv, {
   }
 
   if (verb === 'logout') {
-    out(clearProxyLogin(at) ? 'Deleted the saved login. A running Worca stops sending it within a few seconds.' : 'No login was saved.');
+    out(await clearProxyLogin(at) ? 'Deleted the saved login. A running Worca stops sending it within a few seconds.' : 'No login was saved.');
     return 0;
   }
 
@@ -161,12 +161,12 @@ export async function cmdProxy(argv, {
     let got = null;
     try {
       got = await readLoginInput(rest, { input, prompt });
-      const saved = saveProxyLogin({ ...got.account, password: got.password }, { ...at, env });
+      const saved = await saveProxyLogin({ ...got.account, password: got.password }, { ...at, env });
       out(`Saved the login for ${saved.label} (domain, user and NT hash; the password is not stored). A running Worca uses it within a few seconds. Check it with: worca proxy test`);
       return 0;
     } catch (e) {
       if (e && e.code === 'ABORT_ERR') return loginInputError(e, err);
-      if (e instanceof ProxyLoginError) { err(`worca: ${e.message}`); return 1; }
+      if (e instanceof ProxyLoginError || e?.name === 'SettingsVaultError') { err(`worca: ${e.message}`); return 1; }
       err(`worca: the login could not be saved (${e && e.code ? e.code : e && e.message ? e.message : 'error'})`);
       return 1;
     } finally {

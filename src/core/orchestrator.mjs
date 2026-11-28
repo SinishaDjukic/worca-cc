@@ -71,7 +71,8 @@ import { REFINER_SINK, roleReviewOf, roleChecklistOf, runningRoles, rolesForRoun
 import { DISPOSITIONS_MAX_BYTES, applyDispositions, withCounts, normalizeConflicts, dispositionsPathFor, conflictClarifications, withClarifications } from '../shared/review/findings.mjs';
 import { currentPass } from '../shared/shape/role-review.mjs';
 import { gateStop, planStop, concernStop, stopDoneText, stopOptionOf, settledLine, SETTLED_CONCERN_FEEDBACK } from '../shared/shape/run-stops.mjs';
-import { verifyResult, verifyRoundPlan, verifyStop } from '../shared/shape/verifier.mjs';
+import { verifyResult, verifyRoundPlan, verifyStop, verifyGateAnswer, gapAnswerSummary, awayGapSplit, mergeGapDecision,
+  answeredByOf, ANSWERED_BY_WORDS } from '../shared/shape/verifier.mjs';
 import { VERIFY_RESULT_FILE } from './shape/verifier.mjs';
 import { criteriaCheck, criteriaList, criterionIds, coverageOf, criteriaExamples } from '../shared/review/coverage.mjs';
 import { normalizeDecisions, conflictDecisions, validateDecisionPicks, decisionClarifications } from '../shared/review/decisions.mjs';
@@ -1639,18 +1640,19 @@ export class GraphOrchestrator extends RunHarness {
   }
 
   /** C3 (D10, D14): a person answered a stop. Stash it before any await (the pause window), write the one answered
-   *  line, then, unless the run stops (Change), take in the feature's latest finished work before it goes on. */
+   *  line, then, unless the run stops (Change) or the answer already took in the finished work (slice 3), take
+   *  in the feature's latest finished work before it goes on. */
   async _afterStopAnswer(id, stop, payload) {
     if (this.answeredBy(id) === NIGHT_ACTOR) return;
     this._stopAnswer = { id, payload };
     if (this.pipeline) await appendAudit(this.pipeline.dir, stopDoneText(stop, payload), { actor: this.answeredBy(id) }).catch(() => {});
-    if (stopOptionOf(stop, payload)?.value === 'change') return;
+    if (stopOptionOf(stop, payload)?.value === 'change' || this._takesInBeforeAnswerNow()) return;
     await this._takeInLatestFinished({ smallRuns: this._smallRunsMarked, onAnswer: true });
   }
 
   /**
    * Small runs C5 (D9, D14): after n_verify, read the Verifier's file (bounded), judge it against the owned ids, and
-   * past Care's bound ask C3's `check` stop on this run. Writes verify-result.json {result, headSha, decision} into the
+   * (slice 8) on any round with an open gap ask the gap stop (reason `check`, `form: 'gaps'`) on this run. Writes verify-result.json {result, headSha, decision} into the
    * run dir for the settle hook (src/core/shape/verifier.mjs). An unparseable, mis-shaped or oversized file fails the run
    * (an absent one never gets here: the executor's missing-output path pauses it first).
    */
@@ -1667,19 +1669,58 @@ export class GraphOrchestrator extends RunHarness {
     }
     const ref = await this._git(['rev-parse', 'HEAD'], { cwd: ctx.projectDir });
     const headSha = ref.ok ? ref.stdout.trim() : null;
+    // Slice 8 (D5): any round with an open gap asks, from round 1 on. A gap shipped earlier in the series is carried as
+    // answered and never asked again; with none open the decision is written without asking.
+    const shippedIds = new Set((Array.isArray(v.shipped) ? v.shipped : []).map((g) => g && g.id).filter(Boolean));
+    const open = result.gaps.filter((g) => !shippedIds.has(g.id));
     let decision = null;
-    if (verifyRoundPlan({ round: v.round, fixCycles: v.fixCycles, extra: v.extra, gaps: result.gaps }) === 'stop') {
+    if (verifyRoundPlan({ round: v.round, fixCycles: v.fixCycles, extra: v.extra, gaps: open }) === 'clean') {
+      if (result.gaps.length) decision = { decision: 'answer', answers: [] };
+    } else {
       const id = `verify-${v.round}-${ctx.executionId}`;
-      if (this._stopAnswer?.id === id) decision = gateAnswer(this._stopAnswer.payload)?.decision ?? null;   // replay after a pause
-      else {
-        this._stopAnswer = null;
-        const stop = verifyStop({ gaps: result.gaps, round: v.round, fixCycles: v.fixCycles });
-        const payload = await this._enqueueAsk(() => this._ask({ id, kind: 'gate', nodeId: ctx.nodeId, executionId: ctx.executionId,
-          issues: [], stop, validate: gateAnswer }));
-        this._stopAnswer = { id, payload };
-        const o = stopOptionOf(stop, payload);
-        if (this.pipeline) await appendAudit(this.pipeline.dir, `Verifier: ${o ? o.short : 'answered'} · decided by you`, { actor: this.answeredBy(id) }).catch(() => {});
-        decision = gateAnswer(payload)?.decision ?? null;
+      const full = verifyStop({ gaps: open, round: v.round, fixCycles: v.fixCycles, texts: v.texts });
+      const fullChecked = (raw) => { const r = verifyGateAnswer(full, raw); return r.ok ? r.answer : null; };
+      // A replay after a pause passes the full stop's validator, keeping who answered each gap: a stash from before the
+      // gate (another / continue) is asked again.
+      const stash = this._stopAnswer?.id === id ? this._stopAnswer : null;
+      const replayed = stash?.payload ? fullChecked(stash.payload) : null;
+      if (replayed) {
+        const by = answeredByOf(stash.payload, open);
+        decision = { ...replayed, ...(Object.keys(by).length ? { answeredBy: by } : {}) };
+      } else {
+        // Slice 10 (D4, D10): with Away mode active when the gate opens, each plain gap is answered fix at once (no grace
+        // timer); the rest are held for the person. A resumed gate reuses its stashed Away answers.
+        let away = Array.isArray(stash?.away) ? stash.away : null;
+        if (!away) {
+          this._stopAnswer = null;
+          away = this.nightMayDecideNow({ id, kind: 'gate', stop: full }) ? awayGapSplit(open).away : [];
+          if (away.length) {
+            this._stopAnswer = { id, away };   // before any await: the pause window
+            this._nightRecord({ id, kind: 'gate' }, { choice: `fix ${away.map((a) => a.id).join(', ')}`, strategy: 'rule',
+              flagged: false, rationale: 'plain gaps: one more run closes each', reversible: false });
+            if (this.pipeline) {
+              for (const a of away) {
+                await appendAudit(this.pipeline.dir, `Verifier: Gap ${a.id} → fix · ${ANSWERED_BY_WORDS.away}`, { actor: NIGHT_ACTOR }).catch(() => {});
+              }
+            }
+          }
+        }
+        const awayIds = new Set(away.map((a) => a.id));
+        const held = open.filter((g) => !awayIds.has(g.id));
+        if (!held.length) decision = mergeGapDecision(open, away, []);
+        else {
+          const stop = verifyStop({ gaps: held, round: v.round, fixCycles: v.fixCycles, texts: v.texts, decided: away });
+          const checked = (raw) => { const r = verifyGateAnswer(stop, raw); return r.ok ? r.answer : null; };
+          const payload = await this._enqueueAsk(() => this._ask({ id, kind: 'gate', nodeId: ctx.nodeId, executionId: ctx.executionId,
+            issues: [], stop, validate: checked }));
+          // Checked again: the --yes path returns {decision:'continue'} without calling validate. A refusal writes null.
+          const mine = checked(payload);
+          if (mine) {
+            decision = mergeGapDecision(open, away, mine.answers);
+            this._stopAnswer = { id, payload: decision };
+            if (this.pipeline) await appendAudit(this.pipeline.dir, `Verifier: ${gapAnswerSummary(mine.answers)} · decided by you`, { actor: this.answeredBy(id) }).catch(() => {});
+          }
+        }
       }
     }
     await writeFile(join(this.pipeline.dir, VERIFY_RESULT_FILE), `${JSON.stringify({ result, headSha, decision }, null, 2)}\n`, 'utf8');
@@ -4698,7 +4739,8 @@ export class GraphOrchestrator extends RunHarness {
     this._planRevise = pr && typeof pr.id === 'string' && typeof pr.path === 'string' ? { id: pr.id, path: pr.path } : null;
     this._smallRunsMarked = rp.smallRunsMarked === true;
     const sa = rp.stopAnswer;
-    this._stopAnswer = sa && typeof sa.id === 'string' && sa.payload && typeof sa.payload === 'object' ? { id: sa.id, payload: { ...sa.payload } } : null;
+    this._stopAnswer = sa && typeof sa.id === 'string' && sa.payload && typeof sa.payload === 'object' ? { id: sa.id, payload: { ...sa.payload } }
+      : sa && typeof sa.id === 'string' && Array.isArray(sa.away) ? { id: sa.id, away: sa.away.map((a) => ({ ...a })) } : null;   // slice 10 (D10)
     const pa = rp.protoAnswer;
     this._protoAnswer = pa && typeof pa.key === 'string' && pa.payload && typeof pa.payload === 'object' ? { key: pa.key, payload: { ...pa.payload } } : null;
     const pca = rp.planConcernAnswer;

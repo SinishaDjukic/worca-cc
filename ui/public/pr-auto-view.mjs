@@ -2,8 +2,9 @@
 // "Create a PR when a run finishes" in the browser: the New run form's two fields, the read-only line on a run's page,
 // the Workspace page's setting and the Schedules row. app.js only calls these; the logic lives here.
 
-import { PR_OPEN, PR_OPEN_LABELS, PR_SLICES, PR_SLICES_LABELS, prSourceText, prExemptText } from '../../src/shared/pr-auto.mjs';
+import { PR_OPEN, PR_OPEN_LABELS, PR_SLICES, PR_SLICES_LABELS, prSourceText, prExemptText, outcomeReasonText } from '../../src/shared/pr-auto.mjs';
 import { notify, cardAlert } from './feedback.mjs';
+import { flagOn } from './flags.mjs';
 
 const node = (doc, tag, cls, text) => { const el = doc.createElement(tag); if (cls) el.className = cls; if (text != null) el.textContent = text; return el; };
 const optionOf = (doc, value, label) => { const el = node(doc, 'option', null, label); el.value = value; return el; };
@@ -35,11 +36,13 @@ export function prBodyOf(current, defaults, { slicesShown = false } = {}) {
   return Object.keys(out).length ? out : undefined;
 }
 
+// A stored reason is shown as it is, except that with the Shaper small runs flag on a legacy one reads in its new words.
+const reasonOf = (o, doc) => (flagOn('shaperSmallRuns', doc) ? outcomeReasonText(o.reason) : o.reason || '');
 const OUTCOME_TEXT = {
   opened: (o) => ({ prefix: 'Opened: ', urls: o.urls || [] }),
-  skipped: (o) => ({ prefix: 'Not opened: ', text: o.reason || '' }),
-  failed: (o) => ({ prefix: 'Not opened: ', text: o.reason || '' }),
-  blocked: (o) => ({ prefix: 'Not opened: ', text: o.reason || '' }),
+  skipped: (o, doc) => ({ prefix: 'Not opened: ', text: reasonOf(o, doc) }),
+  failed: (o, doc) => ({ prefix: 'Not opened: ', text: reasonOf(o, doc) }),
+  blocked: (o, doc) => ({ prefix: 'Not opened: ', text: reasonOf(o, doc) }),
   held: () => ({ prefix: '', text: 'Waiting for the requirements to be marked' }),
   waiting: () => ({ prefix: '', text: 'Waiting for the feature' }),
 };
@@ -54,7 +57,7 @@ export function renderRunPrFact(doc, prAuto) {
   if (prAuto.feature && prAuto.slices && prAuto.open !== 'none') parts.push(PR_SLICES_LABELS[prAuto.slices]);
   box.append(node(doc, 'span', 'hd-pr-auto-value', `${parts.join(' · ')} · ${source}`));
   const outcome = (prAuto.slices === 'one' && prAuto.feature && prAuto.feature.outcome) || prAuto.outcome;
-  const shown = outcome && OUTCOME_TEXT[outcome.status] ? OUTCOME_TEXT[outcome.status](outcome) : null;
+  const shown = outcome && OUTCOME_TEXT[outcome.status] ? OUTCOME_TEXT[outcome.status](outcome, doc) : null;
   if (shown && prAuto.open !== 'none') {
     const line = node(doc, 'div', `hd-pr-auto-outcome ${outcome.status}`, shown.prefix);
     if (shown.urls) for (const [i, url] of shown.urls.entries()) {

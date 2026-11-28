@@ -88,6 +88,9 @@ test('the Playwright image tag in CI and in update-linux equals the pinned @play
   // so the tag and its digest move together, by hand: dependabot.yml's docker entry reads /docker only).
   assert.match(ci, new RegExp(`image: ${tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}@sha256:[0-9a-f]{64}\\s`), 'ci.yml pins the image by digest');
   assert.ok(PKG.scripts['e2e:extension:update-linux'].includes(tag), 'update-linux image');
+  // The quarantine workflow runs quarantined specs in the same image (the pixel baselines only hold there).
+  const pin = ci.match(new RegExp(`image: ${tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}@sha256:[0-9a-f]{64}`))[0];
+  assert.ok(readFileSync(join(ROOT, '.github/workflows/quarantine.yml'), 'utf8').includes(pin), 'quarantine.yml pins the same image tag and digest');
 });
 
 // The Firefox e2e suite runs in CI on Linux (D13): a required check, so it has its own workflow with no paths filter

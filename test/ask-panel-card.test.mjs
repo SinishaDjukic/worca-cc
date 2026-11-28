@@ -2716,6 +2716,19 @@ test('ask-panel-card: a Folder member is listed but gets no per-member source in
   ]);
 });
 
+test('ask-panel-card: a big Windows workspace names its first members by folder name and counts the rest', async () => {
+  const names = ['Api', 'Billing', 'Docs', 'Infra', 'Web'];
+  const row = { id: 'wks-team-00000001', name: 'team', projectPaths: names.map((n) => `c:\\Users\\me\\ws\\${n}`),
+    projectKeys: names.map((n, i) => `${n.toLowerCase()}-0000000${i}`), vcs: names.map(() => 'git') };
+  const ctx = await openWithCard(WS_CARD, { workspaces: [row] });
+  const cardEl = ctx.doc.querySelector('.ask-card');
+  const line = cardEl.querySelector('.ask-card-members');
+  assert.equal(line.textContent, 'Api, Billing, Docs and 2 more');
+  assert.equal(line.title, names.join(', '), 'every member in the tooltip');
+  const labels = [...cardEl.querySelectorAll('.ask-card-member-src')].map((i) => i.closest('.ask-rp-field').querySelector('.ask-rp-label').textContent);
+  assert.deepEqual(labels, names, 'per-member fields are labelled by folder name, not the full path');
+});
+
 test('s2: a proposal for project acme lists the project\'s default cost tags plus required keys', async () => {
   const rec = { tagRules: { dims: [{ key: 'client', label: 'Client', values: [], required: true }], enforce: false, prefill: [],
     autofill: { tags: ['team:web'], from: 'defaults' } } };

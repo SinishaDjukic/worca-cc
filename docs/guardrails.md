@@ -66,6 +66,22 @@ the network. [Choose a setup](choose-a-setup.md) compares the setups that do thi
   (`git push`, `npm/yarn/pnpm publish`). It also protects Worca's own state
   (the DB, secrets, settings and MCP registry) from Read/Edit and blocks edits
   to Worca's `plugins`, `scripts`, `agents`, `workflows` and `policy` dirs.
+  Worca's secret files are denied under any home, `~/.worca-cc` or a custom one
+  (`//**/proxy-login.json*`, `//**/worca-vault*`: the saved proxy login, the
+  vault, its wrapped key and their temp and moved-aside copies), and so are the
+  plain forms of OS keychain reads and secret exports (`security
+  find-generic-password`, `find-internet-password`, `find-key`, `dump-keychain`,
+  `export`; `secret-tool lookup`/`search`; `worca secrets export` and `worca
+  secrets reset`, also through `npx worca` and `npx @worca/app`, and `worca-cc
+  secrets reset`).
+  Every `env -i` / `env --ignore-environment` command is refused for pipeline
+  agents on purpose, because it strips the variable the secrets CLI uses to
+  refuse agents (`WORCA_HOST_PID`); refusing a harmless `env -i` use is the
+  accepted cost.
+  Every custom set with at least one rule also denies Worca's secret files and
+  these keychain reads. On engines other than Claude Code these extra rules are
+  written where the engine can hold them, but they never make the engine gate
+  ask for `--allow-unguarded-engine`.
   Never breaks a pipeline: commits, installs, tests, and `curl localhost` all
   still work.
 - **Strict** (wire id `secure`) — Normal plus: environment scrub on agent
@@ -132,6 +148,26 @@ are never lifted — that would widen capability and bypass Claude Code's
 workspace-trust gate; hooks and statusline still don't apply off-worktree and
 stay warned). A paused run re-reads its selected set by id on resume, so it
 enforces the set's latest definition.
+
+Agents are told that the process Worca runs in is off limits, whichever set the
+run uses. On Claude Code runs a Bash hook also refuses the commands that would
+take it down; agents on the other engines get the instruction only. Setting
+`WORCA_HOST_GUARD=0` turns both off for runs; Chat's command tool checks every
+kill regardless. The hook refuses, among others: pattern kills (`pkill`,
+`killall`, `taskkill /IM`, `Stop-Process -Name`, `xargs kill`,
+`wmic process … delete`), a `kill` fed from a pipe or a variable, and a `kill`
+that names Worca's own process. An agent can still stop a process it started: it
+looks the number up with `ps` and runs `kill` on that literal number.
+
+The run guardrail sets' rules for files protected wherever they sit (`.env*`,
+`secrets.json`, Worca's database and settings) match a Windows path on any
+drive, a network share and a long path such as `\\?\C:\…` on Gemini and
+Cursor runs. They leave Worca's `store/` and `runs/` alone.
+
+Chat's deny rules, and the ones for Requirements reads, also cover Worca's
+store and logs and match the same forms. The rules for your home folder (`.ssh`,
+`.claude`, `AppData` and the rest) match them too. Worca's own file tools apply
+these rules, and Claude Code is handed them.
 
 ## Worca's own git calls
 

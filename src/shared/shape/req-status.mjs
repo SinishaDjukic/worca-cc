@@ -69,10 +69,11 @@ export function requirementStatus(entry, { runs = [], reruns = [] } = {}) {
   if (typeof e.roleLabel === 'string') {
     const owner = 'confirmed by a person';
     const role = e.roleLabel;
-    if (e.state === 'waiting') return { owner, role, word: role, text: `${owner} · ${role}`, mark: 'wait' };
+    // Slice 7 (R-ux-2): the person using the app confirms; the role is a detail. `owner` stays the kind (data-owner).
+    if (e.state === 'waiting') { const word = 'waiting for you to confirm'; return { owner, role, word, text: `${word} · ${role}`, mark: 'wait' }; }
     const marked = `Marked ${MARK_WORDS[e.mark] || ''} by you`;
     if (e.state === 'needs-reason') return { owner, role, word: marked, text: marked, mark: 'x' };
-    if (e.mark === 'met') { const word = `confirmed by ${role}`; return { owner, role, word, text: word, mark: 'check' }; }
+    if (e.mark === 'met') { const word = 'confirmed by you'; return { owner, role, word, text: `${word} · ${role}`, mark: 'check' }; }
     return { owner, role, word: marked, text: e.reason ? `${marked} · ${e.reason}` : marked, mark: e.mark === 'dropped' ? 'none' : 'x' };
   }
   // Fail closed (ship-ledger.mjs): no run owns it and no person confirms it.

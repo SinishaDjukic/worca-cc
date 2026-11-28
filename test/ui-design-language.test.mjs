@@ -36,7 +36,7 @@ const TOKEN = /^(?:var\(--r-(?:xs|sm|md|lg|pill|card|ctrl)\)|0|inherit)$/;
 // Dots: nav-rollup, tl-mark.is-open, tl-pr-start, hd-base-pill::before, rg-td, ask-rp-kicker::before, npip/nwarn,
 // mdl-st::before (the Models page's state word).
 // Knobs: .wz .tog::after. Spinners: the busy::after rings. Radios: .qopt::before (the pick-one option mark).
-const ROUND = /dot|\bava\b|-ava\b|avatar|person-ini|knob|switch::after|tog::after|spin|busy::after|\bled\b|radio|status-word::before|nav-rollup|tl-mark\.is-open|tl-pr-start|hd-base-pill::before|rg-td|kicker::before|npip|nwarn|mdl-st::before|qopt::before/;
+const ROUND = /dot|\bava\b|-ava\b|avatar|person-ini|knob|switch::after|tog::after|spin|busy::after|\bled\b|radio|status-word::before|nav-rollup|tl-mark\.is-open|tl-pr-start|hd-base-pill::before|rg-td|kicker::before|npip|nwarn|mdl-st::before|qopt::before|rom-run\.is-lit::before/;
 
 test('radius tokens (decided 2026-10-19): xs 4, sm 6, md 8, lg 12, pill; card = md, ctrl = sm', () => {
   const root = ALL.find((r) => r.sel === ':root').body;   // the first :root (line 14) is the token block
@@ -1197,9 +1197,23 @@ test('the .rom* rules carry no animation, transition or shadow, and use only tok
     ['.rom-plot', /position:\s*relative/],
     ['.rom-links', /position:\s*absolute/, /inset:\s*0/, /overflow:\s*visible/, /pointer-events:\s*none/],
     ['.rom-link', /fill:\s*none/, /stroke:\s*var\(--ink-3\)/, /stroke-width:\s*1\.5px/],
+    ['.rom-link.is-faint', /stroke:\s*var\(--line-2\)/],
     ['.rom-run', /position:\s*absolute/],
-    ['.rom-n', /var\(--fs-caption\)/, /line-height:\s*1(?![.\d])|var\(--fs-caption\)\/1(?![.\d])/, /(?:^|;)\s*color:\s*var\(--ink-2\)/],
+    ['.rom-n', /var\(--fs-caption\)/, /line-height:\s*1(?![.\d])|var\(--fs-caption\)\/1(?![.\d])/, /(?:^|;)\s*color:\s*var\(--ink-2\)/,
+      /(?:^|;)\s*background(?:-color)?:\s*var\(--bg\)/],
+    // R-ux-6: the marks of a pointed or kept run.
+    ['.rom-link.is-lit', /(?:^|;)\s*stroke:\s*var\(--ink\)/, /stroke-width:\s*2px/],
+    ['.rom-link.is-dim', /(?:^|;)\s*opacity:\s*0?\.18(?!\d)/],
+    ['.rom-run.is-lit::before', /(?:^|;)\s*border:\s*2px solid var\(--ink\)/],
   ]) for (const re of want) assert.match(body(sel), re, `${sel} ${re}`);
+  // The ring sits on the still run box, never on the dot, whose pulse scales and fades it.
+  assert.deepEqual(own.filter((r) => /is-lit/.test(r.sel) && /status-dot/.test(r.sel)).map((r) => where(r, r.sel)), []);
+  // Same specificity: the lit rule comes after the faint one, so a lit faint link reads --ink.
+  const at = (sel) => own.findIndex((r) => splitTop(r.sel).includes(sel) && !r.media);
+  assert.ok(at('.rom-link.is-lit') > at('.rom-link.is-faint'), '.rom-link.is-lit follows .rom-link.is-faint');
+  // The number stands above its dot, centred, its bottom 11px over the centre (no longer above right).
+  assert.match(body('.rom-n'), /(?:^|;)\s*(?:bottom:\s*(?:11px|calc\(100% \+ 11px\))|top:\s*-22px)/, '.rom-n above its dot');
+  assert.doesNotMatch(body('.rom-n'), /(?:^|;)\s*left:\s*7px/, '.rom-n is not right of its dot');
 });
 
 // ---- Shaper small runs s14 (R-qa-4): the open stop list has its guide entry; tokens only, still ----
@@ -1207,11 +1221,11 @@ const STOP_MODULE = 'ui/public/shape/stop-list.mjs';
 const STOP_HEADING = '### Open stop list (checked)';
 /** The stop list's own classes. A new painter class is added here and gets a guide row. */
 const STOP_OWN = ['chat-rc-stops', 'chat-rc-stop', 'chat-rc-stop-line', 'chat-rc-stop-text', 'chat-rc-stop-body',
-  'chat-rc-stop-q', 'chat-rc-stop-resume', 'chat-rc-stop-err'];
+  'chat-rc-stop-q', 'chat-rc-stop-resume', 'chat-rc-stop-err', 'chat-rc-stop-chev'];
 /** A hook has a guide row and no rule of its own: Resume is the shared .btn.btn-sm. */
 const STOP_HOOKS = ['chat-rc-stop-resume'];
 /** Classes the painter also puts down; their own sections own them. */
-const STOP_SHARED = /^(?:status-dot|is-[\w-]+|has-sym|btn|btn-sm|chat-rc-q|qpanel|hidden|num)$/;
+const STOP_SHARED = /^(?:status-dot|is-[\w-]+|has-sym|btn|btn-sm|row-btn|chat-rc-q|qpanel|hidden|num)$/;
 const STOP_CLASS = /\.chat-rc-stop(?:s|-[\w-]+)?(?![-\w])/;
 /** The guide's stop list section, up to the next heading; '' when it is absent. */
 const stopSection = () => {
@@ -1224,7 +1238,7 @@ test('gallery: stop-list.mjs has its guide entry', async () => {
   const missing = [];
   const section = stopSection();
   if (!section) missing.push(`guide: the section "${STOP_HEADING}"`);
-  for (const file of [STOP_MODULE, 'test/ui-shape-stop-list.test.mjs', 'ui/public/chat/run-card.mjs']) {
+  for (const file of [STOP_MODULE, 'test/ui-shape-stop-list.test.mjs', 'ui/public/chat/run-card.mjs', 'ui/public/group-page.mjs']) {
     if (!section.includes(file)) missing.push(`guide: ${file} named in the section`);
   }
   if (!/\|\s*Part\s*\|\s*Class\s*\|\s*Means\s*\|/.test(section)) missing.push('guide: the table header | Part | Class | Means |');
@@ -1248,8 +1262,12 @@ test('gallery: stop-list.mjs has its guide entry', async () => {
     paintStopList(doc, host, stopLinesOf(view), {
       paintQuestion: () => {}, releaseQuestion: () => {}, bindQuestion: () => () => {}, resume: () => new Promise(() => {}),
     });
+    // Slice 12: a line's step card host exists only while its line is open.
+    const line = host.querySelector('li[data-run="2"] button.chat-rc-stop-line');
+    if (line) line.click(); else missing.push('painter: run 2\'s line is not a button');
     for (const el of [host, ...host.querySelectorAll('*')]) {
-      if (el.parentElement?.closest('.status-dot')) continue;
+      // A glyph inside the status dot or the chevron belongs to the icon set.
+      if (el.parentElement?.closest('.status-dot, .chat-rc-stop-chev')) continue;
       for (const c of (el.getAttribute('class') || '').split(/\s+/)) if (c && !STOP_SHARED.test(c)) emitted.add(c);
     }
   } catch (e) { missing.push(`module: ${STOP_MODULE} does not paint (${e.message.split('\n')[0]})`); }
@@ -1282,3 +1300,20 @@ test('the .chat-rc-stop* rules: tokens only, no motion, no pill', () => {
     .filter(([, v]) => !v.split(/\s+/).every(small)).map(([p, v]) => where(r, `${p}:${v}`)));
   assert.deepEqual(pills, [], 'no radius above 8px, no pill, no circle');
 });
+
+// ---- Shaper slice 16 (R-qa-5): the coloured run row words use the stronger ink, so they read 4.5:1 on the light page ----
+test('s16: the six "waiting for you" and "failed" row word selectors use --amber-ink-strong / --red-ink-strong', () => {
+  const shape = readFileSync(join(ROOT, 'ui/public/shape/shape-it.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const hosts = [
+    (m) => `.chat-rc-members .run-member[data-mark="${m}"] .run-member-state`,
+    (m) => `div.gpage-runs .run-member[data-mark="${m}"] .run-member-state`,
+    (m) => `.srows.runs-members .runs-item[data-mark="${m}"] .runs-row-sub`,
+  ];
+  const shapeRules = rules(shape);
+  const got = hosts.flatMap((sel) => ['ask', 'failed'].map((mark) => [sel(mark),
+    shapeRules.filter((r) => splitTop(r.sel).some((x) => x.trim() === sel(mark)))
+      .flatMap((r) => decls(r.body, 'color').map(([, v]) => v.trim()))]));
+  const want = hosts.flatMap((sel) => [[sel('ask'), ['var(--amber-ink-strong)']], [sel('failed'), ['var(--red-ink-strong)']]]);
+  assert.deepEqual(got, want);
+});
+

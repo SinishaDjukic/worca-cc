@@ -34,7 +34,7 @@ function candidates(items) {
     .filter((v) => !v.done && v.status !== 'unknown');
 }
 
-/** "3 more real runs on 1 more day to Hooked": what is left of each short part of `view`, then the level. */
+/** "2 more real runs to Hooked": what is left of each short part of `view`, then the level. */
 export function nudgeText(view, nextName) {
   const left = countersOf(view).filter(({ count, of }) => count < of).map(({ count, of, unit }) => phrase(of - count, unit));
   return `${left.join(' on ')} to ${nextName}`;

@@ -247,7 +247,7 @@ export function shapeToolFit(kind, input, work) {
 function requirementFit(raw, input, work) {
   const no = (error) => ({ ok: false, error });
   const f = work.feature;
-  if (!work.smallRuns) return no(`${f.title} is not built with small runs`);
+  if (!work.smallRuns) return no(`${f.title} has no runs that own its requirements`);
   if (f.status !== 'active' && f.status !== 'done') return no(`${f.title} is ${f.status}`);
   const id = String(input.requirement || '').trim();
   const a = ((work.facts && work.facts.feature && work.facts.feature.agreed) || []).find((x) => x.id === id);
@@ -301,41 +301,21 @@ const CODE_TEXT = {
 };
 
 /**
- * Small runs C4 (D1): the one path for a requirement change, from a chat card (source.kind 'chat') or a run's
- * requirement stop (source.kind 'run', with the asking run's pipelineId and number). Synchronous over `deps`
- * ({view, write, stopLive, stopPaused, runNow, tick, broadcast, smallRuns}): validate, read the cases from the live view,
- * write the text and its landing in one tx, then fire the restart tickets, stop the live owners (no await in between),
- * settle paused ones, tick and repaint. A refusal changes nothing.
- * → {ok:true, result:{changes:[{id, case, run, added?}], stopFailed?}} | {ok:false, status, code, error}
+ * Small runs C4 (D3–D6), shared with the Verifier's gate (slice 8, D7): plan where each validated change lands, by the
+ * owner's case in `slices` (featureView's). `source` is the entries' source, `asker` the asking run's number (its own
+ * requirement waits), `firstIndex` the number of the first run appended. Writes nothing.
+ * → {plan:{changes, entries, restart, appendFor, by}, after:{live, paused}}
  */
-export function applyRequirementChange(featureId, changes, source, deps) {
-  const by = (source && source.by) || null;
-  const view = deps.view(featureId);
-  if (!view) return refusal(404, 'FEATURE_NOT_FOUND', 'feature not found');
-  if (!deps.smallRuns(view.id)) return refusal(409, 'NOT_SMALL_RUNS', 'requirement changes need Shaper small runs');
-  if (view.status !== 'active' && view.status !== 'done') return refusal(409, 'FEATURE_NOT_ACTIVE', `${view.title} is ${view.status}`);
-  const agreed = new Map(((view.ship && view.ship.acceptance && view.ship.acceptance.agreed) || []).map((a) => [a.id, a.text]));
-  const list = [];
-  for (const raw of Array.isArray(changes) ? changes : []) {
-    const n = normalizeChange(raw);
-    if (!n.ok) return refusal(422, n.code, CODE_TEXT[n.code](raw && raw.id));
-    if (!agreed.has(n.change.id)) return refusal(422, 'UNKNOWN_REQUIREMENT', `${n.change.id} is not an agreed requirement of ${view.title}`);
-    if (agreed.get(n.change.id) !== n.change.from) return refusal(409, 'STALE', `${n.change.id} changed since: read it again`);
-    list.push(n.change);
-  }
-  if (!list.length) return refusal(422, 'INVALID_ID', CODE_TEXT.INVALID_ID());
-  const asker = source && source.kind === 'run' ? source.run : null;
-  const at = new Date().toISOString();
-  const slices = view.slices || [];
+export function planRequirementChange(slices, list, { source, asker = null, at, by, firstIndex = slices.length + 1 }) {
   const plan = { changes: list, entries: [], restart: [], appendFor: [], by };
   const after = { live: [], paused: [] };
-  let nextIndex = slices.length + 1;
+  let nextIndex = firstIndex;
   const appendOf = new Map();
   for (const c of list) {
     const owner = slices.find((s) => (s.requirements && s.requirements.ids || []).includes(c.id)) || null;
     const self = !!owner && owner.index === asker;
     const kase = self ? 'waiting' : owner ? changeCaseOf(owner.state) : 'none';
-    const e = { id: c.id, from: c.from, to: c.to, at, by, source: { kind: source.kind, ...(Number.isInteger(asker) ? { run: asker } : {}) },
+    const e = { id: c.id, from: c.from, to: c.to, at, by, source,
       case: kase, run: kase === 'none' ? null : owner.index };
     if (self) e.self = true;
     else if (kase === 'running') { if (!plan.restart.includes(owner.index)) { plan.restart.push(owner.index); if (owner.pipelineId) after.live.push(owner.pipelineId); } }
@@ -353,6 +333,36 @@ export function applyRequirementChange(featureId, changes, source, deps) {
     const lines = a.ids.map((id) => `${id} now reads: ${list.find((c) => c.id === id).to}`);
     Object.assign(a, { title: `Change: ${a.ids.join(', ')}`, goal: `Change the finished work so it meets the changed requirement.\n\n${lines.join('\n')}` });
   }
+  return { plan, after };
+}
+
+/**
+ * Small runs C4 (D1): the one path for a requirement change, from a chat card (source.kind 'chat') or a run's
+ * requirement stop (source.kind 'run', with the asking run's pipelineId and number). Synchronous over `deps`
+ * ({view, write, stopLive, stopPaused, runNow, tick, broadcast, smallRuns}): validate, read the cases from the live view,
+ * write the text and its landing in one tx, then fire the restart tickets, stop the live owners (no await in between),
+ * settle paused ones, tick and repaint. A refusal changes nothing.
+ * → {ok:true, result:{changes:[{id, case, run, added?}], stopFailed?}} | {ok:false, status, code, error}
+ */
+export function applyRequirementChange(featureId, changes, source, deps) {
+  const by = (source && source.by) || null;
+  const view = deps.view(featureId);
+  if (!view) return refusal(404, 'FEATURE_NOT_FOUND', 'feature not found');
+  if (!deps.smallRuns(view.id)) return refusal(409, 'NOT_SMALL_RUNS', 'requirement changes need a feature whose runs own its requirements');
+  if (view.status !== 'active' && view.status !== 'done') return refusal(409, 'FEATURE_NOT_ACTIVE', `${view.title} is ${view.status}`);
+  const agreed = new Map(((view.ship && view.ship.acceptance && view.ship.acceptance.agreed) || []).map((a) => [a.id, a.text]));
+  const list = [];
+  for (const raw of Array.isArray(changes) ? changes : []) {
+    const n = normalizeChange(raw);
+    if (!n.ok) return refusal(422, n.code, CODE_TEXT[n.code](raw && raw.id));
+    if (!agreed.has(n.change.id)) return refusal(422, 'UNKNOWN_REQUIREMENT', `${n.change.id} is not an agreed requirement of ${view.title}`);
+    if (agreed.get(n.change.id) !== n.change.from) return refusal(409, 'STALE', `${n.change.id} changed since: read it again`);
+    list.push(n.change);
+  }
+  if (!list.length) return refusal(422, 'INVALID_ID', CODE_TEXT.INVALID_ID());
+  const asker = source && source.kind === 'run' ? source.run : null;
+  const { plan, after } = planRequirementChange(view.slices || [], list, { asker, at: new Date().toISOString(), by,
+    source: { kind: source.kind, ...(Number.isInteger(asker) ? { run: asker } : {}) } });
   let written;
   try { written = deps.write(view.id, plan); }
   catch (err) {

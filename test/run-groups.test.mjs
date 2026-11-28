@@ -4,12 +4,14 @@ import assert from 'node:assert/strict';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
 import { getDb } from '../src/core/db.mjs';
-import { createSliceFeature } from '../src/core/shape/features.mjs';
+import { createSliceFeature, setFeatureAcceptance, shipHold, liveSliceFrom } from '../src/core/shape/features.mjs';
 import { listRunGroups, createRunGroup, addToGroup, removeFromGroup, RunGroupError, addRunsToGroup, restoreRunGroups, runNameInputs } from '../src/core/run-groups.mjs';
-import { buildRunsModel } from '../ui/public/runs-list.mjs';
+import { buildRunsModel, renderRunsList } from '../ui/public/runs-list.mjs';
 import { groupModel } from '../src/shared/run-model.mjs';
 import { getStats } from '../src/core/stats.mjs';
 import { setWatch } from '../src/core/pr-watch.mjs';
+import { verifyStop } from '../src/shared/shape/verifier.mjs';
+import { JSDOM } from 'jsdom';
 
 useTempHome(after);
 const PROJECT = '/tmp/rg-proj';
@@ -275,4 +277,493 @@ test('fail closed: a marked feature with an owner-less requirement carries hold,
   assert.equal(of(on, held).hold, 'R-ops-1 is owned by no run and confirmed by no person');
   for (const f of [fine, plain]) assert.equal('hold' in of(on, f), false);
   assert.equal('hold' in of(withSmallRuns(false, () => listRunGroups()), held), false);
+});
+
+// ── Slice 7 (D1): an open confirmation is the feature's hold ─────────────────────────────────────────────────────
+/** A marked (or not) 2-run feature, both runs done, whose R-ux-2 a person confirms (Design). */
+function confirmFeature({ marked = true } = {}) {
+  n += 1;
+  const ids = [`p-conf-${n}-1`, `p-conf-${n}-2`];
+  seedPipelineRow({ id: ids[0], title: 'Shape it', status: 'done' });
+  if (marked) getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run('{"smallRuns":true}', ids[0]);
+  const outline = { why: 'w', slices: [1, 2].map((i) => ({ id: `s${i}`, title: `Slice ${i}`, goal: 'g', inScope: [], outOfScope: [],
+    acceptance: [], dependsOn: [], estimate: 'small', ...(i === 1 ? { requirements: ['R-po-1'] } : {}) })),
+    agreed: [{ id: 'R-po-1', text: 'People see it' }, { id: 'R-ux-2', text: 'The words say who confirms' }], leftOut: [] };
+  const { id } = createSliceFeature({ pipelineId: ids[0], projectDir: PROJECT, title: 'Confirm', outline, perspectives: [], workflowId: 'wf_shape' });
+  getDb().prepare('UPDATE shape_features SET requirement_kinds = ? WHERE id = ?')
+    .run(JSON.stringify({ 'R-ux-2': { kind: 'confirmed', role: 'design' } }), id);
+  const t = getDb().prepare('SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ? AND idx = 2').get(id).ticket_id;
+  seedPipelineRow({ id: ids[1], title: 'Slice 2', status: 'done' });
+  getDb().prepare('UPDATE scheduled_runs SET status = \'fired\', pipeline_id = ? WHERE id = ?').run(ids[1], t);
+  return { id, ids };
+}
+const groupOf = (flag, id) => withSmallRuns(flag, () => listRunGroups()).find((g) => g.id === id);
+
+test("s7: a waiting confirmation is the feature's hold, only for a marked feature with the flag on", () => {
+  const f = confirmFeature();
+  const plain = confirmFeature({ marked: false });
+  assert.equal(groupOf(true, f.id).hold, 'Needs your confirmation: R-ux-2');
+  assert.equal(shipHold(f.id), 'Needs your confirmation: R-ux-2');
+  assert.equal('hold' in groupOf(true, plain.id), false, 'unmarked');
+  assert.equal('hold' in groupOf(false, f.id), false, 'flag off');
+});
+
+test('s7: once marked Met the group has no hold', () => {
+  const f = confirmFeature();
+  assert.equal(groupOf(true, f.id).hold, 'Needs your confirmation: R-ux-2');
+  setFeatureAcceptance(f.id, [{ id: 'R-ux-2', mark: 'met', role: 'design', by: 'ann', at: '2026-11-22T16:55:00.000Z' }]);
+  assert.equal('hold' in groupOf(true, f.id), false);
+  assert.equal(shipHold(f.id), null);
+});
+
+// ── Feature page slice 6 (R-arch-2): Verifier rounds count once in the feature's cost, with the flag on ───────────
+const AT = (minute) => `2026-10-18T0${minute}:00:00Z`;
+/** A Verifier round's ticket, as startVerifyCheck stores it: the request names the feature and the round. A halted
+ *  round's retry is a new ticket with the same round, and the old ticket keeps its pipeline. `usd` null: no pipeline
+ *  row. `pid` null: the ticket has not fired. */
+function verifyTicket(featureId, { ticket, pid = null, round = 1, status = 'done', usd = null, at = AT(1) }) {
+  if (pid && usd != null) seedPipelineRow({ id: pid, title: 'Verifier', status, totalCostUsd: usd });
+  getDb().prepare(`INSERT INTO scheduled_runs (id, status, pipeline_id, request, run_at, created_at, updated_at, title)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'Verifier')`).run(ticket, pid ? 'fired' : 'scheduled', pid,
+    JSON.stringify({ workflowId: 'wf_shape_verify', shape: { verify: { featureId, round } } }), at, at, at);
+}
+/** A 5-run feature (run 1 is the planning run), every run done at $2. */
+function fiveRunsAtTwo({ marked = true } = {}) {
+  n += 1;
+  const ids = [1, 2, 3, 4, 5].map((i) => `p-cost-${n}-${i}`);
+  seedPipelineRow({ id: ids[0], title: 'Shape it', status: 'done', totalCostUsd: 2 });
+  if (marked) getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run('{"smallRuns":true}', ids[0]);
+  const outline = { why: 'w', slices: [1, 2, 3, 4, 5].map((i) => ({ id: `s${i}`, title: `Slice ${i}`, goal: 'g', inScope: [],
+    outOfScope: [], acceptance: [], dependsOn: [], estimate: 'small' })) };
+  const { id } = createSliceFeature({ pipelineId: ids[0], projectDir: PROJECT, title: 'Five runs', outline, perspectives: [], workflowId: 'wf_shape' });
+  for (const i of [2, 3, 4, 5]) {
+    const t = getDb().prepare('SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ? AND idx = ?').get(id, i).ticket_id;
+    seedPipelineRow({ id: ids[i - 1], title: `Slice ${i}`, status: 'done', totalCostUsd: 2 });
+    getDb().prepare('UPDATE scheduled_runs SET status = \'fired\', pipeline_id = ? WHERE id = ?').run(ids[i - 1], t);
+  }
+  return { id, ids };
+}
+/** The requirement's example: round 1 failed at $0.50, and its retry (round 1 again) done at $1. */
+function elevenFifty() {
+  getDb().exec('DELETE FROM pipelines');
+  const f = fiveRunsAtTwo();
+  const failed = `p-vfail-${n}`;
+  const clean = `p-vdone-${n}`;
+  // The later ticket is inserted first: run order is the ticket's created_at, not the row order.
+  verifyTicket(f.id, { ticket: `t-vdone-${n}`, pid: clean, status: 'done', usd: 1, at: AT(2) });
+  verifyTicket(f.id, { ticket: `t-vfail-${n}`, pid: failed, status: 'error', usd: 0.5, at: AT(1) });
+  return { ...f, failed, clean };
+}
+const featureGroup = (id, flag = true) => withSmallRuns(flag, () => listRunGroups().find((x) => x.id === id));
+
+test('R-arch-2: 5 runs at $2, a Verifier round at $1 and a failed round at $0.50 give $11.50, each pipeline once', () => {
+  const f = elevenFifty();
+  // Never counted: a round that has not fired, and another feature's round.
+  verifyTicket(f.id, { ticket: `t-vwait-${n}`, round: 2, at: AT(3) });
+  verifyTicket('feat_other', { ticket: `t-vother-${n}`, pid: `p-vother-${n}`, usd: 9 });
+  const g = featureGroup(f.id);
+  assert.equal(g.cost.usd, 11.5);
+  assert.equal(Object.keys(g.cost.byPipeline).length, 7);
+  assert.deepEqual(g.cost.byPipeline, { ...Object.fromEntries(f.ids.map((id) => [id, 2])), [f.failed]: 0.5, [f.clean]: 1 });
+  assert.deepEqual(g.cost.checks, { [f.failed]: { round: 1, at: AT(1), status: 'error' }, [f.clean]: { round: 1, at: AT(2), status: 'done' } });
+  assert.equal(g.members.length, 5, 'a Verifier round is no member of the group');
+});
+
+test('R-arch-2: the same group reads $11.50 on the Cost tab (model and table) and on the Runs list group row', async () => {
+  const f = elevenFifty();
+  const g = featureGroup(f.id);
+  const { featureCostModel, renderFeatureCost } = await import('../ui/public/shape/feature-cost.mjs');
+  const { groupCostUsd, renderRunsList } = await import('../ui/public/runs-list.mjs');
+  const { JSDOM } = await import('jsdom');
+  const doc = new JSDOM('<!doctype html><body></body>').window.document;
+  const model = featureCostModel(g, groupCostUsd(g));
+  assert.equal(model.totalUsd, 11.5);
+  const priced = model.rows.filter((r) => r.usd != null);
+  assert.equal(priced.length, 7, 'five runs and two Verifier rounds');
+  assert.equal(Math.round(priced.reduce((a, r) => a + r.usd, 0) * 100) / 100, 11.5);
+  assert.match(renderFeatureCost(doc, model).querySelector('tfoot').textContent, /Total\s*\$11\.50/);
+  const history = f.ids.map((id) => ({ id, projectKey: 'k', title: id, status: 'done', run: { status: 'done' } }));
+  const groups = [{ id: g.id, groupKind: 'feature', title: g.title, smallRuns: true, cost: g.cost,
+    members: g.members.map((m) => ({ position: m.position, title: m.title, pipelineId: m.pipelineId, kind: 'hist', run: { status: 'done' } })) }];
+  const host = doc.createElement('div');
+  host.append(...renderRunsList(doc, buildRunsModel({ history, groups, now: NOW })));
+  assert.equal(host.querySelector(`.runs-item[data-row-key="chain:${g.id}"] > a.runs-row .runs-cost`).textContent, '$11.50');
+});
+
+test('R-arch-2: a re-planned feature\'s Verifier round counts once, in the newest feature\'s cost', () => {
+  getDb().exec('DELETE FROM pipelines');
+  const f = featureWithTwoDone();
+  const db = getDb();
+  db.prepare('UPDATE pipelines SET total_cost_usd = ? WHERE id = ?').run(1.5, f.s1);
+  db.prepare('UPDATE pipelines SET total_cost_usd = ? WHERE id = ?').run(0.75, f.s2);
+  const check = `p-vold-${n}`;
+  verifyTicket(f.id, { ticket: `t-vold-${n}`, pid: check, usd: 0.5 });
+  // A ticket whose pipeline row is gone adds nothing and no check.
+  verifyTicket(f.id, { ticket: `t-vgone-${n}`, pid: `p-vgone-${n}`, round: 2, at: AT(2) });
+  seedPipelineRow({ id: `p-replan-v-${n}`, title: 'Re-plan', status: 'done', totalCostUsd: 0.5 });
+  const { id: next } = createSliceFeature({ pipelineId: `p-replan-v-${n}`, projectDir: PROJECT, title: 'Run tags',
+    outline: OUTLINE, perspectives: [], workflowId: 'wf_shape', replaces: f.id });
+  const g = featureGroup(next);
+  assert.equal(g.cost.usd, 3.25, 'new planning run + the old round\'s two runs + its Verifier round');
+  assert.equal(g.cost.byPipeline[check], 0.5);
+  assert.deepEqual(Object.keys(g.cost.checks), [check]);
+});
+
+// Unchanged at checkpoint 217b540b4 (run-groups.mjs and stats.mjs match it on the tree this literal was captured on,
+// with `node tools/test.mjs test/run-groups.test.mjs`).
+test('unmarked feature: cost deep-equals the checkpoint 217b540b4 output, flag on or off, with no checks key', () => {
+  getDb().exec('DELETE FROM pipelines');
+  const f = featureWithTwoDone();
+  const db = getDb();
+  db.prepare('UPDATE pipelines SET total_cost_usd = ? WHERE id = ?').run(1.5, f.s1);
+  db.prepare('UPDATE pipelines SET total_cost_usd = ? WHERE id = ?').run(0.75, f.s2);
+  for (const flag of [true, false]) {
+    assert.deepEqual(featureGroup(f.id, flag).cost, { usd: 2.25, byPipeline: { [f.s1]: 1.5, [f.s2]: 0.75 } }, `flag ${flag}`);
+  }
+});
+
+// R-qa-1: with the flag off nothing changes for a small-runs feature either.
+test('flag off: a small-runs feature\'s group cost leaves the Verifier rounds out and has no checks key, as at checkpoint 217b540b4', () => {
+  const f = elevenFifty();
+  assert.deepEqual(featureGroup(f.id, false).cost, { usd: 10, byPipeline: Object.fromEntries(f.ids.map((id) => [id, 2])) });
+});
+
+// ── Slice 9 (R-po-4, D12): an unacknowledged Verifier note is the feature's hold ───────────────────────────────
+const NOTES_ONE = "Acknowledge the Verifier's note to ship";
+/** The feature's one Verifier check on record: `state`, `texts` as its findings, `acked` note ids. */
+function setNotedCheck(featureId, state, texts, acked = []) {
+  const db = getDb();
+  const outline = JSON.parse(db.prepare('SELECT outline FROM shape_features WHERE id = ?').get(featureId).outline);
+  const findings = texts.map((text, i) => ({ id: `note-${i + 1}`, text }));
+  const check = { round: 1, ticketId: null, pipelineId: null, head: null, headSha: null, state,
+    result: { held: ['R-po-1'], gaps: [], findings }, gapRuns: [], extra: 0, fixCycles: 1, at: '2026-11-27T10:00:00.000Z',
+    ...(acked.length ? { acks: Object.fromEntries(acked.map((id) => [id, { by: 'ann', at: '2026-11-27T14:02:00.000Z' }])) } : {}) };
+  db.prepare('UPDATE shape_features SET outline = ? WHERE id = ?').run(JSON.stringify({ ...outline, verify: { checks: [check] } }), featureId);
+}
+const confirmUx = (featureId) => setFeatureAcceptance(featureId, [{ id: 'R-ux-2', mark: 'met', role: 'design', by: 'ann', at: '2026-11-27T09:00:00.000Z' }]);
+
+test("s9: an unacknowledged note on a clean or accepted check is the group's hold, so it never reads ready", () => {
+  const f = confirmFeature();
+  confirmUx(f.id);
+  for (const state of ['clean', 'accepted']) {
+    setNotedCheck(f.id, state, ['the import test takes 40 s']);
+    assert.equal(groupOf(true, f.id).hold, NOTES_ONE, state);
+    assert.equal(shipHold(f.id), NOTES_ONE, state);
+  }
+  assert.equal('hold' in groupOf(false, f.id), false, 'flag off');
+  setNotedCheck(f.id, 'clean', ['a', 'b']);
+  assert.equal(groupOf(true, f.id).hold, "Acknowledge the Verifier's notes to ship");
+  setNotedCheck(f.id, 'clean', ['a', 'b'], ['note-1']);
+  assert.equal(groupOf(true, f.id).hold, NOTES_ONE, 'one still open');
+  setNotedCheck(f.id, 'clean', ['a', 'b'], ['note-1', 'note-2']);
+  assert.equal('hold' in groupOf(true, f.id), false, 'all acknowledged');
+});
+
+test('s9: the confirmation hold comes first, and a gaps or verifying check holds nothing for its notes', () => {
+  const f = confirmFeature();
+  setNotedCheck(f.id, 'clean', ['a']);
+  assert.equal(groupOf(true, f.id).hold, 'Needs your confirmation: R-ux-2');
+  confirmUx(f.id);
+  assert.equal(groupOf(true, f.id).hold, NOTES_ONE);
+  for (const state of ['gaps', 'verifying']) {
+    setNotedCheck(f.id, state, ['a']);
+    assert.equal(shipHold(f.id), null, state);
+  }
+});
+
+test("s9: an unmarked feature's group is the checkpoint's, with or without a noted check on record", () => {
+  const plain = confirmFeature({ marked: false });
+  const before = groupOf(true, plain.id);
+  assert.equal('hold' in before, false);
+  setNotedCheck(plain.id, 'clean', ['a']);
+  assert.deepEqual(groupOf(true, plain.id), before);
+});
+
+// ── Slice 11 (R-ux-4): Verifier rounds show inside their feature's group as check rows ──────────────────────────────
+/** The feature's stored Verifier checks. */
+function setChecks(featureId, checks) {
+  const db = getDb();
+  const outline = JSON.parse(db.prepare('SELECT outline FROM shape_features WHERE id = ?').get(featureId).outline);
+  db.prepare('UPDATE shape_features SET outline = ? WHERE id = ?').run(JSON.stringify({ ...outline, verify: { checks } }), featureId);
+}
+/** One stored check, as startVerifyCheck and recordVerifyResult write it. `gaps` null: no result on record. */
+const storedCheck = ({ round, ticketId = null, pipelineId = null, state = 'verifying', gaps = null }) => ({ round, ticketId, pipelineId,
+  head: null, headSha: null, state, gapRuns: [], extra: 0, fixCycles: 1, at: AT(0),
+  result: gaps === null ? null : { held: [], gaps: Array.from({ length: gaps }, (_, i) => ({ id: `R-po-${i + 1}`, why: 'missing', title: `Close R-po-${i + 1}` })) } });
+/** A Verifier round of feature `f`: its ticket and its pipeline row. */
+function verifierRound(f, { round, status, usd = 0.5, at = AT(round) }) {
+  const pipelineId = `p-s11v-${n}-${round}`;
+  const ticketId = `t-s11v-${n}-${round}`;
+  verifyTicket(f.id, { ticket: ticketId, pid: pipelineId, round, status, usd, at });
+  return { pipelineId, ticketId, round, at };
+}
+/** The server's group as app.js hands it to the list (runsGroupItem): its members, and each check as a `check` item. */
+const listItem = (g) => ({ id: g.id, groupKind: 'feature', title: g.title, cost: g.cost, ...(g.smallRuns ? { smallRuns: true } : {}),
+  members: g.members.map((m) => ({ position: m.position, title: m.title, pipelineId: m.pipelineId, kind: 'hist',
+    href: `#history/k/${m.pipelineId}`, run: { status: m.status } })),
+  ...(g.checks ? { checks: g.checks.map((c) => ({ kind: 'check', round: c.round, state: c.state, gaps: c.gaps, pipelineId: c.pipelineId,
+    runId: '', href: `#history/k/${c.pipelineId}`, cost: g.cost.byPipeline[c.pipelineId] })) } : {}) });
+/** The Runs list of one group, open, with a History row for every pipeline the group costs (its Verifier runs too). */
+function drawGroup(g) {
+  const history = Object.keys(g.cost.byPipeline).map((id) => {
+    const status = getDb().prepare('SELECT status FROM pipelines WHERE id = ?').get(id).status;
+    return { id, projectKey: 'k', title: id, status, run: { status } };
+  });
+  const model = buildRunsModel({ history, groups: [listItem(g)], toggled: new Map([[`chain:${g.id}`, true]]), now: NOW });
+  const doc = new JSDOM('<!doctype html><body></body>').window.document;
+  const host = doc.createElement('div');
+  host.append(...renderRunsList(doc, model));
+  const item = host.querySelector(`.runs-item[data-row-key="chain:${g.id}"]`);
+  const row = item.querySelector(':scope > a.runs-row');
+  return { model, host, item, row,
+    sub: () => row.querySelector('.runs-row-sub').textContent,
+    inside: () => [...item.querySelectorAll(':scope > .runs-members > .runs-item')].map((it) => (it.dataset.level === 'check'
+      ? it.querySelector(':scope > a.runs-row').dataset.line : it.querySelector(':scope > a.runs-row > .runs-row-title').textContent)),
+    alone: (pid) => host.querySelectorAll(`.runs-item[data-level="top"] > a.runs-row[data-pipeline-id="${pid}"]`).length,
+    ready: () => (item.textContent.match(/Ready to ship/g) || []).length,
+    inNeeds: () => !!model.sections.find((x) => x.id === 'needs')?.rows.some((r) => r.groupId === g.id) };
+}
+const MEMBER_TITLES = [1, 2, 3, 4, 5].map((i) => `${i} · Slice ${i}`);
+
+test("s11: the group lists runs 1–5, then 'Verifier · round 2 · 1 gap', and the Runs list has no standalone row for that round", () => {
+  getDb().exec('DELETE FROM pipelines');
+  const f = fiveRunsAtTwo();
+  const v = verifierRound(f, { round: 2, status: 'error' });
+  setChecks(f.id, [storedCheck({ ...v, state: 'gaps', gaps: 1 })]);
+  const g = featureGroup(f.id);
+  assert.equal(g.members.length, 5, 'a Verifier round is never a member');
+  assert.deepEqual(g.checks, [{ round: 2, pipelineId: v.pipelineId, at: v.at, state: 'failed', gaps: 1 }]);
+  const d = drawGroup(g);
+  assert.deepEqual(d.inside(), [...MEMBER_TITLES, 'Verifier · round 2 · 1 gap']);
+  assert.equal(d.alone(v.pipelineId), 0, 'no standalone row for the round');
+  assert.equal(d.host.querySelectorAll('.runs-item[data-level="top"]').length, 1, 'the group is the only top-level row');
+});
+
+test("s11: a failed round shows on the group row, and 'Ready to ship' occurs once in the group", () => {
+  getDb().exec('DELETE FROM pipelines');
+  const f = fiveRunsAtTwo();
+  const v2 = verifierRound(f, { round: 2, status: 'error' });
+  setChecks(f.id, [storedCheck({ ...v2, state: 'gaps', gaps: 1 })]);
+  const failed = drawGroup(featureGroup(f.id));
+  assert.equal(failed.sub(), 'Verifier round 2 failed · 1 gap');
+  assert.equal(failed.row.dataset.state, 'failed');
+  assert.ok(failed.inNeeds(), 'a failed round sits in Needs you');
+  assert.equal(failed.ready(), 0);
+  // The same feature once round 3 passed.
+  getDb().prepare("UPDATE pipelines SET status = 'done' WHERE id = ?").run(v2.pipelineId);
+  const v3 = verifierRound(f, { round: 3, status: 'done' });
+  setChecks(f.id, [storedCheck({ ...v2, state: 'gaps', gaps: 1 }), storedCheck({ ...v3, state: 'clean', gaps: 0 })]);
+  const passed = drawGroup(featureGroup(f.id));
+  assert.deepEqual(passed.inside().slice(5), ['Verifier · round 2 · 1 gap', 'Verifier · round 3 · passed']);
+  assert.equal(passed.ready(), 1, 'said once in the whole group');
+  assert.match(passed.row.textContent, /Ready to ship/, 'and on the group row');
+});
+
+test('s11: a checking, paused or asking newest round holds the group row', () => {
+  getDb().exec('DELETE FROM pipelines');
+  const f = fiveRunsAtTwo();
+  const v = verifierRound(f, { round: 3, status: 'running' });
+  setChecks(f.id, [storedCheck({ round: 3, ticketId: v.ticketId })]);   // before its settle the check names only its ticket
+  const stop = verifyStop({ gaps: [{ id: 'R-po-1', why: 'missing' }], round: 3 });
+  const overlays = {
+    'Verifier round 3 checking': null,
+    'Verifier round 3 paused': liveSliceFrom({ runId: 'r-v', status: 'paused' }),
+    'Verifier round 3 needs you · 1 gap': liveSliceFrom({ runId: 'r-v', status: 'running', pendingQuestion: { id: 'verify-3', kind: 'gate', stop } }),
+  };
+  for (const [line, overlay] of Object.entries(overlays)) {
+    const live = (pid) => (pid === v.pipelineId ? overlay : null);
+    const g = withSmallRuns(true, () => listRunGroups({ live })).find((x) => x.id === f.id);
+    const d = drawGroup(g);
+    assert.equal(d.sub(), line);
+    assert.equal(d.ready(), 0, line);
+    assert.equal(d.inNeeds(), line.includes('needs you'), `${line}: Needs you`);
+  }
+});
+
+test('s11: each round reads its state from the live run, then the run status, then the stored check', () => {
+  getDb().exec('DELETE FROM pipelines');
+  const f = fiveRunsAtTwo();
+  const v = verifierRound(f, { round: 2, status: 'done' });
+  const asking = (gaps) => liveSliceFrom({ runId: 'r-v', status: 'running', pendingQuestion: { id: 'verify-2', kind: 'gate',
+    stop: verifyStop({ gaps: Array.from({ length: gaps }, (_, i) => ({ id: `R-po-${i + 1}`, why: 'missing' })), round: 2 }) } });
+  const paused = liveSliceFrom({ runId: 'r-v', status: 'paused' });
+  // [pipeline status, stored check state, stored gap count, live overlay, expected state, expected gaps]
+  const table = [
+    ['done', 'gaps', 2, null, 'gaps', 2],
+    ['done', 'clean', 0, null, 'passed', 0],
+    ['done', 'accepted', 1, null, 'passed', 1],
+    ['running', 'verifying', null, null, 'verifying', null],
+    ['done', 'verifying', null, null, 'verifying', null],
+    ['paused', 'verifying', null, null, 'paused', null],
+    ['interrupted', 'verifying', null, null, 'paused', null],
+    ['running', 'verifying', null, paused, 'paused', null],
+    ['error', 'verifying', null, null, 'failed', null],
+    ['failed', 'verifying', null, null, 'failed', null],
+    ['error', 'gaps', 1, null, 'failed', 1],
+    ['stopped', 'verifying', null, null, 'stopped', null],
+    ['aborted', 'verifying', null, null, 'stopped', null],
+    ['running', 'verifying', null, asking(2), 'asking', 2],
+  ];
+  for (const [status, state, gaps, overlay, want, count] of table) {
+    getDb().prepare('UPDATE pipelines SET status = ? WHERE id = ?').run(status, v.pipelineId);
+    setChecks(f.id, [storedCheck({ ...v, state, gaps })]);
+    const live = (pid) => (pid === v.pipelineId ? overlay : null);
+    const g = withSmallRuns(true, () => listRunGroups({ live })).find((x) => x.id === f.id);
+    assert.deepEqual(g.checks, [{ round: 2, pipelineId: v.pipelineId, at: v.at, state: want, gaps: count }],
+      `${status} / ${state} / ${overlay ? overlay.status : 'no live run'}`);
+  }
+  // A malformed outline reads as no stored check: the run status alone decides, and nothing throws.
+  getDb().prepare("UPDATE pipelines SET status = 'error' WHERE id = ?").run(v.pipelineId);
+  setChecks(f.id, 'nope');
+  assert.deepEqual(featureGroup(f.id).checks, [{ round: 2, pipelineId: v.pipelineId, at: v.at, state: 'failed', gaps: null }]);
+});
+
+test('s11: a halted round retried as a fresh ticket lists both rounds, oldest first, and neither stands alone', () => {
+  const f = elevenFifty();
+  // The halted check was dropped for the retry: only the retry's check is on record.
+  setChecks(f.id, [storedCheck({ round: 1, ticketId: `t-vdone-${n}`, state: 'clean', gaps: 0 })]);
+  const g = featureGroup(f.id);
+  assert.deepEqual(g.checks, [
+    { round: 1, pipelineId: f.failed, at: AT(1), state: 'failed', gaps: null },
+    { round: 1, pipelineId: f.clean, at: AT(2), state: 'passed', gaps: 0 }]);
+  const d = drawGroup(g);
+  assert.deepEqual(d.inside(), [...MEMBER_TITLES, 'Verifier · round 1 · failed', 'Verifier · round 1 · passed']);
+  assert.deepEqual([d.alone(f.failed), d.alone(f.clean)], [0, 0]);
+});
+
+test("s11: a re-planned feature's group reads an earlier feature's round from that feature's stored check", () => {
+  getDb().exec('DELETE FROM pipelines');
+  const f = fiveRunsAtTwo();
+  const v = verifierRound(f, { round: 2, status: 'done' });
+  setChecks(f.id, [storedCheck({ ...v, state: 'gaps', gaps: 2 })]);
+  const origin = `p-s11replan-${n}`;
+  seedPipelineRow({ id: origin, title: 'Re-plan', status: 'done', totalCostUsd: 0.5 });
+  getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run('{"smallRuns":true}', origin);
+  const { id: next } = createSliceFeature({ pipelineId: origin, projectDir: PROJECT, title: 'Five runs', outline: OUTLINE,
+    perspectives: [], workflowId: 'wf_shape', replaces: f.id });
+  assert.deepEqual(featureGroup(next).checks, [{ round: 2, pipelineId: v.pipelineId, at: v.at, state: 'gaps', gaps: 2 }]);
+});
+
+// The literal was captured by running this seed through listRunGroups in a `git archive 217b540b4` copy (flag on and
+// off gave the same group); only the random feature and ticket ids are read back from the database.
+test("s11: an unmarked feature's group (members, planning, cost, keys) deep-equals the checkpoint 217b540b4 output, flag on or off", () => {
+  const ids = [1, 2, 3].map((i) => `p-um-${i}`);
+  seedPipelineRow({ id: ids[0], title: 'Shape it', status: 'done', totalCostUsd: 2 });
+  const outline = { why: 'w', slices: [1, 2, 3, 4, 5].map((i) => ({ id: `s${i}`, title: `Slice ${i}`, goal: 'g', inScope: [],
+    outOfScope: [], acceptance: [], dependsOn: [], estimate: 'small' })) };
+  const { id } = createSliceFeature({ pipelineId: ids[0], projectDir: PROJECT, title: 'Plain five', outline, perspectives: [], workflowId: 'wf_shape' });
+  const ticketId = (i) => getDb().prepare('SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ? AND idx = ?').get(id, i).ticket_id;
+  for (const [i, status, usd] of [[2, 'done', 1.5], [3, 'running', 0.75]]) {
+    seedPipelineRow({ id: ids[i - 1], title: `Slice ${i}`, status, totalCostUsd: usd });
+    getDb().prepare("UPDATE scheduled_runs SET status = 'fired', pipeline_id = ? WHERE id = ?").run(ids[i - 1], ticketId(i));
+  }
+  seedPipelineRow({ id: 'p-um-loose', title: 'Loose fix', status: 'done', totalCostUsd: 0.25 });
+  addToGroup({ groupId: id, pipelineId: 'p-um-loose' });
+  const row = (position, title, pipelineId, ticket, status, more = {}) => ({ position, title, pipelineId, ticketId: ticket, status,
+    pr: null, ticket: null, adhoc: false, after: null, ...more });
+  const waiting = (position, after) => row(position, `Slice ${position}`, null, ticketId(position), null,
+    { ticket: { id: ticketId(position), status: 'scheduled', runAt: null, after: true, held: false }, after });
+  const expected = { id, kind: 'feature', title: 'Plain five', projectKey: null, planning: null,
+    members: [row(1, 'Slice 1', ids[0], null, 'done'), row(2, 'Slice 2', ids[1], ticketId(2), 'done'),
+      row(3, 'Slice 3', ids[2], ticketId(3), 'running'), waiting(4, 3), waiting(5, 4),
+      row(6, 'Loose fix', 'p-um-loose', null, 'done', { adhoc: true })],
+    cost: { usd: 4.5, byPipeline: { [ids[0]]: 2, [ids[1]]: 1.5, [ids[2]]: 0.75, 'p-um-loose': 0.25 } } };
+  for (const flag of [true, false]) {
+    const g = featureGroup(id, flag);
+    assert.deepEqual(g, expected, `flag ${flag}`);
+    assert.equal('checks' in g, false, `flag ${flag}`);
+  }
+});
+
+test('s11: the $11.50 cost case is unchanged, and its rounds are check rows, not members', () => {
+  const f = elevenFifty();
+  const g = featureGroup(f.id);
+  assert.equal(g.cost.usd, 11.5);
+  assert.equal(Object.keys(g.cost.byPipeline).length, 7);
+  assert.deepEqual(g.cost.checks, { [f.failed]: { round: 1, at: AT(1), status: 'error' }, [f.clean]: { round: 1, at: AT(2), status: 'done' } });
+  assert.equal(g.members.length, 5);
+  assert.equal(g.checks?.length, 2);
+});
+
+test('s11: flag off: no checks key, and the Verifier run stays a standalone row', () => {
+  const f = elevenFifty();
+  const g = featureGroup(f.id, false);
+  assert.equal('checks' in g, false);
+  // Flag off the cost leaves the rounds out; the failed round is added here only so drawGroup gives it a History row.
+  const d = drawGroup({ ...g, cost: { ...g.cost, byPipeline: { ...g.cost.byPipeline, [f.failed]: 0.5 } } });
+  assert.equal(d.alone(f.failed), 1);
+  assert.equal(d.item.querySelector('.runs-item[data-level="check"]'), null);
+});
+
+// ── Slice 18 (D10): a failed Verifier round or an open confirmation outranks In review ───────────────────────────
+const OPEN = (number) => ({ url: `https://github.com/acme/web/pull/${number}`, number, state: 'OPEN', mergeable: 'MERGEABLE' });
+/** Three done runs, all in one open pull request. */
+const IN_REVIEW = Array.from({ length: 3 }, () => ({ status: 'done', endReached: true, pr: OPEN(9) }));
+const reviewed = (extra = {}, kind = 'feature') => groupModel({ kind, title: 'F', members: IN_REVIEW, ...extra }, { now: NOW });
+const newest = (state, gaps = null) => ({ round: 2, state, gaps });
+const WAITING = 'Needs your confirmation: R-ux-2';
+
+test('s18 groupModel: a failed newest round takes an In review feature, with each run\'s own PR or the group\'s One PR', () => {
+  assert.deepEqual([reviewed().state, reviewed().line], ['in-review', 'In review · 1 PR'], 'the control');
+  for (const [name, extra] of [
+    ['a PR per run', { members: [1, 2, 3].map((n) => ({ status: 'done', endReached: true, pr: OPEN(n) })) }],
+    ['one shared PR', {}],
+    ['the group\'s One PR', { pr: OPEN(9) }],
+    ['over a confirmation hold', { hold: WAITING }],
+  ]) {
+    const m = reviewed({ checks: [newest('failed', 1)], ...extra });
+    assert.deepEqual([m.state, m.line, m.word, m.dot, m.symbol], ['failed', 'Verifier round 2 failed · 1 gap', 'Failed', 'red', 'alert'], name);
+    assert.deepEqual(m.actions, [], name);
+    assert.equal('hold' in m, false, name);
+    assert.deepEqual(m.check, { round: 2, state: 'failed', gaps: 1 }, name);
+  }
+});
+
+test('s18 groupModel: an open confirmation is the In review feature\'s line, needs you, and keeps Open PR', () => {
+  for (const [name, extra] of [
+    ['no round', {}],
+    ['a passed round', { checks: [newest('passed', 0)] }],
+    ['the group\'s One PR', { pr: OPEN(9) }],
+  ]) {
+    const m = reviewed({ hold: WAITING, ...extra });
+    assert.deepEqual([m.state, m.line, m.hold], ['in-review', WAITING, WAITING], name);
+    assert.deepEqual([m.word, m.dot, m.symbol], ['Needs you', 'amber', null], name);
+    assert.deepEqual(m.actions, ['open-pr'], name);
+    assert.equal('check' in m, false, name);
+  }
+});
+
+test('s18 groupModel: other rounds, other holds and a chain keep the In review result', () => {
+  const base = reviewed();
+  for (const state of ['passed', 'gaps', 'asking', 'verifying', 'paused', 'stopped']) {
+    assert.deepEqual(reviewed({ checks: [newest(state, 1)] }), base, state);
+  }
+  assert.deepEqual(reviewed({ checks: [{ ...newest('failed', 1), round: 1 }, newest('passed', 0)] }), base, 'only the newest round counts');
+  for (const hold of ["Acknowledge the Verifier's note to ship", 'R-ops-1 is owned by no run and confirmed by no person']) {
+    assert.deepEqual(reviewed({ hold }), base, hold);
+  }
+  const chain = reviewed({}, 'chain');
+  for (const extra of [{ checks: [newest('failed', 1)] }, { hold: WAITING }]) assert.deepEqual(reviewed(extra, 'chain'), chain, 'a chain');
+});
+
+test('s18: a stored feature with every run in an open PR reads the failed round or the confirmation, and In review with the flag off', () => {
+  const shipped = (f) => {
+    for (const pid of f.ids) getDb().prepare('UPDATE pipelines SET pr_url = ?, pr_number = ?, pr_state = ? WHERE id = ?')
+      .run('https://github.com/acme/web/pull/31', 31, 'OPEN', pid);
+    return f;
+  };
+  const modelOf = (g) => groupModel({ kind: 'feature', title: g.title, members: g.members.map((x) => ({ status: x.status, pr: x.pr })),
+    ...(g.hold ? { hold: g.hold } : {}), ...(g.checks ? { checks: g.checks } : {}) }, { now: NOW });
+  const held = shipped(confirmFeature());
+  const failed = shipped(confirmFeature());
+  const round2 = verifierRound(failed, { round: 2, status: 'error' });
+  setChecks(failed.id, [storedCheck({ ...round2, state: 'failed', gaps: 1 })]);
+
+  assert.equal(modelOf(groupOf(true, held.id)).line, WAITING);
+  assert.equal(modelOf(groupOf(true, failed.id)).line, 'Verifier round 2 failed · 1 gap');
+  for (const f of [held, failed]) {
+    const g = groupOf(false, f.id);
+    assert.deepEqual(['hold' in g, 'checks' in g], [false, false], 'flag off');
+    assert.deepEqual([modelOf(g).state, modelOf(g).line], ['in-review', 'In review · 1 PR'], 'flag off');
+  }
 });

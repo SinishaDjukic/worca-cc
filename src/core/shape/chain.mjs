@@ -3,19 +3,22 @@
 // source and the one-PR ship check. Imports features.mjs one way; features.mjs never imports this module (verifier.mjs,
 // which features.mjs imports, calls back into latestFinishedSlice at runtime only).
 import { getDb } from '../db.mjs';
-import { previousBranchesOf } from '../scheduler.mjs';
-import { isAncestor } from '../worktree.mjs';
+import { previousBranchesOf, unfireTicket } from '../scheduler.mjs';
+import { isAncestor, runGitCapture, commitOf } from '../worktree.mjs';
+import { checkCombine, mergeBaseInto, baseMovedAudit } from '../git-sync.mjs';
 import { shaperSmallRunsOn, smallRunsOfFeature } from './small-runs.mjs';
-import { SHIP_LOCK, shipLocked } from './ship-lock.mjs';
+import { SHIP_LOCK, prCreating, shipLocked } from './ship-lock.mjs';
 import { roundOrigin } from './rounds.mjs';
-import { SMALL_RUNS_SHIP } from '../../shared/shape/ship-ledger.mjs';
-import { sliceOfTicket, sliceGateState, featureBase, featureRootSource, busySliceOf, featureOfPipeline, currentFeatureId, finishedSlices } from './features.mjs';
+import { LEGACY_PER_RUN_REASON, openPrReason } from '../../shared/shape/ship-ledger.mjs';
+import { sliceOfTicket, sliceGateState, featureBase, featureRootSource, featureOfPipeline, currentFeatureId, finishedSlices,
+  dependencyBranchesOf, setClashHold, clearClashHold, featureThread } from './features.mjs';
 
 import { recordSettledFigures as recordFigures } from './measure.mjs';
 import { verifyAfterSettled, verifyCheckOfPipeline } from './verifier.mjs';
 export { createHeldStops } from './held-stops.mjs';
+export { heldStopTurn } from './features.mjs';
 export { recordShipCommit, shipCover, shipStopped } from './verifier.mjs';
-export { SHIPPING, featureShipping } from './ship-lock.mjs';
+export { SHIPPING, featureShipping, prCreateStarted } from './ship-lock.mjs';
 
 /**
  * afterRunSettled's hook (D17): the Verifier first (small runs C5: a check may start, or a Verifier run's result is
@@ -33,21 +36,32 @@ export function featureOfAnyPipeline(pipelineId) {
   return featureOfPipeline(pipelineId) || verifyCheckOfPipeline(pipelineId);
 }
 
+/**
+ * Slice 18 (D4): where a gap stop of `pipelineId`'s feature is answered, read at send time: the newest feature of a
+ * Re-plan chain and whether a chat follows it (as the feature view's `hasChat`). Only for a marked feature with
+ * shaperSmallRuns on; otherwise null. Read-only. → {featureId, hasChat} | null
+ */
+export function featureAnswerPlace(pipelineId) {
+  if (!pipelineId || !shaperSmallRunsOn()) return null;
+  const at = featureOfAnyPipeline(pipelineId);
+  if (!at) return null;
+  const featureId = currentFeatureId(at.featureId);
+  if (!smallRunsOfFeature(featureId)) return null;
+  return { featureId, hasChat: featureThread(featureId) !== null };
+}
+
+/** Slice 18 (D7): the chat modules' `whereToAnswer(runId)`, over the server's live runs Map (run id → its pipeline id;
+ *  an unknown run id is read as a pipeline id). A throw is null, so the chat texts keep today's words. */
+export function whereToAnswerOf(runs) {
+  return (runId) => {
+    try { return featureAnswerPlace(runs.get(runId)?.pipelineId || runId); } catch { return null; }
+  };
+}
+
 /** The refusal of a round of `pipelineId` while its feature is shipping (the Ship lock), or null. */
 export function roundWhileShipping(pipelineId) {
   const at = pipelineId ? featureOfPipeline(roundOrigin(pipelineId)) : null;
   return at && shipLocked(currentFeatureId(at.featureId)) ? SHIP_LOCK : null;
-}
-
-/**
- * Small runs C3 (D9): whether stopped run `index` of the feature may go on now. Another slice going holds it (one slice
- * of a feature at a time); another run whose answer is held does not, so two held answers never wait on each other and
- * are delivered one at a time. → {due:true} | {due:false, after}
- */
-export function heldStopTurn(featureId, index, { live = () => null, now = Date.now(), isLive = null } = {}) {
-  const open = (pid) => { const l = live(pid); return l && l.stop && l.stop.held ? { ...l, stop: { ...l.stop, held: false } } : l; };
-  const busy = busySliceOf(featureId, { exclude: index, live: open, now, isLive });
-  return busy ? { due: false, after: busy.index } : { due: true };
 }
 
 /**
@@ -123,6 +137,256 @@ export function sliceFireStart(ticket, body, { isLive, live } = {}, deps = {}) {
   return { own, refusal: null };
 }
 
+/** "8", "8 and 9", "4, 6 and 8". */
+const andList = (items) => (items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`);
+/** "runs 8 and 9" (ascending, each once); "run 8" alone. */
+const runsText = (runs) => {
+  const list = [...new Set(runs)].sort((a, b) => a - b);
+  return `${list.length === 1 ? 'run' : 'runs'} ${andList(list)}`;
+};
+const CLASH_FILES_NAMED = 3;
+
+/** D8: why a run is held: the runs whose work clashes, ascending, and at most 3 of the files they clash in, then how
+ *  many more (`fileCount`, checkCombine's real count when its list is capped). Pure.
+ *  → 'runs 8 and 9 clash in src/a.mjs' | 'runs 8 and 9 clash in a, b, c and 2 more files' */
+export function clashReason({ runs, files, fileCount = files.length }) {
+  const named = files.slice(0, CLASH_FILES_NAMED);
+  const more = Math.max(0, fileCount - named.length);
+  const where = more ? `${named.join(', ')} and ${more} more ${more === 1 ? 'file' : 'files'}` : andList(named);
+  return `${runsText(runs)} clash in ${where}`;
+}
+
+/** The dependency branches of `found` that `start` lacks (not it, and not an ancestor of it), each once, in order. */
+async function missingFrom(dir, start, found, ancestor) {
+  const missing = [];
+  for (const d of found) {
+    if (d.branch === start || missing.some((m) => m.branch === d.branch)) continue;
+    if (!(await ancestor(dir, `refs/heads/${d.branch}`, `refs/heads/${start}`, { timeout: 10_000 }))) missing.push(d);
+  }
+  return missing;
+}
+
+/**
+ * The one combine verdict of the gate and the harness (D8): checkCombine over `start.branch` then each missing branch.
+ * Run numbers are the card's (slice indices); `start.index` may be null (the feature base). Writes no ref.
+ * → {status:'clean', check} | {status:'clash', reason, runs, files}
+ *   | {status:'no-branch', error} | {status:'error', error, transient}
+ */
+export async function combineVerdict(dir, start, missing, combine) {
+  const indexOf = new Map(missing.map((d) => [d.branch, d.index]));
+  if (Number.isInteger(start.index)) indexOf.set(start.branch, start.index);
+  const runsOf = (list) => list.map((b) => indexOf.get(b)).filter(Number.isInteger);
+  const branches = [start.branch, ...missing.map((m) => m.branch)];
+  const c = await combine(dir, { branches });
+  if (c.status === 'clean') return { status: 'clean', check: c };
+  if (c.status === 'conflicts') {
+    // Only the runs that clash: those that conflict with `branch` alone; none alone → the clash needs the whole fold.
+    const alone = [];
+    for (const w of c.with) {
+      if ((await combine(dir, { branches: [w, c.branch] })).status === 'conflicts') alone.push(w);
+    }
+    const runs = runsOf([c.branch, ...(alone.length ? alone : c.with)]);
+    return { status: 'clash', reason: clashReason({ runs, files: c.files, fileCount: c.fileCount }), runs, files: c.files };
+  }
+  if (c.status === 'no-branch') return { status: 'no-branch', error: `branch ${c.branch} no longer exists` };
+  return { status: 'error', error: `could not combine the work of ${runsText(runsOf(branches))}: ${c.error}`,
+    transient: c.kind === 'failed' || c.kind === 'timeout' };
+}
+
+/** A pipeline's branch record (`pipelines.branch`, parsed), or null. */
+function branchRecordOf(pipelineId) {
+  const row = getDb().prepare('SELECT branch FROM pipelines WHERE id = ?').get(String(pipelineId));
+  if (!row || !row.branch) return null;
+  const b = JSON.parse(row.branch);
+  return b && typeof b === 'object' ? b : null;
+}
+
+/** Slice 3 (D5): the branch a run started from at fire time: `sourceFrom` (kept once it took work in) else `source`.
+ *  `deps.recordOf` is the test seam. → string | null; never throws. */
+export function fireSourceOf(pipelineId, deps = {}) {
+  try {
+    const rec = (deps.recordOf || branchRecordOf)(pipelineId);
+    const s = rec ? (rec.sourceFrom ?? rec.source) : null;
+    return typeof s === 'string' && s ? s : null;
+  } catch { return null; }
+}
+
+/** The finished runs of `featureId` but `exclude`, in finish order, each with its merge-back record (`prev`). */
+const finishedRunsOf = (featureId, exclude) => finishedSlices(featureId, { exclude }).map((r) => ({ ...r, prev: previousBranchesOf(r.pipelineId) }));
+/** The first of `found` (finishedRunsOf) still merging its work back, or undefined: the one "still merging back" rule. */
+const pendingRunOf = (found) => found.find((r) => r.prev && r.prev.pending);
+
+/** Slice 1 (A1, D3): the run number of the first finished run of `featureId` (but `exclude`) still merging its work
+ *  back, or null. Read-only; never throws. */
+export function mergingBackSliceOf(featureId, { exclude = null } = {}) {
+  try {
+    const pending = pendingRunOf(finishedRunsOf(featureId, exclude));
+    return pending ? pending.index : null;
+  } catch { return null; }
+}
+
+/**
+ * Slice 3 (D1, D5, D6): what a run that waited (at a stop, or paused and resumed) must take in before it goes on: every
+ * finished run of the feature whose work is not in `branch`, whatever base it started from, in finish order, and
+ * whether they combine with it. A run still merging back is a wait; a run whose branch is gone is left out (`skipped`).
+ * A run with no recorded fire-time base takes in nothing. Writes no ref; never throws.
+ * `deps` = { checkCombine, isAncestor, resolves(dir, ref), recordOf(pipelineId) } seams.
+ * → {status:'none', skipped} | {status:'wait', after} | {status:'clean', missing, check, skipped}
+ *   | {status:'clash', reason, runs, files, missing} | {status:'error', error}   (a clash's `missing`: the harness names
+ *   the clashing branch in its audit line)
+ */
+export async function takeInVerdict(dir, { featureId, pipelineId, branch }, deps = {}) {
+  try {
+    if (!fireSourceOf(pipelineId, deps)) return { status: 'none', skipped: [] };
+    const found = finishedRunsOf(featureId, pipelineId);
+    const pending = pendingRunOf(found);
+    if (pending) return { status: 'wait', after: pending.index };
+    const resolves = deps.resolves || (async (d, ref) => !!(await commitOf(d, ref, { timeout: 10_000 })));
+    const skipped = [];
+    const kept = [];
+    for (const r of found) {
+      const b = r.prev && r.prev.sourceBranch;
+      if (!b) { skipped.push({ index: r.index, branch: null }); continue; }
+      if (!(await resolves(dir, `refs/heads/${b}`))) { skipped.push({ index: r.index, branch: b }); continue; }
+      kept.push({ index: r.index, branch: b, pipelineId: r.pipelineId });
+    }
+    const missing = await missingFrom(dir, branch, kept, deps.isAncestor || isAncestor);
+    if (!missing.length) return { status: 'none', skipped };
+    const index = featureOfPipeline(pipelineId)?.idx ?? null;
+    const v = await combineVerdict(dir, { branch, index }, missing, deps.checkCombine || checkCombine);
+    if (v.status === 'clean') return { status: 'clean', missing, check: v.check, skipped };
+    if (v.status === 'clash') return { ...v, missing };
+    return { status: 'error', error: v.error };
+  } catch (err) {
+    return { status: 'error', error: err && err.message ? err.message : String(err) };
+  }
+}
+
+/** Slice 3 (R-po-6, D5): the audit line of a take-in clash, the one text both the answer's take-in and the resume check
+ *  write: the first `missing` branch whose run clashes, and the clash's file count. `clash` = takeInVerdict's clash.
+ *  → string | null (no clashing missing branch); never throws. */
+export function takeInClashAudit(clash, branch) {
+  try {
+    const c = clash && Array.isArray(clash.missing) && Array.isArray(clash.runs)
+      ? clash.missing.find((d) => clash.runs.includes(d.index)) : null;
+    return c ? baseMovedAudit(c.branch, branch, { status: 'conflicts', files: clash.files || [] }) : null;
+  } catch { return null; }
+}
+
+/** Slice 3 (R-po-6, D3): a paused run's take-in verdict before its resume starts, under the gate of takesInBeforeAnswer:
+ *  flag on, a marked feature, a slice run, a feature branch and not on its source branch (a workspace is the caller's
+ *  to rule out). Otherwise {status:'none', skipped:[]} with no git call. `deps` = takeInVerdict's seams.
+ *  → a takeInVerdict result, with `branch` (the run's feature branch) added; never throws. */
+export async function resumeTakeInVerdict(dir, pipelineId, deps = {}) {
+  const none = { status: 'none', skipped: [] };
+  try {
+    if (!shaperSmallRunsOn(deps)) return none;
+    const at = featureOfPipeline(pipelineId);
+    if (!at || !Number.isInteger(at.idx) || !smallRunsOfFeature(at.featureId)) return none;
+    const rec = (deps.recordOf || branchRecordOf)(pipelineId);
+    if (!rec || typeof rec.feature !== 'string' || !rec.feature || rec.sameAsSource === true) return none;
+    const v = await takeInVerdict(dir, { featureId: at.featureId, pipelineId, branch: rec.feature }, deps);
+    return { ...v, branch: rec.feature };
+  } catch (err) {
+    return { status: 'error', error: err && err.message ? err.message : String(err) };
+  }
+}
+
+/**
+ * Small runs (D2, D8): fire-time check that a slice run can start with the work of every run it builds on. The start
+ * stays `own.sourceBranch` (D1); the dependency branches it lacks are merged on top by the harness
+ * (combineDependencies). Writes no ref (isAncestor and checkCombine only). null = start as today (flag off, unmarked
+ * feature, workspace ticket, no start branch, nothing to combine, a clean combine); a clash sets the ticket's clash
+ * hold; any other answer clears it. `deps` = { flagEnabled, checkCombine, isAncestor } seams.
+ * → null | {ok:false, hold:true, error} | {ok:false, error, transient}
+ */
+export async function sliceCombineGate(ticket, own, deps = {}) {
+  if (!shaperSmallRunsOn(deps)) return null;
+  const at = activeSlice(ticket);
+  if (!at || !smallRunsOfFeature(at.featureId)) return null;
+  if (!own || own.pending || !own.sourceBranch || ticket.workspaceId) return null;
+  const done = (res) => { clearClashHold(ticket.id); return res; };
+  const found = dependencyBranchesOf(at.featureId, at.index);
+  if (found.pending) return done({ ok: false, error: 'the run before it is still merging its work back', transient: true });
+  const dir = ticket.projectDir;
+  const missing = await missingFrom(dir, own.sourceBranch, found.branches, deps.isAncestor || isAncestor);
+  if (!missing.length) return done(null);
+  const index = found.branches.find((d) => d.branch === own.sourceBranch)?.index
+    ?? (own.pipelineId ? finishedSlices(at.featureId).find((s) => s.pipelineId === own.pipelineId)?.index : null);
+  const v = await combineVerdict(dir, { branch: own.sourceBranch, index }, missing, deps.checkCombine || checkCombine);
+  if (v.status === 'clean') return done(null);
+  if (v.status === 'clash') {
+    setClashHold(ticket.id, { reason: v.reason, runs: v.runs, files: v.files, at: Date.now() });
+    return { ok: false, hold: true, error: v.reason };
+  }
+  return done({ ok: false, error: v.error, transient: v.status === 'error' && v.transient });
+}
+
+/**
+ * Small runs (D3, D10): the harness's half. Re-checks the combine on the run's fresh branch `branch` (it started from
+ * `source`) and, when clean, merges each missing dependency into it from its local SHA (the check's `heads`), in the
+ * check's order. Throws before writing anything for a pending dependency, a clash (its reason) or a check error; a
+ * merge failure puts the branch back at its start and throws with its `kind`. `deps` = { checkCombine, mergeBaseInto, isAncestor }.
+ * → null (nothing missing) | {tip, merged: Array<{index, branch}>}
+ */
+export async function combineDependencies(dir, { featureId, index, branch, source }, deps = {}) {
+  const found = dependencyBranchesOf(featureId, index);
+  if (found.pending) throw new Error('the run before it is still merging its work back');
+  const missing = await missingFrom(dir, branch, found.branches, deps.isAncestor || isAncestor);
+  if (!missing.length) return null;
+  const start = found.branches.find((d) => d.branch === source)?.index
+    ?? finishedSlices(featureId).find((s) => previousBranchesOf(s.pipelineId)?.sourceBranch === source)?.index ?? null;
+  const v = await combineVerdict(dir, { branch, index: start }, missing, deps.checkCombine || checkCombine);
+  if (v.status === 'clash') {
+    throw Object.assign(new Error(v.reason), { code: 'DEPENDENCY_CLASH', clash: { reason: v.reason, runs: v.runs, files: v.files } });
+  }
+  if (v.status !== 'clean') throw new Error(v.error);
+  const merge = deps.mergeBaseInto || mergeBaseInto;
+  const begin = v.check.heads[0];
+  let tip = begin;
+  let at = null;                                   // the checkout an earlier merge ran in
+  for (const [i, d] of missing.entries()) {
+    const r = await merge(dir, { feature: branch, baseSha: v.check.heads[i + 1], headSha: tip, baseRef: d.branch, runIdentity: true });
+    if (!r.ok) {
+      // Never leave a partial combine: put the branch back at its start.
+      if (tip !== begin) {
+        await (at ? runGitCapture(at, ['reset', '-q', '--hard', begin])
+          : runGitCapture(dir, ['update-ref', `refs/heads/${branch}`, begin, tip])).catch(() => {});
+      }
+      throw Object.assign(new Error(`could not merge the work of run ${d.index} (\`${d.branch}\`): ${r.error || r.kind}`), { kind: r.kind });
+    }
+    tip = r.to;
+    at = r.path || at;
+  }
+  return { tip, merged: missing.map(({ index: k, branch: b }) => ({ index: k, branch: b })) };
+}
+
+/**
+ * Small runs (A3): a clash `combineDependencies` found as fired run `pipelineId` set up becomes the same hold the
+ * fire-time gate sets: the ticket goes back to scheduled (unfireTicket's compare-and-set) and gets the clash hold.
+ * null, writing nothing, for the flag off, a ticket of no active slice of a marked feature, no `clash` or a lost
+ * compare-and-set (a Start now already fired it again). Never throws. → {held:true, featureId} | null
+ */
+export function holdAfterSetupClash({ ticketId, pipelineId, clash } = {}, { now = Date.now() } = {}) {
+  try {
+    if (!shaperSmallRunsOn() || !clash || !ticketId || !pipelineId) return null;
+    const at = activeSlice({ id: ticketId });
+    if (!at || !smallRunsOfFeature(at.featureId)) return null;
+    if (!unfireTicket(ticketId, { pipelineId, now })) return null;
+    setClashHold(ticketId, { reason: clash.reason, runs: clash.runs, files: clash.files, at: now });
+    return { held: true, featureId: at.featureId };
+  } catch (e) {
+    console.error(`[worca-ui] setup clash not held: ${e?.message || e}`);
+    return null;
+  }
+}
+
+/** The audit line of a combine: "Combined the work of run 9 (`feat/run-9`) into `feat/run-10` before the first agent." */
+export function combinedAudit(merged, branch) {
+  const what = merged.map((d) => `${d.index} (\`${d.branch}\`)`);
+  return `Combined the work of ${merged.length === 1 ? 'run' : 'runs'} ${andList(what)} into \`${branch}\` before the first agent.`;
+}
+
 /**
  * D11: the first done slice whose branch tip cannot be proven to be in `headBranch` (the branch one PR would ship), or
  * null. `rows` = the done slices ({index, pipelineId}); a slice's branch is its work branch (previousBranchesOf). A
@@ -144,22 +408,46 @@ export async function headMissingSlice(dir, headBranch, rows, deps = {}) {
 }
 
 /**
- * shipFeatureNow's one-PR refusals, in order (a marked feature: STACKED_ONLY for one, the latest finished head for stacked): a slice that already has a PR (dev's HAS_SLICE_PR, flag on or off), then
- * (flag on) the latest finished slice's branch must hold every done slice's work. `ctxOf(head)` = shipCtxOf for that
- * head; its error refuses too (fail-closed). Read-only. → {head, refusal: {status, body} | null}
+ * The One ship's last look, right before the one PR opens: a run whose own Create PR is in flight (prCreating), or that
+ * gained a PR the ship's view did not have (`readPr(pipelineId)` = the stored PR), refuses HAS_SLICE_PR, with the words
+ * oneShipCheck gives. That PR would otherwise stay open while the one PR takes its row. → {status, body} | null
+ */
+export function oneShipRaced(featureId, view, readPr) {
+  const s = view.slices.find((x) => {
+    if (!x.pipelineId) return false;
+    if (prCreating(x.pipelineId)) return true;
+    const pr = readPr(x.pipelineId);
+    return !!(pr && pr.url && pr.state !== 'CLOSED' && pr.url !== x.pr?.url);
+  });
+  if (!s) return null;
+  const pr = readPr(s.pipelineId);
+  const fresh = pr && pr.url && pr.url !== s.pr?.url ? pr : null;
+  return { status: 409, body: { code: 'HAS_SLICE_PR', error: smallRunsOfFeature(featureId)
+    ? openPrReason({ index: s.index, pr: fresh }) : 'a run in this feature already has a PR: create one PR per run' } };
+}
+
+/**
+ * shipFeatureNow's one-PR refusals, in order: a slice that already has a PR (HAS_SLICE_PR), then (flag on) the latest
+ * finished slice's branch must hold every done slice's work. A marked feature: stacked takes the latest finished head
+ * and is never refused; One is refused STACKED_ONLY with the flag off, and with it on its HAS_SLICE_PR names the first
+ * run that owns a PR (openPrReason, the words the Ship dialog shows). `ctxOf(head)` = shipCtxOf for that head; its
+ * error refuses too (fail-closed). Read-only. → {head, refusal: {status, body} | null}
  */
 export async function oneShipCheck(featureId, mode, view, ctxOf, deps = {}) {
-  // Feature D1 (D5): a marked feature (its marker, whatever the flag says) ships stacked only, from its latest finished
-  // run's branch: the changelog and the push land there.
+  const ownsPr = (s) => s.pr && s.pr.url && s.pr.state !== 'CLOSED' && !s.pr.draft;
   if (smallRunsOfFeature(featureId)) {
-    return mode === 'one' ? { head: null, refusal: { status: 409, body: { code: 'STACKED_ONLY', error: SMALL_RUNS_SHIP } } }
-      : { head: latestFinishedSlice(featureId)?.pipelineId || null, refusal: null };
+    // Feature D1: stacked ships from the latest finished run's branch, where the changelog and the push land.
+    if (mode !== 'one') return { head: latestFinishedSlice(featureId)?.pipelineId || null, refusal: null };
+    if (!shaperSmallRunsOn(deps)) return { head: null, refusal: { status: 409, body: { code: 'STACKED_ONLY', error: LEGACY_PER_RUN_REASON } } };
+    const owner = view.slices.find(ownsPr);
+    if (owner) return { head: null, refusal: { status: 409, body: { code: 'HAS_SLICE_PR', error: openPrReason({ index: owner.index, pr: owner.pr }) } } };
+  } else {
+    if (mode !== 'one') return { head: null, refusal: null };
+    if (view.slices.some(ownsPr)) {
+      return { head: null, refusal: { status: 409, body: { code: 'HAS_SLICE_PR', error: 'a run in this feature already has a PR: create one PR per run' } } };
+    }
+    if (!shaperSmallRunsOn(deps)) return { head: null, refusal: null };
   }
-  if (mode !== 'one') return { head: null, refusal: null };
-  if (view.slices.some((s) => s.pr && s.pr.url && s.pr.state !== 'CLOSED' && !s.pr.draft)) {
-    return { head: null, refusal: { status: 409, body: { code: 'HAS_SLICE_PR', error: 'a run in this feature already has a PR: create one PR per run' } } };
-  }
-  if (!shaperSmallRunsOn(deps)) return { head: null, refusal: null };
   const head = latestFinishedSlice(featureId)?.pipelineId || null;
   if (!head) return { head: null, refusal: null };
   const ctx = ctxOf(head);

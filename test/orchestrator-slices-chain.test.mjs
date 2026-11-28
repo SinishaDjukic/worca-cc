@@ -243,8 +243,9 @@ const filesOf = async (pid) => { const r = await readRunResultsById(pid); return
 let worldSeq = 0;
 /** A 4-run feature in a real repo: run 1 done on `main`, run 2 a mock wf_shape run paused at its plan ask with a commit of
  *  its own (`own.txt`), runs 3 and 4 finished by hand on stacked branches from `main` (`s3.txt`, `s4.txt`; run 4 also
- *  edits `clash.txt` when `clash`). */
-async function pausedSliceWorld(tag, { clash = false } = {}) {
+ *  edits `clash.txt` when `clash`). `marked` makes it a small-runs feature (the origin run carries the marker), whose
+ *  run 2 waits at its plan stop. */
+async function pausedSliceWorld(tag, { clash = false, marked = false } = {}) {
   const dir = gitDir(tag);
   execSync('git branch -m main && git config user.email t@t && git config user.name t && git config commit.gpgsign false', { cwd: dir });
   writeFileSync(join(dir, 'clash.txt'), 'base\n');
@@ -256,10 +257,13 @@ async function pausedSliceWorld(tag, { clash = false } = {}) {
   seedPipelineRow({ id: origin, projectKey: key, status: 'done', title: 'Run 1', branch: { source: 'main', feature: 'main' } });
   const outline = { why: 'w', slices: [1, 2, 3, 4].map((i) => ({ id: `s${i}`, title: `Slice ${i}`, goal: `g${i}`, inScope: [], outOfScope: [],
     acceptance: [], dependsOn: [], estimate: 'S' })) };
-  const f = createSliceFeature({ pipelineId: origin, projectDir: dir, title: 'Charts', outline, perspectives: ['product'], workflowId: 'wf_shape', base: { mock: true } });
+  const f = createSliceFeature({ pipelineId: origin, projectDir: dir, title: 'Charts', outline, perspectives: ['product'], workflowId: 'wf_shape', base: { mock: true },
+    ...(marked ? { smallRuns: true, care: { position: 'lean', chosenBy: 'person', worcaPick: 'balanced' } } : {}) });
+  if (marked) getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), origin);
   const ticketOf = (k) => getDb().prepare('SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ? AND idx = ?').get(f.id, k).ticket_id;
   const two = startRun({ projectDir: dir, prompt: 'slice 2', shape: { perspectives: ['product'], slices: 'off', slice: { feature: f.id, index: 2, total: 4, outline } },
     branch: { source: 'main' } }, { hold: () => true });
+  if (marked) continueGates(two.orch);
   let ended = null;
   two.done.then((x) => { ended = x; });
   await waitFor(() => ended || (two.orch.getState().id && two.asks.some((q) => q.kind === 'plan')));
@@ -288,6 +292,10 @@ async function pausedSliceWorld(tag, { clash = false } = {}) {
   const s3 = later(3, 'main');
   const s4 = later(4, s3);
   return { dir, f, pid, wt, feature, own, s3, s4 };
+}
+/** A marked run's exhausted review loop is a stop on a gate ask: let it go on. */
+function continueGates(orch) {
+  orch.on('question', (q) => { if (q.kind === 'gate') setImmediate(() => orch.answer(q.id, { decision: 'continue' })); });
 }
 /** Resume run 2 from its saved row (a fresh orchestrator, as the server's resumeRun builds one). */
 function resumeSlice(w, { hold = () => false } = {}) {
@@ -422,4 +430,30 @@ test('small runs: a resume with nothing newer finished writes no Resumed line an
   assert.ok(!auditOf(w.pid).some((t) => t.startsWith('Resumed ·')), JSON.stringify(auditOf(w.pid)));
   two.orch.stop();
   await two.done;
+}));
+
+// R-arch-5: the one case through the real resume(). A marked run takes in every finished run it lacks, whatever its
+// base (run 3, from `main` as run 2 is, and run 4, on run 3's branch), in finish order, and records the branch it now
+// builds on.
+test('marked: a resumed slice takes in every finished run it lacks and records it', () => withFlag(true, async () => {
+  const w = await pausedSliceWorld('a5-marked', { marked: true });
+  const pidOf = (k) => getDb().prepare('SELECT pipeline_id AS id FROM scheduled_runs WHERE id = (SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ? AND idx = ?)').get(w.f.id, k).id;
+  const tip = (b) => sh(w.dir, `git rev-parse ${b}`);
+  const r = resumeSlice(w);
+  continueGates(r.orch);
+  const res = await r.done;
+  assert.equal(res.status, 'done', res.error);
+  assert.equal(r.orch._takesInBeforeAnswerNow(), true, 'the fixture is a run that takes in before it goes on');
+  const b = branchRow(w.pid);
+  assert.equal(b.source, w.s4, 'the recorded base names the branch the run now builds on');
+  assert.equal(b.sourceFrom, 'main');
+  assert.deepEqual(b.tookIn, [{ index: 3, branch: w.s3, pipelineId: pidOf(3), sha: tip(w.s3) },
+    { index: 4, branch: w.s4, pipelineId: pidOf(4), sha: tip(w.s4) }]);
+  assert.deepEqual({ ...b.baseMerged }, { base: w.s4, behind: b.baseMerged.behind, merged: true, onResume: true });
+  assert.ok(isAncestorOf(w.dir, w.s3, w.feature), "run 3's commits are in run 2's branch");
+  assert.ok(isAncestorOf(w.dir, w.s4, w.feature), "run 4, on another base, is taken in too");
+  assert.ok(isAncestorOf(w.dir, w.own, w.feature), "run 2's own commit is kept");
+  const files = await filesOf(w.pid);
+  assert.ok(files.includes('own.txt'), JSON.stringify(files));
+  assert.ok(!files.includes('s3.txt') && !files.includes('s4.txt'), JSON.stringify(files));
 }));

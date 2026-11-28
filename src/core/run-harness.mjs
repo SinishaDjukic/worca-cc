@@ -84,7 +84,7 @@ import { modelLabelOf, resolveStepModels, observeModelCost, resolveModelCost, mo
 import { getEngine, selectRunEngine, CAPABILITY_FALLBACKS, describeUnattachableMcp } from './engines/index.mjs';
 import { bridgeCallsFor, bridgeCostFor, forgetBridgeTag } from './bridge/telemetry.mjs';
 import { readGuardrailSet, defaultGuardrailSetId } from './guardrail-store.mjs';
-import { unionGuardrails, guardrailsToPermissionRules, mergePermissionRules } from './guardrails.mjs';
+import { unionGuardrails, guardrailsToPermissionRules, mergePermissionRules, gateRules } from './guardrails.mjs';
 import { collectRequiredSkills, validateSkills, injectSkills, pluginSkillDirs, pluginAssetDirs } from './skills.mjs';
 import { isBrowsableKind, BULK_ARTIFACT_THRESHOLD } from '../shared/artifact-kinds.mjs';
 import { RUN_SWITCH_OPTIONS, awayAnswerCounts } from '../shared/away-mode/labels.mjs';
@@ -100,10 +100,10 @@ import { writeReadinessSnapshot } from './repo-readiness/snapshot.mjs';
 import { serialQueue } from './graph/human-evidence.mjs';
 import { deriveBranchName, uniqueBranch } from './naming.mjs';
 import { flagEnabled } from './flags.mjs';
-import { syncBaseForRun, ensureLocalBranch, fetchRemote, fastForwardTo, isSafeBranchName, runSyncOptions, INTERACTIVE_TIMEOUT_MS, mergeBaseBeforeRun, baseMovedAudit, checkBaseMerge } from './git-sync.mjs';
+import { syncBaseForRun, ensureLocalBranch, fetchRemote, fastForwardTo, isSafeBranchName, runSyncOptions, INTERACTIVE_TIMEOUT_MS, mergeBaseBeforeRun, baseMovedAudit, checkBaseMerge, mergeBaseInto } from './git-sync.mjs';
 import { featureBase } from './shape/features.mjs';
 import { shaperSmallRunsOn, smallRunsAtStart, smallRunsOfFeature } from './shape/small-runs.mjs';
-import { latestFinishedSource } from './shape/chain.mjs';
+import { latestFinishedSource, combineDependencies, combinedAudit, takeInVerdict, takeInClashAudit } from './shape/chain.mjs';
 import { cleanOutcome } from './shape/rounds.mjs';
 import { SYNC_EXECUTION_ID } from '../shared/graph/constants.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // §9.4 disabled-plugin hint
@@ -447,10 +447,23 @@ export function mergesFeatureBase({ slice, freshStart, isWorkspace }) {
   return !!(slice && slice.index >= 2 && freshStart && !isWorkspace);
 }
 
+/** Shaper small runs (slice 2, D2): a slice run's fresh branch takes in every run it builds on before the first agent.
+ *  A slice of a feature, a fresh start, a single project, and `smallRuns` (the flag on and the feature marked). */
+export function combinesDependencies({ slice, freshStart, isWorkspace, smallRuns }) {
+  return !!(slice && slice.feature && freshStart && !isWorkspace && smallRuns);
+}
+
 /** Shaper small runs (D9): a resumed slice run first merges the feature's latest finished work. Single project, flag on
  *  (`smallRuns` = shaperSmallRunsOn()). */
 export function mergesLatestOnResume({ slice, isWorkspace, smallRuns }) {
   return !!(slice && !isWorkspace && smallRuns);
+}
+
+/** Shaper small runs (slice 3, D3): a run that waited at a stop takes in the finished work before its answer
+ *  goes on. A slice of a feature with a run number, a single project, `smallRuns` (the flag on and the feature marked),
+ *  and not a run on its source branch (its siblings' work reaches it by their merge back). */
+export function takesInBeforeAnswer({ slice, isWorkspace, smallRuns, sameAsSource }) {
+  return !!(slice && slice.feature && Number.isInteger(slice.index) && !isWorkspace && smallRuns && !sameAsSource);
 }
 
 export function firstLine(text) {
@@ -2103,7 +2116,7 @@ export class RunHarness extends EventEmitter {
       this._setStatus('error');
       await this._finalizeDirections();   // report an unread inbox on every terminal outcome
       const message = err?.message || String(err);
-      this._emit('error', { message });
+      this._emit('error', { message, ...(err?.clash ? { clash: err.clash } : {}) });   // a setup clash carries its clash (A3)
       if (this.pipeline) {
         await this._persist().catch(() => {});
         await appendAudit(this.pipeline.dir, `Pipeline **error**: ${message}`).catch(() => {});
@@ -2127,6 +2140,7 @@ export class RunHarness extends EventEmitter {
     } finally {
       this._stopHeartbeat(); // clear timer + NULL owner columns (done/stopped/launch-error/paused)
       this._runSlot?.release(); this._runSlot = null;   // a paused run waits for a slot again on resume
+      await this._takeInFlight?.catch(() => {});   // slice 3 (D13): no teardown commit races a take-in's merge
       await this._stopGraphBuild();   // before teardown removes the checkout it writes into (a resume rebuilds or reuses it)
       // C1: tear the run root + worktree(s) down on done/stopped/launch-error — the branch is
       // kept (except a workspace member's branch this run never changed, and every branch of
@@ -2363,9 +2377,9 @@ export class RunHarness extends EventEmitter {
         if (this.runRootMode === 'detached') resumeManifest = await readRunManifest(this.runRoot);
       }
       // Shaper small runs (D9): a resumed slice takes in the feature's latest finished work first (the reattach above
-      // restored injectedPaths). baseTip prefers refs/remotes/origin/<base> over the local branch: a finished run's
-      // last push is its final state. Never the resume's outcome.
-      await this._takeInLatestFinished({ smallRuns: shaperSmallRunsOn() });
+      // restored injectedPaths). On a marked feature it takes in every finished run it lacks, as a stop's answer does,
+      // and records the branch it now builds on as its base. Never the resume's outcome.
+      await this._takeInOnResume();
       // A run paused while its graph was still building (the build stops with the run) gets it now:
       // reused when that build had finished, else rebuilt in the background. The replay above did it already.
       if (rp.setupIncomplete !== true) {
@@ -2481,6 +2495,7 @@ export class RunHarness extends EventEmitter {
     } finally {
       this._stopHeartbeat(); // clear timer + NULL owner columns (done/stopped/launch-error/paused)
       this._runSlot?.release(); this._runSlot = null;   // a paused run waits for a slot again on resume
+      await this._takeInFlight?.catch(() => {});   // slice 3 (D13): no teardown commit races a take-in's merge
       await this._stopGraphBuild();   // before teardown removes the checkout it writes into (a resume rebuilds or reuses it)
       // Same teardown as run()'s finally — wiring only run()'s would keep legacy
       // teardown on every detached run that finishes after a resume (including every
@@ -3089,10 +3104,11 @@ export class RunHarness extends EventEmitter {
                                                 ...(sameAsSource ? { sameAsSource: true } : {}) };
           // Shaper s5 (D14): a feature's next run starts from the moved base. Slice k ≥ 2, single project, fresh branch only.
           const sl = this.runShape && this.runShape.slice;
-          if (mergesFeatureBase({ slice: sl, freshStart, isWorkspace: this.isWorkspace })) await this._mergeFeatureBase(m, info, sl);
+          await this._startFromFeature(m, info, sl, freshStart);
           const short = (s) => String(s).slice(0, 10);
           if ((freshStart || recreated) && diffBase && (baseMoved || (checkoutHead && diffBase !== checkoutHead))) {
-            await appendAudit(this.pipeline.dir, `Diff base for \`${m.projectKey}\` moved to the run's start \`${short(diffBase)}\`.`).catch(() => {});
+            const startAt = this.state.branches[m.projectKey]?.diffBase || diffBase;   // after the combine and base merge
+            await appendAudit(this.pipeline.dir, `Diff base for \`${m.projectKey}\` moved to the run's start \`${short(startAt)}\`.`).catch(() => {});
           } else if (!freshStart && !recreated && diffBase) {
             await appendAudit(this.pipeline.dir, reuseBase
               ? `Diff base for \`${m.projectKey}\` is \`${short(diffBase)}\`, where \`${info.branch}\` forks from \`${reuseBase.against}\` (reused branch).`
@@ -3685,7 +3701,9 @@ export class RunHarness extends EventEmitter {
     const P = enginePrefix(name, steps);
     const projectRules = this._engineProjectRules ?? null;
     const on = nodes.filter((nc) => this._stepEngine(nc) === name);
-    const why = this._engineRefusal({ rules: this.guardrailPermissionRules, guardrailsId: this.guardrailsId, projectRules, nodes: on, name, allNodes: nodes });
+    // The gate weighs the guardrail rules without the secret-file floor (gateRules); the spawn still carries it.
+    const gRules = gateRules(this.guardrailPermissionRules);
+    const why = this._engineRefusal({ rules: gRules, guardrailsId: this.guardrailsId, projectRules, nodes: on, name, allNodes: nodes });
     if (why) throw engineRefusal(name, why, steps);
     const caps = getEngine(name).capabilities;
     const lines = Object.entries(caps).filter(([, v]) => v === false)
@@ -3698,7 +3716,7 @@ export class RunHarness extends EventEmitter {
       const tot = effectiveCap({ local: totalCostLimitUsd(), team: teamFields['cost.totalLimitUsd'] || null });
       if (tot.cap != null) lines.push(`${P}: the total cost limit cannot count ${name}'s spend (cost unknown)`);
     }
-    if (caps.permissionRules === false && hasPermissionRules(this.guardrailPermissionRules)) {
+    if (caps.permissionRules === false && hasPermissionRules(gRules)) {
       lines.push(`${P}: guardrail set "${this.guardrailsId}": permission rules NOT enforced on ${name} (--allow-unguarded-engine)`);
     }
     if (caps.permissionRules === false && hasPermissionRules(projectRules)) {
@@ -3707,12 +3725,12 @@ export class RunHarness extends EventEmitter {
     if (caps.permissionRules !== false) {
       // An engine that holds part of the rules: say which it holds, which it holds only in part and which it does
       // not (those two passed the gate only with --allow-unguarded-engine).
-      const both = (f) => [...new Set([...f(this.guardrailPermissionRules), ...f(projectRules)])];
+      const both = (f) => [...new Set([...f(gRules), ...f(projectRules)])];
       const partial = both((r) => this._enginePartial(r, name));
       const enforced = both((r) => (Array.isArray(r?.deny) ? r.deny : []).filter((x) => !this._engineUnenforced(r, name).includes(x) && !this._enginePartial(r, name).includes(x)));
       if (enforced.length) lines.push(`${P}: deny rules enforced on ${name}: ${ruleNames(enforced)}`);
       if (partial.length) lines.push(`${P}: deny rules held on ${name} only in part, as ${this._enginePartialKind(name)} — ${this._engineRuleReach(name)} (--allow-unguarded-engine): ${ruleNames(partial)}`);
-      const gSkip = this._engineUnenforced(this.guardrailPermissionRules, name);
+      const gSkip = this._engineUnenforced(gRules, name);
       if (gSkip.length) lines.push(`${P}: guardrail set "${this.guardrailsId}": rules NOT enforced on ${name} (--allow-unguarded-engine): ${ruleNames(gSkip)}`);
       const pSkip = this._engineUnenforced(projectRules, name);
       if (pSkip.length) lines.push(`${P}: the project's .claude/settings.json deny rules NOT enforced on ${name} (--allow-unguarded-engine): ${ruleNames(pSkip)}`);
@@ -3868,7 +3886,8 @@ export class RunHarness extends EventEmitter {
    * deny rules of the members' own `.claude/settings.json` (Claude Code reads that file
    * itself, another engine does not), from _engineChecks.
    */
-  _engineRefusal({ rules, guardrailsId, projectRules = null, nodes, allowed = this._allowUnguardedEngine, name = this.claude.engine || 'claude', allNodes = nodes }) {
+  _engineRefusal({ rules: allRules, guardrailsId, projectRules = null, nodes, allowed = this._allowUnguardedEngine, name = this.claude.engine || 'claude', allNodes = nodes }) {
+    const rules = gateRules(allRules);   // the secret-file floor never refuses a run (guardrails.mjs gateRules)
     const caps = getEngine(name).capabilities;
     // The credential broker's promise is that worca holds no model credential; this engine
     // signs in with its own, which the broker can neither bill nor revoke.
@@ -7402,6 +7421,18 @@ export class RunHarness extends EventEmitter {
     } catch { return false; }
   }
 
+  /** May Away mode decide ask `q` right now, without its grace timer (a workflow answering a stop the moment it opens)?
+   *  True only off --yes, with Away active, `q.kind` not on neverDecide and no limit reached. Asking is not deciding: a
+   *  spent limit says false and pauses nothing. Never throws (false on error). */
+  nightMayDecideNow(q) {
+    try {
+      if (this.auto || !this._night) return false;
+      const { config } = effectiveNightConfig(this.projectDir);
+      if (!this._nightStateNow(config).active || nightNeverDecides(config, q)) return false;
+      return this._nightGuardrail(config) === null;
+    } catch { return false; }
+  }
+
   /** The plan asks planRule declines: on a Shaper run only a Requirements hold whose check still fails; elsewhere the
    *  ones it always declined.
    *  Decided at arm time, so such an ask never counts down, never starts the away stretch and cannot hit a limit's pause.
@@ -10880,6 +10911,16 @@ export class RunHarness extends EventEmitter {
     } catch (err) { this._log('worktree', 'warn', `${onAnswer ? 'after an answer' : 'resume'}: could not take in the latest finished work: ${err?.message || err}`); }
   }
 
+  /** The resume's take-in (the one call in _resume()). When a stop's answer would take in first (_takesInBeforeAnswerNow,
+   *  the flag read live), the same take-in, recorded `onResume`; its wait or refusal is logged and the run goes on.
+   *  Else dev's latest-finished merge with the live flag. Never rejects. */
+  async _takeInOnResume(deps = {}) {
+    try {
+      if (this._takesInBeforeAnswerNow()) await this.takeInBeforeAnswer(deps, { onResume: true });
+      else await this._takeInLatestFinished({ smallRuns: shaperSmallRunsOn() });
+    } catch (err) { this._log('worktree', 'warn', `resume: could not take in the finished work: ${err?.message || err}`); }
+  }
+
   /** Shaper s5 (D14): merge the feature's base into this run's fresh branch when it moved; move the diff base to the
    *  merge commit, so the base's commits never count as this run's changes.
    *  Shaper small runs (D8): `{base, onResume}` merges `base` (the latest finished run's branch) into a resumed run's
@@ -10902,6 +10943,179 @@ export class RunHarness extends EventEmitter {
     }
   }
 
+  /** A slice run's fresh branch, before the first agent: first the work of every run it builds on (small runs), so the
+   *  re-check sees the tree the fire-time gate checked; then the feature's moved base (s5 D14) onto that combined tip,
+   *  which leaves a clash with the base to its audit line as before. */
+  async _startFromFeature(m, info, sl, freshStart) {
+    if (combinesDependencies({ slice: sl, freshStart, isWorkspace: this.isWorkspace,
+      smallRuns: !!sl && shaperSmallRunsOn() && smallRunsOfFeature(sl.feature) })) await this._combineDependencies(m, info, sl);
+    if (mergesFeatureBase({ slice: sl, freshStart, isWorkspace: this.isWorkspace })) await this._mergeFeatureBase(m, info, sl);
+  }
+
+  /** Shaper small runs (slice 2, D3, D10): merge every run this slice builds on that its fresh branch lacks, from local
+   *  SHAs, before the first agent; move the diff base to the result, so their commits never count as this run's
+   *  changes. A pending dependency, a clash or a failed merge throws a terminal setup error: the run never goes on
+   *  from a partial combine. */
+  async _combineDependencies(m, info, sl) {
+    const key = m.projectKey;
+    const rec = this.state.branches[key];
+    let r;
+    try {
+      r = await combineDependencies(resolve(m.projectDir), { featureId: sl.feature, index: sl.index, branch: info.branch, source: rec?.source });
+    } catch (err) { throw markTerminal(err); }
+    if (!r) return;
+    // Slice 4 (D4): what the combine merged, so Ship can tell those runs' work ships in this run's PR.
+    const combined = [...(this.state.branches[key]?.combined || []), ...r.merged.map((d) => ({ index: d.index, branch: d.branch }))];
+    this.state.branches[key] = { ...this.state.branches[key], baseSha: r.tip, diffBase: r.tip, startHead: r.tip, combined };
+    this.checkpointRefs[key] = r.tip;               // the dependencies' commits are never this run's changes
+    await appendAudit(this.pipeline.dir, combinedAudit(r.merged, info.branch)).catch(() => {});
+    this._log('worktree', 'info', `${key}: combined the work of ${r.merged.map((d) => d.branch).join(', ')} into ${info.branch}`);
+  }
+
+  /** The checkout's uncommitted tracked work, committed before a merge into it (as teardown would).
+   *  worca's CLAUDE.md fence lives in a tracked file: an exclude pathspec would commit that file's deletion
+   *  (_commitWork unstages excluded paths), and teardown strips the fence only at the end. A checkout whose fence file
+   *  is dirty is left uncommitted ('fence'), so a merge reads it as dirty. → 'committed' | 'clean' | 'fence' */
+  async _commitWipForMerge(key, info) {
+    const gitOpts = { cwd: info.worktreeDir, ignoreAbort: true };
+    const st = await this._git(['status', '--porcelain', '--untracked-files=no'], gitOpts);
+    const fence = new Set((this.injectedPaths?.[key] ?? []).filter((e) => e && e.kind === 'claudeMdSection' && e.path).map((e) => e.path));
+    const dirty = st.ok ? st.stdout.split('\n').filter(Boolean).map((l) => l.slice(3)) : [];
+    if (!dirty.length) return 'clean';
+    if (dirty.some((p) => fence.has(p))) return 'fence';
+    const ec = await this._engineConfigState(info.worktreeDir, { ignoreAbort: true });
+    const r = await this._commitWork(info, this.state.branch,
+      { excludePathspecs: this._excludePathspecs(key), forcePaths: ec.forced, unstagePaths: ec.owned });
+    return r && r.committed ? 'committed' : 'clean';
+  }
+
+  /**
+   * Shaper small runs, slice 3 (D3, D7, D8, D9): before a stop's answer goes on, merge every finished run of the
+   * feature whose work its branch lacks, whatever its base (takeInVerdict), from the SHAs the last combine
+   * check read. A sibling still merging back is a wait; a clash, a failed check or merge, or a pause refuses, and the
+   * branch, the index and the uncommitted files are put back as they were. Flag off, an unmarked feature, a workspace
+   * or a source-branch run: no git call. The promise is kept on `_takeInFlight` until it settles (the unwind awaits
+   * it). `deps` = takeInVerdict's seams plus `mergeBaseInto`. `onResume` (_takeInOnResume, a resume's take-in) records
+   * `baseMerged.onResume` in place of `onAnswer`. Never rejects.
+   * → {ok:true, merged, skipped?} | {ok:false, wait:true, after} | {ok:false, refused:true, reason}
+   */
+  takeInBeforeAnswer(deps = {}, { onResume = false } = {}) {
+    const p = this._takeInNow(deps, { onResume }).catch((err) => {
+      const reason = err && err.message ? err.message : String(err);
+      this._log('worktree', 'warn', `could not take in the finished work: ${reason}`);
+      return { ok: false, refused: true, reason };
+    });
+    this._takeInFlight = p;
+    p.then(() => { if (this._takeInFlight === p) this._takeInFlight = null; });
+    return p;
+  }
+
+  /** Slice 3: whether a stop's answer now takes in the finished work first (takesInBeforeAnswer on this run,
+   *  the flag read live). Then dev's after-answer take-in (_afterStopAnswer) is skipped: it would merge the latest
+   *  finished run on any base. */
+  _takesInBeforeAnswerNow() {
+    const sl = this.runShape && this.runShape.slice;
+    const key = this.members && this.members[0] && this.members[0].projectKey;
+    const rec = (key && this.state.branches && this.state.branches[key]) || this.state.branch;
+    const smallRuns = !!(sl && sl.feature && shaperSmallRunsOn() && smallRunsOfFeature(sl.feature));
+    return takesInBeforeAnswer({ slice: sl, isWorkspace: this.isWorkspace, smallRuns,
+      sameAsSource: rec?.sameAsSource === true || this.state.branch?.sameAsSource === true });
+  }
+
+  async _takeInNow(deps, { onResume = false } = {}) {
+    const sl = this.runShape && this.runShape.slice;
+    const m = this.members && this.members[0];
+    const key = m && m.projectKey;
+    const info = this.branchInfo;
+    if (!m || !this._takesInBeforeAnswerNow() || !info?.worktreeDir) return { ok: true, merged: [], skipped: true };
+    const dir = resolve(m.projectDir);
+    const wt = info.worktreeDir;
+    const gitOpts = { cwd: wt, ignoreAbort: true };
+    const ask = { featureId: sl.feature, pipelineId: this.pipeline?.id || null, branch: info.branch };
+    const refuse = async (reason, clash = null) => {
+      const line = takeInClashAudit(clash, info.branch);
+      if (line) await appendAudit(this.pipeline.dir, line).catch(() => {});
+      this._log('worktree', 'warn', `did not take in the finished work: ${reason}`);
+      return { ok: false, refused: true, reason };
+    };
+    const stopping = () => this.pauseRequested === true || this.state.status === 'stopped';
+    const pausing = `run ${sl.index} is pausing`;
+    const waiting = (after) => {
+      this._log('worktree', 'info', `waiting for run ${after} to finish merging its work back before taking it in`);
+      return { ok: false, wait: true, after };
+    };
+
+    let v = await takeInVerdict(dir, ask, deps);
+    if (v.status === 'none') return { ok: true, merged: [] };
+    if (v.status === 'wait') return waiting(v.after);
+    if (v.status !== 'clean') return refuse(v.status === 'clash' ? v.reason : v.error, v.status === 'clash' ? v : null);
+    if (stopping()) return refuse(pausing);
+
+    // D7: the uncommitted work is committed first, and a refusal after that puts it back as uncommitted files.
+    const pre = await commitOf(wt, 'HEAD');
+    const wip = await this._commitWipForMerge(key, info);
+    if (wip === 'fence') return refuse(`run ${sl.index}'s checkout has uncommitted changes in worca's CLAUDE.md section`);
+    const wipAt = wip === 'committed' ? await commitOf(wt, 'HEAD') : null;
+    const undo = async () => {
+      const now = await commitOf(wt, 'HEAD');
+      if (wipAt) {
+        if (now !== wipAt) await this._git(['reset', '-q', '--hard', wipAt], gitOpts);
+        await this._git(['reset', '-q', pre], gitOpts);
+      } else if (pre && now !== pre) {
+        await this._git(['reset', '-q', '--hard', pre], gitOpts);
+      }
+    };
+    if (wipAt) {
+      v = await takeInVerdict(dir, ask, deps);
+      if (v.status !== 'clean') {
+        await undo();
+        if (v.status === 'none') return { ok: true, merged: [] };
+        if (v.status === 'wait') return waiting(v.after);
+        return refuse(v.status === 'clash' ? v.reason : v.error, v.status === 'clash' ? v : null);
+      }
+    }
+
+    // D7: merge each missing branch from the last check's SHAs, each onto the previous merge's result.
+    const { check, missing } = v;
+    const behind = [];
+    for (const [i, d] of missing.entries()) {
+      const n = await this._git(['rev-list', '--count', `${check.heads[0]}..${check.heads[i + 1]}`], gitOpts);
+      behind.push(n.ok ? Number.parseInt(n.stdout.trim(), 10) || 0 : 0);
+    }
+    const merge = deps.mergeBaseInto || mergeBaseInto;
+    let tip = check.heads[0];
+    for (const [i, d] of missing.entries()) {
+      if (stopping()) { await undo(); return refuse(pausing); }
+      const r = await merge(dir, { feature: info.branch, baseSha: check.heads[i + 1], headSha: tip, baseRef: d.branch, runIdentity: true });
+      if (!r || !r.ok) {
+        await undo();
+        return refuse(`could not take in the work of run ${d.index} (${d.branch}): ${(r && r.kind) || 'failed'}`);
+      }
+      tip = r.to;
+    }
+
+    // D9: the recorded base names the branch this run now builds on; its start never moves.
+    const last = missing.at(-1);
+    const took = missing.map((d, i) => ({ index: d.index, branch: d.branch, pipelineId: d.pipelineId, sha: check.heads[i + 1] }));
+    const patch = (r) => {
+      if (!r) return r;
+      const old = r.source;
+      const oldSha = (r.baseRefs && r.baseRefs[old]) || r.baseSha || null;
+      return { ...r, source: last.branch, sourceFrom: r.sourceFrom || old, tookIn: [...(Array.isArray(r.tookIn) ? r.tookIn : []), ...took],
+        baseRefs: { ...(r.baseRefs || {}), ...(old && oldSha ? { [old]: oldSha } : {}), ...Object.fromEntries(took.map((t) => [t.branch, t.sha])) },
+        baseMerged: { base: last.branch, behind: behind.at(-1), merged: true, ...(onResume ? { onResume: true } : { onAnswer: true }) } };
+    };
+    if (this.state.branch) this.state.branch = patch(this.state.branch);
+    if (this.state.branches?.[key]) this.state.branches[key] = patch(this.state.branches[key]);
+    await this._refreshMergeBases();
+    await this._persist();
+    for (const [i, d] of missing.entries()) {
+      await appendAudit(this.pipeline.dir, baseMovedAudit(d.branch, info.branch, { merged: true, behind: behind[i] })).catch(() => {});
+    }
+    this._log('worktree', 'info', `took in the work of ${missing.map((d) => d.branch).join(', ')} before going on`);
+    return { ok: true, merged: missing.map((d) => ({ index: d.index, branch: d.branch })) };
+  }
+
   async _mergeLatestOnResume(m, info, base, { onAnswer = false } = {}) {
     if (!base || base === info.branch || !info.worktreeDir) return;
     const key = m.projectKey;
@@ -10909,18 +11123,7 @@ export class RunHarness extends EventEmitter {
     const NOTHING = new Set(['up-to-date', 'no-branch']);
     const pre = await checkBaseMerge(resolve(m.projectDir), { base, feature: info.branch }).catch(() => null);
     if (pre && NOTHING.has(pre.status)) return;
-    const gitOpts = { cwd: info.worktreeDir, ignoreAbort: true };
-    const st = await this._git(['status', '--porcelain', '--untracked-files=no'], gitOpts);
-    // worca's CLAUDE.md fence lives in a tracked file: an exclude pathspec would commit that file's deletion
-    // (_commitWork unstages excluded paths), and teardown strips the fence only at the end. A checkout whose fence file
-    // is dirty is left uncommitted, so the merge below reads it as dirty and the resume is recorded, not merged.
-    const fence = new Set((this.injectedPaths?.[key] ?? []).filter((e) => e && e.kind === 'claudeMdSection' && e.path).map((e) => e.path));
-    const dirty = st.ok ? st.stdout.split('\n').filter(Boolean).map((l) => l.slice(3)) : [];
-    if (dirty.length && !dirty.some((p) => fence.has(p))) {
-      const ec = await this._engineConfigState(info.worktreeDir, { ignoreAbort: true });
-      await this._commitWork(info, this.state.branch,
-        { excludePathspecs: this._excludePathspecs(key), forcePaths: ec.forced, unstagePaths: ec.owned });
-    }
+    await this._commitWipForMerge(key, info);
     const r = await mergeBaseBeforeRun(resolve(m.projectDir), { base, feature: info.branch })
       .catch((err) => ({ merged: false, status: 'error', behind: 0, files: [], error: err?.message }));
     if (NOTHING.has(r.status)) return;

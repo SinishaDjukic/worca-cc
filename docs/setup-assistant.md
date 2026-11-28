@@ -1,7 +1,37 @@
 # Setup assistant
 
-The setup assistant checks the machine, then applies every answer at once. This page describes the server
-API it uses. The user guide for the dialog lands with the dialog itself.
+The setup assistant checks the machine, then applies every answer at once. This page starts with a guide to the
+first launch, then describes the server API the dialog uses.
+
+## First launch
+
+On a fresh install the dialog opens before the welcome, on **Let’s set up Worca**. It first checks the machine.
+Each row ends in a badge: **OK**, **Check** (Worca could not tell) or **No**.
+
+| Check | What it tells you |
+|---|---|
+| Claude Code | Whether it is installed and signed in. |
+| Git | Whether Git is installed. |
+| Proxy in your environment | The proxy the machine already sends traffic through, if any. |
+| Direct connection | Whether `api.anthropic.com` answers without a proxy. |
+| Engines | How many coding engines are ready, with one row per engine under it. |
+| Local Ollama | Whether Ollama runs here, and with how many models. |
+| Anthropic API key | Whether a key is set in your environment. It never shows the key. |
+| Team setup | Only when your team shares a setup. |
+
+A **No** is not an error: it is what Worca asks you about next, and it fills a field only when that field is
+empty. Click **Start** to go on.
+
+- **Network** is skipped on a first start when the machine reaches Anthropic directly and no proxy is set in its
+  environment. Otherwise pick **Direct** or **Proxy**. With **Proxy**, click **Test** before **Next**; **Direct**
+  needs no test.
+- **Model access**: turn on every source you can use. You need at least one.
+- **Models**, then **How you work**: pick the models, the interface mode, the limits and the other defaults. All
+  of them can be changed later in Settings.
+- **Review** lists what will be saved. Click **Apply** (the button reads **Finish** when nothing changed), then **Continue** or **Start your first run**.
+
+**Skip all** closes the dialog and goes to the welcome; if you changed an answer it asks "Discard changes?" first. To come back, open Settings › General ›
+Setup assistant and click **Run setup**.
 
 ## Server API
 
@@ -146,7 +176,7 @@ this machine knows is left out with a warning, such as
 (`/api/settings`, `/api/proxy/status`, `/api/providers`, `/api/config`) plus `GET /api/setup/detect`.
 Detection fills a field only when the saved value is empty, and only on a first start. The head shows
 a segmented progress bar (one segment per step), "Step N of 7", the step's title and a subtitle. The foot holds
-the status line and the buttons: the way out (Cancel, or Set up later on a first start; Close on the Apply step) on
+the status line and the buttons: the way out (Cancel, or Skip all on a first start; Close on the Apply step) on
 the left; the second button below, Back and the primary action on the right, Back and the primary side by side.
 Cancel shows on every step up to Review. Once an answer changed it asks "Discard changes?" (Keep editing /
 Discard), like Escape; untouched it closes at once.
@@ -154,7 +184,7 @@ Discard), like Escape; untouched it closes at once.
 On steps 2–5 a second button appears before Back and the primary one only when it does something **Next** does not. Both
 labels put the step back to its saved values and move on:
 
-- **Skip for now** while **Next** is blocked (an untested proxy, a missing sign-in, no source picked).
+- **Skip step** while **Next** is blocked (an untested proxy, a missing sign-in, no source picked).
 - **Use saved values** when the step differs from what is saved (the rows Review marks **Changed**).
 - No second button when the step is as saved and **Next** is open.
 
@@ -172,7 +202,7 @@ labels put the step back to its saved values and move on:
 the host, port, login mode, direct hosts and account on screen. **Test** sends the typed domain, user and
 password with it, so a fresh install behind an NTLM proxy passes before anything is saved; editing any of them
 needs a new test. A pass counts for 9 minutes, under the server's 10-minute window. This holds for the saved
-proxy on a re-run too: **Skip for now** is the way past Network without a test, and it keeps the saved values.
+proxy on a re-run too: **Skip step** is the way past Network without a test, and it keeps the saved values.
 
 **In a container.** With the egress sidecar the login lives there, not in Worca's box
 ([network-proxy.md → Worca in a container](network-proxy.md#worca-in-a-container)). Network works the same way.
@@ -186,10 +216,10 @@ state. **Next** needs no Test there, and the apply changes nothing on the networ
 **Next on Network.** After a passing test (or with Direct), **Next** posts the network group alone and shows its
 rows inline on Network. Model access opens only when it succeeded; the password is dropped right after the 202.
 A failure stays on Network with the failed step's line and offers **Retry** from that step (asking for the
-password again when the login step still has to run) or **Skip for now**. An apply refused with `UNTESTED` stays on
+password again when the login step still has to run) or **Skip step**. An apply refused with `UNTESTED` stays on
 Network too. Values that match the saved ones post nothing, so on a re-run **Next** just moves on. Once saved,
 the dialog says so in one line ("The corporate proxy is saved and on."), Review lists Network as **Saved**
-rather than **Changed**, and closing the dialog with **Set up later** keeps it. When nothing else changed,
+rather than **Changed**, and closing the dialog with **Skip all** keeps it. When nothing else changed,
 Review offers **Finish**.
 
 **Re-run.** Settings › General › Setup assistant › **Run setup** opens the dialog with the saved values
@@ -261,7 +291,7 @@ sources offer it." on Models and on Review.
 updated the recommended setup · Review". Review lists only the rows that differ from what is saved, and nothing
 changes before **Apply**. When nothing differs, Review says "Your setup already matches your team's
 recommendation." and offers **Finish**. The notice hides once that review ends with Apply then Continue, or with
-Finish; **Set up later** keeps it.
+Finish; **Skip all** keeps it.
 
 **Share as team setup.** After a successful Apply, **Share as team setup** downloads `team-setup.json` from
 your saved settings ([`POST /api/setup/team/draft`](#post-apisetupteamdraft)). It has no network settings,

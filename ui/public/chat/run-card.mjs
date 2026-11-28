@@ -28,13 +28,13 @@ import { paintRunStatus, statusText, kindLabel, syncActions, pauseResumeOwn, ren
 import { delegateQuestion } from '../question-delegate.mjs';
 import { paintStatusDot } from '../status-dot.mjs';
 import { cardShortWord } from '../../../src/shared/shape/run-agents.mjs';
-import { runStatus } from '../../../src/shared/shape/run-status.mjs';
+import { heldAfterOf, heldResumeTitle, resumeAfterOf, resumeLabel, runStatus } from '../../../src/shared/shape/run-status.mjs';
 import { levelAtLeast } from '../ui-level.mjs';
 import { featureCardModel, oneCardModel, paintFeatureLog, needYouText } from '../shape/feature-card.mjs';
 import { buildCheckRows } from '../shape/check-row.mjs';
 import { verifyGapItems } from '../../../src/shared/shape/verifier.mjs';
 import { paintReqChange } from '../shape/req-change.mjs';
-import { renderShipCard, confirmRequirement } from '../shape/ship-card.mjs';
+import { renderShipCard, confirmRequirement, acknowledgeNote } from '../shape/ship-card.mjs';
 import { namedAnswer, forgetAnswer, REQUIREMENTS_AGREED } from '../shape/step-receipt.mjs';
 import { isRequirementsAsk, answerFieldOpen } from '../shape/step-card.mjs';
 import { renderChecklistGroups } from '../shape/checklist-view.mjs';
@@ -372,6 +372,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   let changesView = null;     // Shaper's Ask for changes field ({ el, focus }) while it shows
   let planSent = null;   // slice 4: the plan card's last approve attempt, named by its `plan-answer` event (D12)
   let stopLines = [];         // slice 6: the stop list's lines of the last paint (stop-list.mjs stopLinesOf)
+  let fview = null;           // slice 11: the one card's feature view of the last paint (its slices name the Resume)
   let resumeListed = false;   // slice 6 (D14): a failed line holds the halted run's Resume, so the footer and ⋯ do not
   const stopByKey = new Map();   // slice 6 (D10): the line kept per key, so a line's delegate reads its current ask
   const ref = () => runRefOf(id, last);
@@ -514,8 +515,10 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     },
   });
 
-  // Slice 6 (D10): built once; each open line mounts today's step card in its own host and, for asks that are not step
-  // cards (a Clarify renderer), the delegate answers for that line's own run with its current ask id.
+  // Slice 6 (D10): built once; the open line mounts today's step card in its own host and, for asks that are not step
+  // cards (a Clarify renderer), the delegate answers for that line's own run with its current ask id. Slice 12 (D6): a
+  // focus inside the only line, when it goes, moves to the foot once its actions are synced (paintActions runs last).
+  let focusFoot = false;
   const stopDeps = {
     paintQuestion: (r, host) => call(controls.paintQuestion, r, host),
     releaseQuestion: (host) => call(controls.releaseQuestion, host),
@@ -524,6 +527,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       send: (payload, pq) => { const l = stopByKey.get(line.key); if (l && l.ref) call(controls.answer, l.ref, pq.id, payload); },
     }),
     resume: (index) => (fm && fm.controls ? call(controls.featureAct, fm.controls.featureId, 'resume', { index }) : Promise.resolve({ ok: false })),
+    focusOut: () => { focusFoot = true; },
   };
 
   function paintAgents(s) {
@@ -1013,16 +1017,22 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     // Item 10: while a stop is open its question's primary is the card's one primary. The foot keeps only Stop; every
     // other action it would draw moves into the feature ⋯ (only where there is one: a feature's controls).
     const moved = stopOpen && fc ? ((m && m.actions) || []).filter((id) => id !== 'stop' && !baseSkip.includes(id)) : [];
+    // Slice 11 (d11-2): the footer's Resume acts on target(), so it reads that run's slice preview. Slice 16 (D9): held for
+    // its turn, it reads so and is disabled with its reason (pressing it again would only hold it again); Stop stays.
+    const heldAfter = fc && fview ? heldAfterOf(fview.slices, target().pipelineId) : null;
+    if (heldAfter !== null) disable.resume = heldResumeTitle(heldAfter);
+    const resumeText = fc && fview ? resumeLabel(resumeAfterOf(fview.slices, target().pipelineId), { heldAfter }) : '';
     syncActions(footActions, m, {
       own,
       // Small runs C3 (R-ux-4): a stop answers only through its own question (open or held), never the foot's Answer.
       skip: [...baseSkip, ...moved],
       plain: answerFieldOpen(qBody) || (oneNow && painted) ? ['answer'] : [],
       disable,
+      labels: resumeText ? { resume: resumeText } : {},
       onAction: (aid, b) => (aid === 'ask-changes' ? askForChanges() : call(controls.act, target(), aid, b, m, curRow)),
     });
     if (fc) paintFeatureActions(doc, fActions, fc, featureDeps, { omit: m.actions, stopOpen, resumeListed,
-      moved: moved.map((id) => ({ id, ...(disable[id] ? { disabled: disable[id] } : {}) })) });
+      moved: moved.map((id) => ({ id, ...(id === 'resume' && resumeText ? { label: resumeText } : {}), ...(disable[id] ? { disabled: disable[id] } : {}) })) });
     // Clear the sig too: else the next feature paint's sig matches and returns early, leaving an empty host.
     else { fActions.replaceChildren(); fActions.hidden = true; delete fActions.dataset.sig; }
     // A footer with nothing visible stays hidden (a Ready run whose Create PR is the result's own button).
@@ -1073,7 +1083,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     if (!phase) { if (shipEl.parentNode) { shipEl.remove(); delete shipEl.dataset.sig; delete shipEl.dataset.phase; } return; }
     shipEl.dataset.phase = phase;
     if (!shipEl.parentNode) logEl.after(shipEl);   // parentNode: a card being built is not in the document yet
-    const sig = JSON.stringify([phase, feature.title, ship.smallRuns]);
+    const sig = JSON.stringify([phase, feature.title, ship.smallRuns, ship.mode || null]);
     if (shipEl.dataset.sig === sig) return;
     shipEl.dataset.sig = sig;
     // The focused control, else the one a mark in flight noted (Chromium blurs its disabled button to <body>).
@@ -1084,7 +1094,8 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     // R-ux-2: the card's state line already says "N PRs open" (countShown), and the foot draws no View PR (paintFoot).
     // The one card's head already shows the feature title (titleShown): the Ship card names only its step.
     const card = renderShipCard(doc, { phase, featureId: feature.id, title: feature.title, runs: feature.total, result: ship.result || null,
-      smallRuns: ship.smallRuns }, { countShown: true, titleShown: true, onConfirm: (id, mark, reason) => confirmRequirement(feature.id, id, mark, reason) });
+      smallRuns: ship.smallRuns, shipMode: ship.mode || null }, { countShown: true, titleShown: true, onConfirm: (id, mark, reason) => confirmRequirement(feature.id, id, mark, reason),
+        onAcknowledge: (note) => acknowledgeNote(feature.id, ship.smallRuns?.findings?.checkAt, note) });
     card.dataset.needsGit = '';   // shipping opens pull requests: hidden while git is missing (git-gate.mjs)
     shipEl.replaceChildren(card);
     const back = had ? shipEl.querySelector(had) : null;
@@ -1110,7 +1121,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     oneNow = one;
     fm = one ? one.base : shaperIn ? featureCardModel(shaperIn) : null;
     // Slice 6: a marked card with the flag on lists every open stop and failed run (none without `feature.asks`).
-    const fview = one && shaperIn.card ? shaperIn.card.feature || null : null;
+    fview = one && shaperIn.card ? shaperIn.card.feature || null : null;
     stopLines = one && flagOn('shaperSmallRuns', doc) ? stopLinesOf(fview, { snapOf: shaperIn.snapOf }) : [];
     stopByKey.clear();
     for (const l of stopLines) stopByKey.set(l.key, l);
@@ -1210,6 +1221,11 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     paintWatch(m, (fm && fm.watch) || rm.watch);
     paintFoot(s);           // labels and disabled rules only
     paintActions(lastM, s); // last: the model decides what shows
+    if (focusFoot) {
+      focusFoot = false;
+      const b = [...foot.querySelectorAll('button')].find((x) => !x.disabled && !x.closest('[hidden], .hidden'));
+      if (b) b.focus();
+    }
   }
 
   function relayout() { if (graph) graph.repaint(); if (zoom) zoom.repaint(); }

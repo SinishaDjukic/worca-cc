@@ -28,10 +28,12 @@ import { paintProgressBar, renderRowLine } from './run-progress-bar.mjs';
 import { renderStatusDot, markDot, staleLive } from './status-dot.mjs';
 import { fmtUsd } from './graph/run-decor.mjs';
 import { engineLabel } from '../../src/shared/engine-switch.mjs';
-import { runModel, groupModel, finishedNeedsYou, WATCH_WHY } from '../../src/shared/run-model.mjs';
+import { runModel, groupModel, finishedNeedsYou, WATCH_WHY, RUN_STATES } from '../../src/shared/run-model.mjs';
+import { checkRowWords, checkRowDot } from '../../src/shared/shape/verifier.mjs';
 import { kindChip } from './run-kind.mjs';
 import { memberShortWord } from '../../src/shared/shape/run-agents.mjs';
-import { memberStatusOf } from '../../src/shared/shape/run-status.mjs';
+import { memberStatusOf, HELD_TURN_WORD } from '../../src/shared/shape/run-status.mjs';
+import { isNeedsYouHold } from '../../src/shared/shape/ship-ledger.mjs';
 
 const pad2 = (n) => String(n).padStart(2, '0');
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -266,30 +268,69 @@ export function needsYou({ kind = 'live', status = '', ask = false, unread = fal
   return !!unread && FAILED.has(s);
 }
 
+/** Slice 16 (owner direction): the pipeline ids of the marked features' members held for their turn (heldForTurn). */
+export function heldTurnPipelines(groups) {
+  const out = new Set();
+  for (const g of Array.isArray(groups) ? groups : []) {
+    if (!g || !g.smallRuns) continue;
+    for (const mb of Array.isArray(g.members) ? g.members : []) if (mb && mb.pipelineId && heldForTurn(mb)) out.add(String(mb.pipelineId));
+  }
+  return out;
+}
+
 /** The items Needs you holds: live items that need you, and History rows that do whose run is not
  *  listed live. countNeedsYou counts exactly these; the top bar's Activity lists them. */
-export function needsYouItems({ live = [], history = [] } = {}) {
+export function needsYouItems({ live = [], history = [], groups = [] } = {}) {
   const pids = new Set(live.map((r) => r && r.pipelineId).filter(Boolean));
+  // Slice 16 (owner direction): a run of a marked feature held for its turn does not need you (`groups` = GET
+  // /api/run-groups' groups, which app.js passes only with the flag on).
+  const held = heldTurnPipelines(groups);
   // D5: while a round of a run is working, that run is Working, never Needs you through its PR. A paused round is not
   // fixing anything: it counts for its pause, and its run for its PR (plan Task 3: 1 + 1).
   const fixing = new Set([...live, ...history].map((x) => {
     const m = roundMarkerOf(x);
     return m && FIXING_ROUND.has(String(x.status || '').toLowerCase()) ? String(m.pipelineId) : '';
   }).filter(Boolean));
-  const hist = history.filter((p) => p && !pids.has(p.id)
+  const hist = history.filter((p) => p && !pids.has(p.id) && !held.has(String(p.id))
     && needsYou({ kind: 'hist', status: p.status, prNeeds: prNeedsOf(p) && !fixing.has(String(p.id)) }));
   return {
-    live: live.filter((r) => r && needsYou({ kind: 'live', status: r.status, ask: !!r.ask, unread: !!r.unread })),
+    live: live.filter((r) => r && !held.has(String(r.pipelineId || '')) && needsYou({ kind: 'live', status: r.status, ask: !!r.ask, unread: !!r.unread })),
     // D8: a History row needs you through its PR only when done (a paused one for its pause); one item per open PR.
     history: dedupeByPr(hist, { prOnly: (p) => String(p.status || '').toLowerCase() === 'done',
       at: (p) => (Number.isFinite(stampMs(p.mtime)) ? stampMs(p.mtime) : stampMs(p.startedAt)) }).kept,
   };
 }
 
-/** The Runs badge: the Needs you count without building the list (runs on every WS frame). */
+/** Slice 7 (owner direction): the run groups held for your confirmation. `groups` = GET /api/run-groups' groups; the
+ *  server sends a confirmation `hold` only on a marked feature with the Shaper small runs flag on. */
+export const confirmHeldCount = (groups) => (Array.isArray(groups) ? groups : [])
+  .filter((g) => g && g.smallRuns && holdNeedsYou(g)).length;
+
+/** A confirmation or notes hold needs you only while the group model keeps it (a group whose runs are not all in
+ *  shows no hold and sits under Waiting): the Runs list's rule (groupRow), so the badge and the list agree. */
+const holdNeedsYou = (g) => isNeedsYouHold(g.hold) && isNeedsYouHold(groupModelOf(g).hold);
+
+/** Slice 11: whether a marked feature needs you, by groupRow's rule. A newest Verifier round that holds the group
+ *  (groupModel `check`) decides: a failed or asking round needs you, unless its own run is already counted (`counted`
+ *  pipeline ids; its row folds into the group); any other round, a confirmation hold included, does not. With no
+ *  round holding it, a confirmation or notes hold needs you (confirmHeldCount). groupModel runs only when the server
+ *  sent checks. */
+function groupNeedsYou(g, counted) {
+  if (!g || !g.smallRuns) return false;
+  const model = Array.isArray(g.checks) && g.checks.length ? groupModelOf(g) : null;
+  if (!model) return holdNeedsYou(g);
+  if (!model.check) return isNeedsYouHold(model.hold);
+  return (model.state === 'needs-you' || model.state === 'failed') && !counted.has(String(g.checks.at(-1).pipelineId || ''));
+}
+
+/** The Runs badge: the Needs you count without building the list (runs on every WS frame); slice 7: plus the features
+ *  held for your confirmation (`groups`, which the Runs list's Needs you section lists too); slice 11: plus the
+ *  features a failed or asking Verifier round holds. */
 export function countNeedsYou(src = {}) {
   const { live, history } = needsYouItems(src);
-  return live.length + history.length;
+  const counted = new Set([...live.map((r) => r.pipelineId), ...history.map((p) => p.id)].filter(Boolean).map(String));
+  const groups = (Array.isArray(src.groups) ? src.groups : []).filter((g) => groupNeedsYou(g, counted)).length;
+  return live.length + history.length + groups;
 }
 
 function baseRow(kind, st, fields, when, now) {
@@ -446,6 +487,22 @@ const posOf = (g) => (g.current && g.current === g.planning ? 'Planning' : g.cur
 const NEEDS_ICON = ['ask', 'paused', 'fail'];                                     // NEEDS_RANK order (cmpNeeds)
 const NEEDS_ICON_OF = { 'needs-you': 'ask', paused: 'paused', failed: 'fail' };
 
+/** Slice 16 (owner direction): a member of a marked feature (flag on: only then the server sends `slice`) whose answer
+ *  or resume the person already gave and that is only held for its turn. It does not need the person. */
+export function heldForTurn(mb) {
+  const sl = mb && mb.slice && typeof mb.slice === 'object' ? mb.slice : null;
+  if (!sl) return false;
+  return (!!sl.heldResume && Number.isInteger(sl.heldResume.after)) || (!!sl.stop && typeof sl.stop === 'object' && !!sl.stop.held);
+}
+const capFirst = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/** Slice 16 (D7): a held member that is not the current one, said once on the group line: "Run 4 waiting for its turn". */
+function heldWhy(row) {
+  const members = row.members || [];
+  const mb = members.find((x) => x.model && x.model.heldTurn && x.model !== row.model.current);
+  return mb ? `Run ${mb.position || members.indexOf(mb) + 1} ${HELD_TURN_WORD}` : '';
+}
+
 /** D9: why a group sits in Needs you, said on its own row: "Run 1 needs you · Checks failing". '' when the group's
  *  own line already says it (the needing member is its current one and asks, pauses or failed itself). */
 function needsWhy(row) {
@@ -473,10 +530,17 @@ export function listLine(row, { section = '', time = '' } = {}) {
     // D5: a member's live fix round names itself: "Run 3 · Round 9 · merge dev in".
     const rd = m.current && m.current.state === 'working' ? m.current.round : null;
     const stage = rd ? and(`Round ${rd.n}`, rd.by === 'watch' ? rd.request : '') : m.current ? STAGED(m.current) : '';
+    // Slice 11 (D7): a Verifier round that holds the group names itself, in every section.
+    if (m.check) return and(m.line, time);
     if (row.needs) { const why = needsWhy(row); if (why) return why; }
+    { const held = heldWhy(row); if (held) return held; }
+    // Slice 16 (D7): the current member is held for its turn: "Waiting for its turn · Run 4", in every section.
+    if (m.current && m.current.heldTurn && (m.state === 'paused' || m.state === 'needs-you')) return and(capFirst(HELD_TURN_WORD), p, stage);
     // The short form only where the section already says the state; a paused or waiting group keeps its word.
     if ((section === 'needs' && (m.state === 'needs-you' || m.state === 'failed'))
       || (section === 'running' && (m.state === 'working' || m.state === 'starting'))) return and(p, stage) || m.word;
+    // Slice 18 (D11): an open confirmation holds an In review feature; its own PR would otherwise leave only the time.
+    if (m.state === 'in-review' && m.hold) return and(m.line, time);
     switch (m.state) {
       case 'starting': case 'working': case 'needs-you': case 'paused': return and(m.word, p, stage);
       case 'waiting': return and('Waiting', p, ((m.current && m.current.line) || '').replace(/^Waiting(?: · )?/, ''));
@@ -503,14 +567,22 @@ export function listLine(row, { section = '', time = '' } = {}) {
   }
 }
 
+/** §2.4: a group's cost per pipeline (a group with `g.cost`), max(stored, live) each: { [pipelineId]: usd }. One
+ *  source for the group total and the feature page's Cost tab (R-arch-2). */
+export function groupCostParts(g, liveCost = {}) {
+  const by = (g.cost && g.cost.byPipeline) || {};
+  const parts = {};
+  for (const [id, stored] of Object.entries(by)) parts[id] = Math.max(Number(stored) || 0, Number(liveCost[id]) || 0);
+  // A member that started after the last /api/run-groups load is live but not in byPipeline yet: it still counts.
+  for (const [id, live] of Object.entries(liveCost)) if (!(id in by)) parts[id] = Number(live) || 0;
+  return parts;
+}
+
 /** §2.4: the group total, max(stored, live) per pipeline, held by `memo` so it never goes down (D32). */
 export function groupCostUsd(g, liveCost = {}, memo = null) {
   let usd = 0;
   if (g.cost) {
-    const by = g.cost.byPipeline || {};
-    for (const [id, stored] of Object.entries(by)) usd += Math.max(Number(stored) || 0, Number(liveCost[id]) || 0);
-    // A member that started after the last /api/run-groups load is live but not in byPipeline yet: it still counts.
-    for (const [id, live] of Object.entries(liveCost)) if (!(id in by)) usd += Number(live) || 0;
+    for (const v of Object.values(groupCostParts(g, liveCost))) usd += v;
   } else {
     usd = (g.members || []).reduce((a, m) => a + (Number(m.cost) || 0), 0);   // a plain chain: its members' rows
   }
@@ -533,13 +605,21 @@ export function costTitle(r) {
 }
 
 /** One group (chain, feature or user group) as a list row. Members keep their order; `count` is "2/3". */
+/** A server group's groupModel, as its list row reads it (groupRow, and the badge's groupNeedsYou). */
+function groupModelOf(g, { now = Date.now() } = {}) {
+  // The badge reads GET /api/run-groups' groups as sent: their members carry a top-level status, no `run`.
+  const runOf = (mb) => mb.run || (mb.status ? { status: mb.status } : {});
+  const raw = (g.members || []).map((mb) => ({ ...runOf(mb), memo: mb.memo || null, ...(heldForTurn(mb) ? { heldTurn: true } : {}) }));
+  const planningRaw = g.planning ? { ...runOf(g.planning), memo: g.planning.memo || null } : null;
+  return groupModel({ kind: g.groupKind === 'feature' ? 'feature' : 'chain', title: g.title, members: raw,
+    planning: planningRaw, pr: g.pr || null, memo: g.memo || null, hold: g.hold || null, ...(Array.isArray(g.checks) ? { checks: g.checks } : {}) }, { now });
+}
+
 export function groupRow(g, { now = Date.now() } = {}) {
-  const raw = (g.members || []).map((mb) => ({ ...(mb.run || {}), memo: mb.memo || null }));
-  const planningRaw = g.planning ? { ...(g.planning.run || {}), memo: g.planning.memo || null } : null;
-  const model = groupModel({ kind: g.groupKind === 'feature' ? 'feature' : 'chain', title: g.title, members: raw,
-    planning: planningRaw, pr: g.pr || null, memo: g.memo || null, hold: g.hold || null }, { now });
+  const model = groupModelOf(g, { now });
   const members = (g.members || []).map((mb, i) => ({ ...mb, key: `member:${g.id}/${mb.pipelineId || mb.ticketId || i}`, model: model.members[i],
-    needs: needsYou({ kind: mb.kind || 'hist', status: mb.run && mb.run.status, ask: !!(mb.run && mb.run.pendingQuestion != null),
+    // Slice 16 (owner direction): a run held for its turn does not need you.
+    needs: !heldForTurn(mb) && needsYou({ kind: mb.kind || 'hist', status: mb.run && mb.run.status, ask: !!(mb.run && mb.run.pendingQuestion != null),
       prNeeds: prNeedsOf(mb.run) }) }));
   const planning = g.planning ? { ...g.planning, key: `member:${g.id}/planning`, model: model.planning } : null;
   // `cur` also matches Planning, so the row's runId / pipelineId / href point at the planning run while it is the
@@ -548,20 +628,25 @@ export function groupRow(g, { now = Date.now() } = {}) {
     || members.find((mb) => mb.model === model.current) || members[0] || null;
   // D12: a group's dispatch time is its planning run's start, else its first member's.
   const firstAt = [...(g.planning ? [g.planning] : []), ...(g.members || [])].map((mb) => timeMs(mb.startedAt, now)).find(Number.isFinite);
+  // Slice 11 (D8, D9, D12): the feature's Verifier rounds as check rows after the runs; a round that waits for you or
+  // failed puts the group in Needs you with that state's icon.
+  const checks = Array.isArray(g.checks) ? g.checks.map((c) => ({ ...c, key: `check:${g.id}/${c.pipelineId}` })) : null;
+  const checkNeeds = model.check && (model.state === 'needs-you' || model.state === 'failed') ? NEEDS_ICON_OF[model.state] : '';
   return {
     kind: 'chain', groupKind: g.groupKind || 'chain', key: `chain:${g.id}`, groupId: String(g.id),
     // Run 3 (D3): every group row opens its own page in the pane; the current member's ids stay for the ⋯ and alerts.
     href: `${g.groupKind === 'feature' ? '#feature' : '#group'}/${encodeURIComponent(g.id)}`,
     runId: (cur && cur.runId) || '', pipelineId: (cur && cur.pipelineId) || '', projectKey: '',
     title: String(g.title || '(untitled)'), status: '', groupKey: String(g.groupKey || ''), groupName: String(g.groupName || ''),
-    by: '', unread: false, needs: members.some((mb) => mb.needs), time: '', sortMs: now, dispatchMs: firstAt, open: false,   // set by buildRunsModel (D29)
+    // Slice 7 (D3): a feature held for your confirmation sits in Needs you too (no member asks: no icon).
+    by: '', unread: false, needs: members.some((mb) => mb.needs) || isNeedsYouHold(model.hold) || !!checkNeeds, time: '', sortMs: now, dispatchMs: firstAt, open: false,   // set by buildRunsModel (D29)
     // cmpNeeds ranks by needsIcon || icon (ask, paused, fail); a group takes its most urgent member's.
-    needsIcon: NEEDS_ICON.find((ic) => members.some((mb) => mb.needs && NEEDS_ICON_OF[mb.model.state] === ic)) || '',
+    needsIcon: NEEDS_ICON.find((ic) => members.some((mb) => mb.needs && NEEDS_ICON_OF[mb.model.state] === ic)) || checkNeeds || '',
     model, count: model.count.text, members,
     costUsd: groupCostUsd(g, g.liveCost || {}, g.costMemo || null),
     // The planning run's keys too, so its own list row folds into the group.
-    memberKeys: new Set([...members, ...(planning ? [planning] : [])].flatMap((mb) => [mb.pipelineId && `p:${mb.pipelineId}`, mb.ticketId && `t:${mb.ticketId}`, mb.runId && `r:${mb.runId}`]).filter(Boolean)),
-    planning,
+    memberKeys: new Set([...members, ...(planning ? [planning] : []), ...(checks || [])].flatMap((mb) => [mb.pipelineId && `p:${mb.pipelineId}`, mb.ticketId && `t:${mb.ticketId}`, mb.runId && `r:${mb.runId}`]).filter(Boolean)),
+    planning, ...(checks ? { checks } : {}),
     // D2 (D1): a Shaper small-runs feature (the server's marker) says its cost on the row; every other group keeps dev's keys.
     ...(g.smallRuns ? { smallRuns: true } : {}),
   };
@@ -798,7 +883,9 @@ export function buildRunsModel({
   const groupOf = (r) => groupRows.find((x) => rowChainKeys(r).some((k) => x.memberKeys.has(k))) || null;
   // Needs before the fold (runs-list-needs-before-collapse): a member that needs you raises its group.
   // The raised group also takes the member's needs icon, so cmpNeeds ranks it (a live failed-unread member counts too).
-  for (const r of rows0) { const g = r.needs ? groupOf(r) : null; if (g) { g.needs = true; g.needsIcon ||= r.needsIcon || r.icon || ''; } }
+  // Slice 16 (owner direction): a member held for its turn does not raise its group.
+  const heldPids = heldTurnPipelines(groups);
+  for (const r of rows0) { const g = r.needs && !heldPids.has(String(r.pipelineId || '')) ? groupOf(r) : null; if (g) { g.needs = true; g.needsIcon ||= r.needsIcon || r.icon || ''; } }
   const placed = new Set();
   const top = [];
   for (const r of rows0) {
@@ -1077,8 +1164,39 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
         { level: 'member', checked, selecting, lineFrom, now, roundsOpen, roundsAll, smallRuns: !!r.smallRuns, status, parentWhere: r.kind === 'chat-group' ? r.groupName || '' : '',
           position: r.kind !== 'chain' || r.groupKind === 'user' || mb.adhoc ? '' : String(mb.position) }));
     }
+    for (const c of r.checks || []) list.append(renderCheckRow(doc, c));
     item.append(list);
   }
+  return item;
+}
+
+/** Slice 11 (D9, D10, D16): one Verifier round after a group's runs, a member-level row: the shield and the dot in the
+ *  pick column (no checkbox), its words, its cost on hover, no ⋯. It opens the round's run page. */
+function renderCheckRow(doc, c) {
+  const words = checkRowWords(c);
+  const dot = checkRowDot(c.state, c.gaps);
+  const item = doc.createElement('div');
+  item.className = 'runs-item is-check';
+  item.dataset.rowKey = c.key;
+  item.dataset.level = 'check';
+  if (dot.mark) item.dataset.mark = dot.mark;
+  const pick = doc.createElement('span');
+  pick.className = 'runs-pick';
+  const shield = icon(doc, 'shield', 12);
+  const base = { state: dot.runState, ...RUN_STATES[dot.runState] };
+  const d = renderStatusDot(doc, dot.mark ? markDot(base, dot.mark, dot.label) : base);
+  if (!dot.label) { d.removeAttribute('role'); d.removeAttribute('aria-label'); d.setAttribute('aria-hidden', 'true'); }
+  pick.append(shield, d);
+  const a = doc.createElement('a');
+  a.className = 'runs-row runs-row-check';
+  a.setAttribute('href', c.href || '#runs');
+  a.dataset.line = words.text;
+  a.dataset.state = dot.runState;
+  if (c.runId) a.dataset.runId = c.runId;
+  if (c.pipelineId) a.dataset.pipelineId = c.pipelineId;
+  a.title = costTitle({ kind: 'check', cost: typeof c.cost === 'number' ? c.cost : null });
+  a.append(textEl(doc, 'span', 'runs-row-title', words.title), textEl(doc, 'span', 'runs-row-sub', words.word));
+  item.append(pick, a);
   return item;
 }
 

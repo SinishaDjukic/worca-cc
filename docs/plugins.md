@@ -56,7 +56,7 @@ files count.
 
 ## Tasks from your tracker
 
-An installed task source adds its button to New pipeline › **Task source** (Advanced). Search issues or work items,
+An installed task source adds its button to New run › **Task source** (Advanced). Search issues or work items,
 or paste a GitHub issue URL or `owner/repo#123`, and the ticket becomes the run's task. Each source can close its
 issue or work item when the run succeeds. Ask Worca can also find a ticket and propose a run for it.
 

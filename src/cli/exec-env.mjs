@@ -19,6 +19,7 @@ Usage:
   worca exec-env list                                        the registered execution environments
   worca exec-env status --project <key|dir>                  a project's spec, settings and builds, as the running
                                                              server sees them (this shell's view when none runs)
+  worca exec-env specs [--json]                              every project that has an environment spec, with it
   worca exec-env spec --project <key|dir> [--set <file.json> | --clear] [--json]
                                                              show, set or clear the project's environment spec
   worca exec-env build --project <key|dir> [--backend <name>] [--spec <file.json>] [--no-wait]
@@ -67,6 +68,19 @@ export async function cmdExecEnv(argv, { out, fail, call = callUi, sleep = (ms) 
   if (!verb || verb === 'help' || verb === '--help') { out(EXEC_ENV_HELP); return 0; }
   let o; try { o = parse(rest); } catch (err) { fail(err.message); return 2; }
   if (verb === 'list') { for (const e of describeExecEnvs()) out(`${e.name.padEnd(10)} ${e.label}`); return 0; }
+  if (verb === 'specs') {
+    // `worca container build` in the hardened box runs this inside the box: the projects live there.
+    const list = [];
+    for (const p of await listProjects()) {
+      let spec = null;
+      try { spec = readProjectExecEnv(p.key).spec; } catch { spec = null; }
+      if (spec) list.push({ key: p.key, name: p.name || '', spec });
+    }
+    if (o.json) out(JSON.stringify(list));
+    else if (!list.length) out('no project has an environment spec');
+    else for (const p of list) out(`${(p.name || p.key).padEnd(24)} ${p.key}  ${p.spec.tools.length} tools, ${p.spec.apt.length} apt packages (${p.spec.hash})`);
+    return 0;
+  }
   if (!['status', 'spec', 'build'].includes(verb)) { fail(`unknown exec-env command: ${verb} (see: worca exec-env help)`); return 1; }
   if (!o.project) { fail('--project <key|dir> is required'); return 2; }
   if (verb === 'spec' && o.set && o.clear) { fail('--set and --clear exclude each other'); return 2; }

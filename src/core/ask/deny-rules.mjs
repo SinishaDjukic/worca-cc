@@ -4,6 +4,7 @@
 // file tools (file-deps.mjs) check every path against the SAME rules through askPathDenied below — the two
 // engines cannot drift.
 import { homedir } from 'node:os';
+import { SECRET_FILE_RULE_PATHS, VAULT_NAME_PREFIX } from '../secrets/files.mjs';
 
 // Deny beats allow, and the chat's worktrees live INSIDE the home
 // (<home>/ask/<thread>/wt/…), so the home cannot be denied as a whole: worca's
@@ -17,6 +18,7 @@ export const ASK_DENY_RULES = Object.freeze([
   'Read(//**/worca-cc.db*)',           // the DB (+ -wal/-shm/backups), wherever the home is
   'Read(//**/worca.db*)',              // the pre-rename DB file, still present on older homes
   'Read(//**/secrets.json)',           // plugins/*/data/secrets.json and any other
+  ...SECRET_FILE_RULE_PATHS.filter((p) => p.includes(VAULT_NAME_PREFIX)).map((p) => `Read(${p})`),   // the vault, its key and locks, wherever the home is (the proxy login: below)
   'Read(//**/.env*)',
   'Read(//**/.worca-cc/settings.json)',
   'Read(//**/.worca-cc/store/**)',     // run store: transcripts, logs, artifacts

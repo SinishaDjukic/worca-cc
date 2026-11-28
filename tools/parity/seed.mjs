@@ -80,7 +80,9 @@ async function chatTurn(t, fetchImpl, threadId, { ms = 60_000, pollMs = 200 } = 
 
 export async function seed(t, { fetchImpl = fetch, helloImpl = helloRuns, pollMs } = {}) {
   await call(t, fetchImpl, '/api/settings', { uiLevel: 'expert', theme: 'light' });
-  await call(t, fetchImpl, '/api/onboarding', { welcomeSeen: true });
+  // The one-time notices a first load would show and record seen (the welcome; #1450's role-defaults toast, which an
+  // empty role shows on every new home): seen here, so no shot depends on whether that record beat the next reload.
+  await call(t, fetchImpl, '/api/onboarding', { welcomeSeen: true, roleDefaultsNoticeSeen: true });
   await call(t, fetchImpl, '/api/worca-level/ack', { what: 'welcome' });   // the level welcome is a boot-time modal too
   const { projects } = await call(t, fetchImpl, '/api/projects', { name: 'sandbox', path: t.projectPath });
   const project = projects.find((p) => p.name === 'sandbox');   // by name: macOS realpaths /var → /private/var

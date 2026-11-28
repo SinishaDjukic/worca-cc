@@ -11,13 +11,18 @@ import { join } from 'node:path';
 import { WebSocket } from 'ws';
 import { JSDOM } from 'jsdom';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { gitDir } from './helpers/git-dir.mjs';
-import { seedPipelineRow } from './helpers/db-seed.mjs';
+import { gitDir, templateRepo } from './helpers/git-dir.mjs';
+import { seedPipeline, seedPipelineRow } from './helpers/db-seed.mjs';
+import { graphResumePoint } from './helpers/graph-templates.mjs';
+import { addProject } from '../src/core/projects.mjs';
+import { readCostCapOverride } from '../src/core/cost-budget.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { createThread, linkRun as askLinkRun, listMessages, appendMessage as askAppendMessage } from '../src/core/ask/store.mjs';
-import { createSliceFeature, featureView, recordShapePlan, recordShip, retireFeaturesOf, featureThread, currentFeatureId } from '../src/core/shape/features.mjs';
+import { createSliceFeature, featureView, recordShapePlan, recordShip, retireFeaturesOf, featureThread, currentFeatureId, sliceGateState } from '../src/core/shape/features.mjs';
 import { getTicket, requestRunNow, cancelTicket } from '../src/core/scheduler.mjs';
+import { checkCombine } from '../src/core/git-sync.mjs';
+import { listNotifications } from '../src/core/notifications.mjs';
 import { nightModeToggle } from '../src/core/settings.mjs';
 import { writeStoreMeta } from '../src/core/artifacts.mjs';
 import { readServerSource, SERVER_MJS } from '../src/core/read-server-source.mjs';
@@ -27,10 +32,12 @@ import { withEnv as withEnvVars } from './helpers/with-env.mjs';
 import { NO_ADO, REMOTES_V, okRun, failRun, argOf, ghCalls, git, stubShip, shipKit } from './helpers/ship-world.mjs';
 import { world, SIXTEEN_RUN_STATES } from './helpers/shape-sixteen-runs.mjs';
 import { planStop, heldRefusal } from '../src/shared/shape/run-stops.mjs';
+// A namespace read, so a missing new export (featureAnswerPlace, whereToAnswerOf) fails only its own tests.
+import * as CHAIN from '../src/core/shape/chain.mjs';
 
 useTempHome(after, 'worca-shape-server-slices-');
 
-let srv, base, wsBase, runs, testing, project, schedulerTick;
+let srv, base, wsBase, runs, testing, project, schedulerTick, pauseRun;
 const JSONH = { 'Content-Type': 'application/json' };
 const post = (p, b) => fetch(`${base}${p}`, { method: 'POST', headers: JSONH, body: JSON.stringify(b) });
 const get = (p) => fetch(`${base}${p}`);
@@ -40,7 +47,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 before(async () => {
   process.env.WORCA_MOCK = '1';
   const mod = await import('../ui/server.mjs');
-  ({ runs, schedulerTick } = mod);
+  ({ runs, schedulerTick, pauseRun } = mod);
   testing = mod._testing;
   srv = mod.server;
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
@@ -175,6 +182,86 @@ test("GET feature and the card's feature: dev's exact keys with small runs off, 
   assert.deepEqual([on.card.care, on.card.requirementKinds], [on.api.care, on.api.requirementKinds]);
   // Everything dev returns is the same with the flag on.
   for (const k of DEV.api) assert.deepEqual(on.api[k], off.api[k], k);
+});
+
+// Slice 7 (D10, R-arch-4): the view says whether a chat follows the feature, only for a marked one with the flag on.
+test('s7 R-arch-4: a feature started without a chat has no chat card', async () => {
+  const marker = (pid) => getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run('{"smallRuns":true}', pid);
+  const on = (fn) => withEnvVars({ WORCA_FLAGS: 'shaperSmallRuns' }, fn);
+  const both = async (id, pid) => [await view(id), (await (await get(`/api/shape/pipelines/${pid}/card`)).json()).feature];
+  const chatless = mk(1, 'done');
+  marker(chatless.pid);
+  await on(async () => {
+    for (const v of await both(chatless.id, chatless.pid)) assert.equal(v.hasChat, false);
+    await testing.offerShipCard(chatless.pid);                     // every run is done
+    assert.equal(featureThread(chatless.id), null);
+    assert.equal(getDb().prepare('SELECT COUNT(*) AS n FROM ask_run_links WHERE pipeline_id = ?').get(chatless.pid).n, 0);
+    const blocks = getDb().prepare('SELECT blocks FROM ask_messages').all().map((r) => String(r.blocks || '')).join('\n');
+    assert.equal(blocks.includes(chatless.id) || blocks.includes(chatless.pid), false, 'no chat card names it');
+  });
+  const chatted = mk(1, 'done');
+  marker(chatted.pid);
+  const thread = createThread({ title: 'charts' });
+  askLinkRun(thread.id, { runId: 'run-s7-chat', pipelineId: chatted.pid, cardId: 'card_s7' });
+  await on(async () => { for (const v of await both(chatted.id, chatted.pid)) assert.equal(v.hasChat, true); });
+  // Unmarked with the flag on, and marked with the flag off: dev's keys, no hasChat at all.
+  const plain = mk(1, 'done');
+  await on(async () => { for (const v of await both(plain.id, plain.pid)) assert.equal('hasChat' in v, false, 'unmarked'); });
+  await withEnvVars({ WORCA_FLAGS: undefined }, async () => {
+    for (const f of [chatless, chatted]) for (const v of await both(f.id, f.pid)) assert.equal('hasChat' in v, false, 'flag off');
+  });
+});
+
+// Slice 18 (R-arch-4, D4, D7): the chat texts read, when they are sent, whether a chat follows the run's feature.
+const smallMarker = (pid) => getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run('{"smallRuns":true}', pid);
+const smallOn = (fn) => withEnvVars({ WORCA_FLAGS: 'shaperSmallRuns' }, fn);
+const markedFeature = (over) => { const f = mk(1, 'done', over); smallMarker(f.pid); return f; };
+const chatOn = (pid, tag) => askLinkRun(createThread({ title: tag }).id, { runId: `run-${tag}`, pipelineId: pid, cardId: `card_${tag}` });
+
+test('s18 (R-arch-4): featureAnswerPlace answers as the feature view\'s hasChat, and null for unmarked, unknown and flag off', async () => {
+  assert.equal(typeof CHAIN.featureAnswerPlace, 'function', 'chain.mjs exports featureAnswerPlace');
+  const chatless = markedFeature();
+  const chatted = markedFeature();
+  chatOn(chatted.pid, 's18_chat');
+  const plain = mk(1, 'done');                       // no marker
+  await smallOn(async () => {
+    assert.deepEqual(CHAIN.featureAnswerPlace(chatless.pid), { featureId: chatless.id, hasChat: false });
+    assert.deepEqual(CHAIN.featureAnswerPlace(chatted.pid), { featureId: chatted.id, hasChat: true });
+    for (const f of [chatless, chatted]) assert.equal(CHAIN.featureAnswerPlace(f.pid).hasChat, (await view(f.id)).hasChat, f.id);
+    assert.equal(CHAIN.featureAnswerPlace(plain.pid), null, 'unmarked');
+    assert.equal(CHAIN.featureAnswerPlace('no-such'), null, 'unknown pipeline');
+  });
+  await withEnvVars({ WORCA_FLAGS: undefined }, async () => {
+    for (const f of [chatless, chatted]) assert.equal(CHAIN.featureAnswerPlace(f.pid), null, 'flag off');
+  });
+});
+
+test('s18 (R-arch-4): featureAnswerPlace of a re-planned feature\'s run answers for the newest feature, and finds the first chat', async () => {
+  assert.equal(typeof CHAIN.featureAnswerPlace, 'function', 'chain.mjs exports featureAnswerPlace');
+  const first = markedFeature();
+  chatOn(first.pid, 's18_replan');
+  const next = markedFeature({ replaces: first.id });
+  await smallOn(async () => assert.deepEqual(CHAIN.featureAnswerPlace(first.pid), { featureId: next.id, hasChat: true }));
+});
+
+test('s18 (R-arch-4): whereToAnswerOf maps a live run id to its pipeline, falls back to the id, and returns null on a throw', async () => {
+  assert.equal(typeof CHAIN.whereToAnswerOf, 'function', 'chain.mjs exports whereToAnswerOf');
+  const chatless = markedFeature();
+  await smallOn(async () => {
+    const where = CHAIN.whereToAnswerOf(new Map([['run-1', { pipelineId: chatless.pid }]]));
+    assert.equal(where('run-1')?.hasChat, false, 'the run\'s pipeline');
+    assert.equal(CHAIN.whereToAnswerOf(new Map())(chatless.pid)?.hasChat, false, 'an unknown run id is read as a pipeline id');
+    assert.equal(where('run-unknown'), null);
+    assert.equal(CHAIN.whereToAnswerOf({ get: () => { throw new Error('boom'); } })('run-1'), null, 'a throw is null');
+  });
+});
+
+test('s18 (R-arch-4): the server builds whereToAnswerOf once from its runs and hands it to the notifier and the chat actions', () => {
+  const src = readServerSource(undefined, { routes: false });
+  assert.equal(src.split('whereToAnswerOf(runs)').length - 1, 1, 'built once, from the runs Map');
+  const block = (from, to) => { const at = src.indexOf(from); assert.ok(at >= 0, from); return src.slice(at, src.indexOf(to, at)); };
+  assert.match(block('const chatNotifier = createNotifier({', '\n});'), /\bwhereToAnswer\b/, 'createNotifier');
+  assert.match(block('const chatActions = {', '\n};'), /\bwhereToAnswer\b/, 'chatActions');
 });
 
 test('GET feature: a settled entry is ignored (the pipelines row decides), a paused or plan-asking one is shown (F26)', async () => {
@@ -1319,6 +1406,199 @@ test('small runs: Run now on a slice whose builds-on is unfinished is refused as
   cancelTicket(t3);
 }));
 
+/** A marked 4-run world whose runs 2 and 3 each branch off run 1 (run 3 finished last, so run 4 would start from its
+ *  branch) and run 4, not started, builds on both. `clash`: both change the same line of src/a.mjs (a fixture file of the
+ *  temp repo); else each adds its own file. → { w, t4, two, three } (two/three = the branch names) */
+function siblingDepsWorld({ clash }) {
+  const w = shipWorld({ slices: 4, prs: false });
+  const [p1, p2, p3] = w.pids;
+  const db = getDb();
+  db.prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), p1);
+  const outline = JSON.parse(db.prepare('SELECT outline FROM shape_features WHERE id = ?').get(w.f.id).outline);
+  outline.slices[3].dependsOn = ['s2', 's3'];
+  db.prepare('UPDATE shape_features SET outline = ? WHERE id = ?').run(JSON.stringify(outline), w.f.id);
+  const commit = (file, text) => { writeFileSync(join(w.dir, file), text); git(w.dir, 'add', '-A'); git(w.dir, 'commit', '-qm', file); };
+  git(w.dir, 'checkout', '-q', `feat/${p1}`);
+  mkdirSync(join(w.dir, 'src'), { recursive: true });
+  commit('src/a.mjs', "export const a = 'one';\n");
+  for (const [pid, n] of [[p2, 2], [p3, 3]]) {
+    git(w.dir, 'checkout', '-q', '-B', `feat/${pid}`, `feat/${p1}`);
+    commit(clash ? 'src/a.mjs' : `sibling${n}.txt`, `export const a = '${n}';\n`);
+  }
+  git(w.dir, 'checkout', '-q', 'main');
+  w.pids.slice(0, 3).forEach((pid, i) => db.prepare('UPDATE pipelines SET branch = ?, updated_at = ? WHERE id = ?')
+    .run(JSON.stringify({ source: i ? `feat/${p1}` : 'main', feature: `feat/${pid}` }), `2026-01-0${i + 1}T00:00:00.000Z`, pid));
+  unrun(w.f.id, 4);
+  const t4 = sliceTicket(w.f.id, 4);
+  quietBut(t4);
+  return { w, t4, two: `feat/${p2}`, three: `feat/${p3}` };
+}
+
+test('small runs: the run started for slice 4 holds the work of both runs it builds on, not only the latest one', () => withEnvVars(SMALL_ON, async () => {
+  const { w, t4, two, three } = siblingDepsWorld({ clash: false });
+  const heads = [two, three].map((b) => git(w.dir, 'rev-parse', b));
+  await tickUntil(() => getTicket(t4).status !== 'scheduled');
+  assert.equal(getTicket(t4).status, 'fired', getTicket(t4).failReason || '');
+  const run = await firedRun(t4);
+  assert.equal(run.branch.source, three, 'the recorded source is still the latest finished run\'s branch');
+  assert.ok(run.head, 'run 4 has a checkout');
+  assert.ok(isAncestor(w.dir, heads[1], run.head), "run 3's commits are in run 4's branch");
+  assert.ok(isAncestor(w.dir, heads[0], run.head), "run 2's commits are in run 4's branch");
+  const audit = getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ?').all(run.pid).map((r) => r.text);
+  assert.ok(audit.some((t) => t.startsWith(`Combined the work of run 2 (\`${two}\`) into `) && t.endsWith(' before the first agent.')),
+    audit.join('\n'));
+}));
+
+test('E1 small runs: slice 4 is held while runs 2 and 3 clash; Start now answers 409 DEPENDENCY_CLASH until it is settled', () => withEnvVars(SMALL_ON, async () => {
+  const { w, t4, two, three } = siblingDepsWorld({ clash: true });
+  const reason = 'runs 2 and 3 clash in src/a.mjs';
+  const refs = git(w.dir, 'for-each-ref');
+  const start = () => post(`/api/shape/features/${w.f.id}/start`, {});
+  try {
+    await tickUntil(() => featureView(w.f.id).held || getTicket(t4).status !== 'scheduled');
+    assert.equal(getTicket(t4).status, 'scheduled', 'run 4 did not start');
+    assert.equal(getTicket(t4).pipelineId, null);
+    assert.equal(getTicket(t4).failReason, null);
+    const v = await view(w.f.id);
+    assert.equal(v.approveEach, false);
+    assert.deepEqual(v.held, { index: 4, ticketId: t4, reason });
+    // Start now with the clash unsettled: refused with the reason, and nothing starts.
+    const refused = await start();
+    assert.deepEqual([refused.status, await refused.json()], [409, { error: reason, code: 'DEPENDENCY_CLASH' }]);
+    assert.deepEqual([getTicket(t4).status, getTicket(t4).forced, getTicket(t4).attempts], ['scheduled', false, 0]);
+    assert.equal(runs.get(t4), undefined);
+    assert.equal(git(w.dir, 'for-each-ref'), refs, 'no ref was written or moved');
+    assert.equal(spawnSync('git', ['rev-parse', '-q', '--verify', 'MERGE_HEAD'], { cwd: w.dir }).status === 0, false, 'no merge in progress');
+    assert.equal((await view(w.f.id)).held?.reason, reason, 'still held');
+    // The owner settles the clash on run 3's branch, without pushing.
+    git(w.dir, 'checkout', '-q', three);
+    spawnSync('git', ['merge', '--no-edit', two], { cwd: w.dir });
+    writeFileSync(join(w.dir, 'src', 'a.mjs'), "export const a = 'settled';\n");
+    git(w.dir, 'add', '-A'); git(w.dir, 'commit', '-q', '--no-edit');
+    git(w.dir, 'checkout', '-q', 'main');
+    const heads = [two, three].map((b) => git(w.dir, 'rev-parse', b));
+    const res = await start();
+    const body = await res.json();
+    assert.equal(res.status, 200, JSON.stringify(body));
+    assert.equal(body.status, 'fired', body.failReason || '');
+    const run = await firedRun(t4);
+    assert.ok(run.head, 'run 4 has a checkout');
+    assert.ok(isAncestor(w.dir, heads[0], run.head), "run 2's commits are in run 4's branch");
+    assert.ok(isAncestor(w.dir, heads[1], run.head), "run 3's commits are in run 4's branch");
+    assert.equal((await view(w.f.id)).held, null);
+  } finally {
+    if (runs.get(t4) && !['done', 'stopped', 'error'].includes(String(runs.get(t4).status))) await firedRun(t4);
+  }
+}));
+
+/** `git` with `input` on stdin (hash-object, mktree). */
+const gitIn = (cwd, input, ...args) => {
+  const r = spawnSync('git', args, { cwd, input, encoding: 'utf8' });
+  if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
+  return r.stdout.trim();
+};
+/** Commit `file` on `branch` with no checkout. → the new commit */
+function commitOnRef(dir, branch, file, text) {
+  const parent = git(dir, 'rev-parse', `refs/heads/${branch}`);
+  const blob = gitIn(dir, text, 'hash-object', '-w', '--stdin');
+  const tree = gitIn(dir, `${git(dir, 'ls-tree', parent)}\n100644 blob ${blob}\t${file}\n`, 'mktree');
+  const commit = git(dir, 'commit-tree', tree, '-p', parent, '-m', file);
+  git(dir, 'update-ref', `refs/heads/${branch}`, commit, parent);
+  return commit;
+}
+/** The runs-map entry of fired ticket `id`, once its launch settled. */
+async function settledRun(id, ms = 60000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms && !runs.get(id)?.settled) await sleep(25);
+  assert.ok(runs.get(id)?.settled, `the run of ticket ${id} settled`);
+  return runs.get(id);
+}
+const attemptRow = (pid) => getDb().prepare('SELECT status, archived_at FROM pipelines WHERE id = ?').get(pid);
+const runErrorNotices = (ticketId) => listNotifications().filter((n) => n.ticketId === ticketId && n.kind === 'run_error');
+/** Leave no seam, no live run and no waiting ticket of `t4` behind. */
+async function releaseSetupWorld(t4) {
+  testing.setCombineGateDeps?.(null);
+  if (runs.get(t4) && !['done', 'stopped', 'error'].includes(String(runs.get(t4).status))) await firedRun(t4);
+  if (getTicket(t4)?.status === 'scheduled') cancelTicket(t4);
+}
+
+test("E2 (R-qa-2) small runs: run 4's built-on branch moves after the clash check and clashes at setup; run 4 is held with Start now, not failed", () => withEnvVars(SMALL_ON, async () => {
+  const { w, t4, two, three } = siblingDepsWorld({ clash: false });
+  const reason = 'runs 2 and 3 clash in sibling3.txt';
+  const [twoBefore, threeBefore] = [two, three].map((b) => git(w.dir, 'rev-parse', b));
+  const start = () => post(`/api/shape/features/${w.f.id}/start`, {});
+  const verdicts = [];
+  let moved = null;
+  try {
+    testing.setCombineGateDeps({ checkCombine: async (dir, opts) => {
+      const v = await checkCombine(dir, opts);
+      verdicts.push(v.status);
+      // Run 2 moves right after the fire-time check: it now adds sibling3.txt too, with other content than run 3's.
+      if (!moved) moved = commitOnRef(w.dir, two, 'sibling3.txt', "export const a = 'moved';\n");
+      return v;
+    } });
+    await tickUntil(() => runs.get(t4));
+    const attempt = await settledRun(t4);
+    assert.equal(verdicts[0], 'clean', 'the fire-time check found the combine clean');
+    const pid = attempt.pipelineId;
+    const branch = attempt.orch.state?.branch?.feature || branchOf(pid)?.feature;
+    // 1. The same ticket waits again: not failed.
+    const ticket = getTicket(t4);
+    assert.deepEqual({ status: ticket.status, pipelineId: ticket.pipelineId, forced: ticket.forced, failReason: ticket.failReason },
+      { status: 'scheduled', pipelineId: null, forced: false, failReason: null });
+    // 2, 3. The feature holds on the clash.
+    assert.deepEqual(featureView(w.f.id).held, { index: 4, ticketId: t4, reason });
+    assert.equal(featureView(w.f.id).slices.find((s) => s.index === 4).state, 'held');
+    // 4. No failed-run notice.
+    assert.deepEqual(runErrorNotices(t4), []);
+    // 5. The attempt is archived and its empty branch is gone.
+    for (let i = 0; i < 200 && !attemptRow(pid).archived_at; i++) await sleep(25);
+    assert.ok(attemptRow(pid).archived_at, 'the attempt is archived');
+    assert.ok(branch && branch !== two && branch !== three, `the attempt had a branch of its own: ${branch}`);
+    assert.notEqual(spawnSync('git', ['rev-parse', '-q', '--verify', `refs/heads/${branch}`], { cwd: w.dir }).status, 0,
+      `${branch} no longer resolves`);
+    // 6. The built-on branches are as their owners left them.
+    assert.deepEqual([two, three].map((b) => git(w.dir, 'rev-parse', b)), [moved, threeBefore]);
+    // 7. Start now with the clash unsettled: refused with the reason.
+    testing.setCombineGateDeps(null);
+    const refused = await start();
+    assert.deepEqual([refused.status, await refused.json()], [409, { error: reason, code: 'DEPENDENCY_CLASH' }]);
+    // 8. Settled on run 2's branch, Start now fires the same ticket.
+    git(w.dir, 'update-ref', `refs/heads/${two}`, twoBefore);
+    const res = await start();
+    assert.ok(res.ok, `Start now answered ${res.status}: ${await res.clone().text()}`);
+    await tickUntil(() => getTicket(t4).status === 'fired');
+    const run = await firedRun(t4);
+    assert.equal(getTicket(t4).status, 'fired', getTicket(t4).failReason || '');
+    assert.ok(run.pid && run.pid !== pid, 'a new attempt');
+    assert.equal(getTicket(t4).pipelineId, run.pid);
+  } finally { await releaseSetupWorld(t4); }
+}));
+
+test('E3 (R-qa-2) small runs: a setup error that is not a clash still fails the run', () => withEnvVars(SMALL_ON, async () => {
+  const { w, t4 } = siblingDepsWorld({ clash: false });
+  const error = 'the run before it is still merging its work back';
+  try {
+    testing.setCombineGateDeps({ checkCombine: async (dir, opts) => {
+      const v = await checkCombine(dir, opts);
+      // Run 3 reads as still merging back right after the fire-time check: the run's own setup check finds it pending.
+      getDb().prepare('UPDATE pipelines SET branch = ?, updated_at = ? WHERE id = ?').run(JSON.stringify({ source: `feat/${w.pids[0]}`,
+        feature: `feat/${w.pids[0]}`, sameAsSource: true, worktreeDir: join(w.dir, 'merging') }), new Date().toISOString(), w.pids[2]);
+      return v;
+    } });
+    await tickUntil(() => runs.get(t4));
+    const attempt = await settledRun(t4);
+    const pid = attempt.pipelineId;
+    assert.equal(attemptRow(pid).status, 'error');
+    assert.deepEqual([getTicket(t4).status, getTicket(t4).pipelineId], ['fired', pid]);
+    assert.equal(runErrorNotices(t4).length, 1);
+    const frames = attempt.events.filter((e) => e.type === 'error');
+    assert.ok(frames.some((e) => e.message === error), JSON.stringify(frames));
+    assert.ok(frames.every((e) => !('clash' in e)), 'only a clash adds `clash` to the error frame');
+    assert.equal(attemptRow(pid).archived_at, null);
+  } finally { await releaseSetupWorld(t4); }
+}));
+
 /** A one-PR world whose last slice (3) was rebuilt on `from`'s branch as feat/<tag>, finishing last. */
 const rebuildLast = (w, from, tag, k = 3) => {
   git(w.dir, 'checkout', '-q', '-b', `feat/${tag}`, from);
@@ -1685,7 +1965,7 @@ test('a Verifier run this server is still finishing: view and card read verifyin
     assert.equal((await card()).verify.state, 'verifying');
     const refused = await post(`/api/shape/features/${f.id}/resume`, {});
     assert.equal(refused.status, 409);
-    assert.deepEqual(await refused.json(), { code: 'NOTHING_TO_RESUME', error: 'nothing to resume now: the Verifier is not stopped, a run or round is not over, or Shaper small runs is off' });
+    assert.deepEqual(await refused.json(), { code: 'NOTHING_TO_RESUME', error: 'nothing to resume now: the Verifier is not stopped, a run or round is not over, or the Shaper Labs switch is off' });
     e.settled = true;
     assert.deepEqual([(await view(f.id)).verify.state, (await view(f.id)).status, (await card()).verify.state], ['halted', 'active', 'halted']);
   } finally { dropEntry(e); }
@@ -1817,7 +2097,8 @@ shipT('a commit made inside the second push of the head branch: 409 NOT_READY, a
     return okRun('');
   } });
   assert.deepEqual([r.status, r.body.code, r.body.prs?.length], [409, 'NOT_READY', 3], JSON.stringify(r.body));
-  assert.match(r.body.error, /or Resume, if the card reads Stopped/);
+  assert.match(r.body.error, /or Resume on the feature page, if it reads Stopped/);
+  assert.doesNotMatch(r.body.error, /\bcard\b/, 'a feature with no chat has no card');
   assert.equal(w.pushes(w.pids[2]), 2);
   assert.equal(shipMode(w.f.id), null);
 }));
@@ -2030,4 +2311,439 @@ test('S7-T12b run 11 as a plan approval: the second approval is refused on the p
     assert.deepEqual(await planAnswer(w.entry(11), 'q11'), [409, { error: PLAN_REFUSAL }]);
     assert.equal(w.of(11).length, 1);
   } finally { w.cleanup(); }
+}));
+
+// ── Shaper small runs, slice 3: the answer routes over a take-in that refuses, waits or runs ─────────────────────────
+const TAKE_REASON = 'runs 2 and 3 clash in src/a.mjs';
+/** A marked feature with run 2 live at its stop, its stand-in orch answering takeInBeforeAnswer with `reply`. */
+function takeInStop({ three = false, reply = { ok: true, merged: [] } } = {}) {
+  const w = stoppedFeature({ three });
+  getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), w.f.pid);
+  const taken = [];
+  w.e2.orch.takeInBeforeAnswer = async () => { taken.push(w.e2.id); return reply; };
+  return { ...w, taken };
+}
+
+test('slice 3 routes: POST /api/answer replies 409 TAKE_IN_REFUSED with the reason and the question stays open', () => withEnvVars(SMALL_ON, async () => {
+  const w = takeInStop({ reply: { ok: false, refused: true, reason: TAKE_REASON } });
+  try {
+    const r = await post('/api/answer', { runId: w.e2.id, id: 'gate-w9-3', payload: { decision: 'continue' } });
+    assert.deepEqual([r.status, await r.json()], [409, { error: TAKE_REASON, code: 'TAKE_IN_REFUSED' }]);
+    assert.equal(w.e2.pendingQuestion?.id, 'gate-w9-3');
+    assert.deepEqual([w.taken.length, w.answered.length], [1, 0]);
+  } finally { w.cleanup(); }
+}));
+
+test('slice 3 routes: POST /api/runs/:id/answer maps the same refusal to 409 TAKE_IN_REFUSED', () => withEnvVars(SMALL_ON, async () => {
+  const w = takeInStop({ reply: { ok: false, refused: true, reason: TAKE_REASON } });
+  w.e2.pendingQuestion = { id: 'plan-w9-1', kind: 'plan', stop: planStop({ run: 2 }) };
+  try {
+    const r = await post(`/api/runs/${w.e2.id}/answer`, { id: 'plan-w9-1', decision: 'approve' });
+    assert.deepEqual([r.status, await r.json()], [409, { error: TAKE_REASON, code: 'TAKE_IN_REFUSED' }]);
+    assert.equal(w.e2.pendingQuestion?.id, 'plan-w9-1');
+    assert.equal(w.answered.length, 0);
+  } finally { w.cleanup(); }
+}));
+
+test('slice 3 routes: a take-in that succeeds answers the run, resolves the question and replies 200', () => withEnvVars(SMALL_ON, async () => {
+  const w = takeInStop();
+  try {
+    const r = await post('/api/answer', { runId: w.e2.id, id: 'gate-w9-3', payload: { decision: 'continue' } });
+    assert.deepEqual([r.status, await r.json()], [200, { ok: true }]);
+    assert.deepEqual([w.taken.length, w.answered.length], [1, 1]);
+    assert.equal(w.e2.pendingQuestion, null);
+  } finally { w.cleanup(); }
+}));
+
+test('slice 3 routes: a take-in that waits replies {ok:true, held:true}', () => withEnvVars(SMALL_ON, async () => {
+  const w = takeInStop({ reply: { ok: false, wait: true, after: 3 } });
+  try {
+    const r = await post('/api/answer', { runId: w.e2.id, id: 'gate-w9-3', payload: { decision: 'continue' } });
+    assert.deepEqual(await r.json(), { ok: true, held: true });
+    assert.equal(w.e2.heldStop?.after, 3);
+    assert.equal(w.answered.length, 0);
+  } finally { w.cleanup(); }
+}));
+
+test('slice 3 (R-arch-11): answerRun stays synchronous on an unmarked feature and returns a promise only for a take-in', () => withEnvVars(SMALL_ON, async () => {
+  const unmarked = stoppedFeature({ three: false });
+  try {
+    assert.equal(testing.answerRun(unmarked.e2.id, 'gate-w9-3', { decision: 'continue' }, 'ann'), undefined);
+    assert.equal(unmarked.answered.length, 1);
+    assert.equal(unmarked.e2.pendingQuestion, null);
+  } finally { unmarked.cleanup(); }
+  const w = takeInStop();
+  try {
+    const out = testing.answerRun(w.e2.id, 'gate-w9-3', { decision: 'continue' }, 'ann');
+    assert.equal(typeof out?.then, 'function');
+    assert.equal(await out, undefined);
+    assert.equal(w.e2.pendingQuestion, null);
+  } finally { w.cleanup(); }
+}));
+
+test('slice 3 (D11, D13) liveSliceOf: a take-in in flight reads going; a refusal shows only on the question it was for', async () => {
+  const w = stoppedFeature({ three: false });
+  try {
+    const { liveSliceOf } = await import('../ui/server.mjs');
+    const plain = liveSliceOf(w.e2.pipelineId);
+    assert.deepEqual(plain.stop, { reason: 'objection', held: false });
+    w.e2.takingIn = 'gate-w9-3';
+    const taking = liveSliceOf(w.e2.pipelineId);
+    assert.deepEqual([taking.stop.going, taking.asking], [true, true]);
+    w.e2.takingIn = null;
+    w.e2.takeInRefused = { id: 'gate-w9-3', reason: TAKE_REASON };
+    assert.equal(liveSliceOf(w.e2.pipelineId).stop.refused, TAKE_REASON);
+    w.e2.takeInRefused = { id: 'gate-w9-2', reason: TAKE_REASON };
+    assert.deepEqual(liveSliceOf(w.e2.pipelineId), plain, 'a refusal of an earlier question is not shown');
+  } finally { w.cleanup(); }
+});
+
+test('slice 3 (D4): a settled run delivers the held answers that waited for its teardown', () => withEnvVars(SMALL_ON, async () => {
+  const w = takeInStop({ three: true });
+  try {
+    const r = await post('/api/answer', { runId: w.e2.id, id: 'gate-w9-3', payload: { decision: 'continue' } });
+    assert.deepEqual(await r.json(), { ok: true, held: true });
+    // Run 3 reads done and has settled; only the settle hook runs (no scheduler tick, no run frame).
+    Object.assign(w.e3, { status: 'done', settled: true });
+    setPipe(w.e3.pipelineId, 'done');
+    await testing.afterRunSettled(plainSettle(w.e3.pipelineId));
+    for (let i = 0; i < 50 && !w.answered.length; i++) await sleep(10);
+    assert.deepEqual([w.taken.length, w.answered.length], [1, 1]);
+    assert.equal(w.e2.pendingQuestion, null);
+  } finally { w.cleanup(); }
+}));
+
+// ── Shaper small runs, slice 5 (R-po-3, R-arch-1): a boot resume holds the turn until it fails or is live ────────────
+test("S5: run 9's boot resume fails, the next tick starts run 10", () => withEnvVars(SMALL_ON, async () => {
+  const repo = templateRepo('s5-boot', { branch: 'main', user: true, files: { 'README.md': 'boot\n' } });
+  writeStoreMeta(projectKey(repo), 'project', { key: projectKey(repo), name: 'S5', path: repo });
+  const fx = world(repo, { done: [1, 2, 3, 4, 8, 11], states: { 5: { pipe: 'paused' }, 9: { pipe: 'paused' } } });
+  // The finished runs' work branches exist, so run 10 can start from them.
+  for (const run of [1, 2, 3, 4, 8, 11]) git(repo, 'branch', `feat/${fx.pipelineOf(run)}`);
+  const pid9 = fx.pipelineOf(9);
+  const [t10, t13] = [fx.ticketOf(10), fx.ticketOf(13)];
+  getDb().prepare('UPDATE pipelines SET resume_point = ? WHERE id = ?').run('{"version":2,"pauseReason":"drain"}', pid9);
+  try {
+    const seen = [];
+    const resume = async (pid) => {
+      seen.push({ pid, resuming: testing.liveSliceOf(pid)?.resuming, gate: sliceGateState(getTicket(t10), { live: testing.liveSliceOf })?.state });
+      throw new Error('refused');
+    };
+    const out = await testing.autoResumeOnBoot({ env: {}, resume });
+    assert.deepEqual(seen.filter((s) => s.pid === pid9), [{ pid: pid9, resuming: true, gate: 'waiting' }], 'run 10 waits while run 9 is being resumed');
+    assert.deepEqual(out.failed.filter((f) => f.pipelineId === pid9).map((f) => f.error), ['refused']);
+    assert.equal(testing.liveSliceOf(pid9), null, 'the failed resume frees the turn');
+    assert.equal(sliceGateState(getTicket(t10), { live: testing.liveSliceOf })?.state, 'ok');
+    // A tick another request started may still be in flight (schedulerTick answers null then): wait for a pass of our own.
+    let pass = null;
+    for (const end = Date.now() + 5000; (pass = await schedulerTick()) === null && Date.now() < end;) await sleep(20);
+    assert.ok(pass, 'a scheduler pass ran');
+    assert.ok(pass.fired.includes(t10), `run 10 starts: ${getTicket(t10).failReason || JSON.stringify(pass)}`);
+    assert.ok(pass.waiting.includes(t13), 'run 13 waits behind run 10');
+  } finally {
+    if (getTicket(t10)?.status === 'fired') await firedRun(t10);
+    getDb().prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE status = 'scheduled'").run();
+    rmSync(repo, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+}));
+
+// ── Shaper small runs, slice 7 (R-po-4, R-po-5): a resume waits its turn ────────────────────────────────────────────
+/** An 8-run feature on an onboarded project, marked small-runs unless `marked` is false: run 1 done; run `paused` a
+ *  paused run resumeRun can resume (worktree on disk, resume point); run `working` a running runs-map entry. */
+async function resumeServerWorld({ paused = 5, working = 8, marked = true, second = null, rp = {} } = {}) {
+  getDb().prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE status = 'scheduled'").run();
+  const proj = mkdtempSync(join(tmpdir(), 'worca-s7-proj-'));
+  const wt = mkdtempSync(join(tmpdir(), 'worca-s7-wt-'));
+  await addProject({ name: `s7-${nextId()}`, path: proj });
+  const origin = pipe('done');
+  const f = createSliceFeature({ pipelineId: origin, projectDir: proj, title: 'Resume waits', outline: outlineOf(8), perspectives: ['product'],
+    workflowId: 'wf_shape', startedBy: 'ann', base: { mock: true }, smallRuns: false });
+  if (marked) getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), origin);
+  const { id: pid } = await seedPipeline(proj, { title: `run ${paused}`, status: 'paused',
+    branch: { source: 'main', feature: 'f', worktreeDir: wt, reusedExisting: false }, resumePoint: graphResumePoint({ pipelineDir: proj, ...rp }) });
+  fire(f.id, paused, pid);
+  let pid2 = null;
+  if (second != null) {
+    const wt2 = mkdtempSync(join(tmpdir(), 'worca-s7-wt-'));
+    ({ id: pid2 } = await seedPipeline(proj, { title: `run ${second}`, status: 'paused',
+      branch: { source: 'main', feature: 'f', worktreeDir: wt2, reusedExisting: false }, resumePoint: graphResumePoint({ pipelineDir: proj }) }));
+    fire(f.id, second, pid2);
+  }
+  const going = working == null ? null : pipe('running');
+  if (going) fire(f.id, working, going);
+  const goingEntry = going ? liveEntry(going) : null;
+  // No other run of the feature may start by itself: these tests are about the paused run only.
+  const quiet = () => getDb().prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE status = 'scheduled'").run();
+  quiet();
+  const entriesOf = (of = pid) => [...runs.values()].filter((e) => e.pipelineId === of);
+  /** The working run finishes: only a scheduler pass may deliver what waited for it. */
+  const finishWorking = () => { dropEntry(goingEntry); setPipe(going, 'done'); };
+  const cleanup = async () => {
+    quiet();
+    for (const id of [pid, pid2]) if (id) testing.heldStops?.dropResume(id);
+    if (goingEntry) dropEntry(goingEntry);
+    for (const e of [...entriesOf(), ...(pid2 ? entriesOf(pid2) : [])]) {
+      try { await e.orch?.stop?.(); } catch { /* best effort */ }
+      if (e.launch) await Promise.race([e.launch.catch(() => {}), sleep(5000)]);
+      runs.delete(e.id);
+    }
+    rmSync(proj, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+    rmSync(wt, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  };
+  return { f, pid, pid2, entriesOf, finishWorking, cleanup };
+}
+const eventsOf = (pid) => getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ? ORDER BY id').all(pid).map((r) => r.text);
+const storedStatus = (pid) => getDb().prepare('SELECT status FROM pipelines WHERE id = ?').get(pid).status;
+
+test('slice 7: resumeRun on paused run 5 while run 8 works returns {ok, held: true, after: 8} and writes nothing', () => withEnvVars(SMALL_ON, async () => {
+  const w = await resumeServerWorld();
+  try {
+    const events = eventsOf(w.pid);
+    // ignoreCostCap is the first thing a resume would write.
+    const out = await testing.resumeRun(w.pid, { by: 'ann', ignoreCostCap: true });
+    assert.deepEqual(out, { ok: true, held: true, pipelineId: w.pid, after: 8 });
+    assert.deepEqual(w.entriesOf(), [], 'no runs-map entry');
+    assert.deepEqual(eventsOf(w.pid), events, 'no audit line');
+    assert.ok(!readCostCapOverride(w.pid), 'no cost override');
+    assert.equal(storedStatus(w.pid), 'paused');
+  } finally { await w.cleanup(); }
+}));
+
+test('slice 7: POST /api/resume passes the held answer through, with no runId', () => withEnvVars(SMALL_ON, async () => {
+  const w = await resumeServerWorld();
+  try {
+    const r = await post('/api/resume', { pipelineId: w.pid });
+    assert.equal(r.status, 200);
+    assert.deepEqual(await r.json(), { ok: true, held: true, pipelineId: w.pid, after: 8 });
+    assert.deepEqual(w.entriesOf(), []);
+  } finally { await w.cleanup(); }
+}));
+
+test('slice 7: liveSliceOf composes the held-stops overlay', () => withEnvVars(SMALL_ON, async () => {
+  const w = await resumeServerWorld();
+  try {
+    await testing.resumeRun(w.pid, { by: 'ann' });
+    const held = testing.liveSliceOf(w.pid);
+    assert.deepEqual(held?.heldResume, { after: 8 });
+    assert.equal(held.status, 'paused');
+    assert.ok(!held.resuming);
+    assert.equal(testing.heldStops.dropResume(w.pid), true);
+    assert.equal(testing.liveSliceOf(w.pid), null, 'neither field once dropped');
+  } finally { await w.cleanup(); }
+}));
+
+test('slice 7: once run 8 is done, the next tick resumes held run 5 through resumeRun, as the person who asked', () => withEnvVars(SMALL_ON, async () => {
+  const w = await resumeServerWorld();
+  try {
+    await testing.resumeRun(w.pid, { by: 'ann' });
+    assert.deepEqual(w.entriesOf(), []);
+    w.finishWorking();
+    for (const end = Date.now() + 5000; (await schedulerTick()) === null && Date.now() < end;) await sleep(20);
+    for (let i = 0; i < 250 && !w.entriesOf().length; i++) await sleep(20);
+    const [entry] = w.entriesOf();
+    assert.ok(entry, 'run 5 is resumed');
+    assert.equal(entry.lastAction.by, 'ann');
+    assert.equal(testing.heldStops.heldResumeOf(w.pid), null);
+  } finally { await w.cleanup(); }
+}));
+
+for (const [name, env, marked] of [['flag on, a feature not marked small-runs', SMALL_ON, false], ['flag off, a marked feature', SMALL_OFF, true]]) {
+  test(`slice 7: resumeRun on paused run 3 with run 2 working starts it at once (${name})`, () => withEnvVars(env, async () => {
+    const w = await resumeServerWorld({ paused: 3, working: 2, marked });
+    try {
+      const out = await testing.resumeRun(w.pid, { by: 'ann' });
+      assert.ok(out.runId, JSON.stringify(out));
+      assert.ok(!out.held);
+      assert.ok(runs.has(out.runId), 'a runs-map entry exists');
+      assert.equal(testing.heldStops.heldResumeOf(w.pid), null, 'no held resume is recorded');
+    } finally { await w.cleanup(); }
+  }));
+}
+
+test('slice 7: pauseRun on a held paused run drops the hold and does not throw CANNOT_PAUSE', () => withEnvVars(SMALL_ON, async () => {
+  const w = await resumeServerWorld();
+  try {
+    // The entry this server holds for a run it paused: its harness cannot pause it again.
+    const entry = { id: `s7-paused-${w.pid}`, kind: 'run', pipelineId: w.pid, status: 'paused', events: [], pendingQuestion: null,
+      orch: { pause: () => false, state: {} } };
+    runs.set(entry.id, entry);
+    assert.equal((await testing.resumeRun(w.pid, { by: 'ann' })).held, true);
+    assert.deepEqual(testing.liveSliceOf(w.pid).heldResume, { after: 8 });
+    testing.chatActions.pause(entry.id, 'ann');
+    assert.equal(testing.heldStops.heldResumeOf(w.pid), null);
+    assert.equal('heldResume' in testing.liveSliceOf(w.pid), false);
+    assert.equal(entry.status, 'paused', 'still paused, not pausing');
+    assert.throws(() => testing.chatActions.pause(entry.id, 'ann'), (e) => e.code === 'CANNOT_PAUSE', 'with nothing held, as today');
+  } finally { await w.cleanup(); }
+}));
+
+test('slice 7: stopPausedPipeline on a held run with no runs-map entry drops the hold', () => withEnvVars(SMALL_ON, async () => {
+  const w = await resumeServerWorld();
+  try {
+    assert.equal((await testing.resumeRun(w.pid, { by: 'ann' })).held, true);
+    assert.deepEqual(w.entriesOf(), []);
+    const out = await testing.stopPausedPipeline(w.pid, 'ann');
+    assert.equal(out.status, 'stopped');
+    assert.equal(testing.heldStops.heldResumeOf(w.pid), null);
+  } finally { await w.cleanup(); }
+}));
+
+// Direction d0b6a6288 (D14, R-po-4): the feature card's and a stop line's Resume go through resumeRun, held at their turn.
+test("slice 7: the feature route's Resume on paused run 5 while run 8 works is held after run 8 and starts once run 8 is done", () => withEnvVars(SMALL_ON, async () => {
+  const w = await resumeServerWorld();
+  try {
+    const r = await post(`/api/shape/features/${w.f.id}/resume`, { index: 5 });
+    const body = await r.json();
+    assert.equal(r.status, 200, JSON.stringify(body));
+    assert.equal(body.action, 'resume');
+    assert.equal(body.held, true);
+    assert.equal(body.after, 8);
+    assert.equal(body.runId, undefined, 'nothing started');
+    assert.deepEqual(w.entriesOf(), []);
+    assert.deepEqual(testing.heldStops.heldResumeOf(w.pid), { after: 8 });
+    assert.equal(storedStatus(w.pid), 'paused');
+    w.finishWorking();
+    for (const end = Date.now() + 5000; (await schedulerTick()) === null && Date.now() < end;) await sleep(20);
+    for (let i = 0; i < 250 && !w.entriesOf().length; i++) await sleep(20);
+    assert.ok(w.entriesOf().length, 'run 5 is resumed at its turn');
+    assert.equal(testing.heldStops.heldResumeOf(w.pid), null);
+  } finally { await w.cleanup(); }
+}));
+
+test('slice 7: a resume over its pipeline cost cap is refused at once (needsOverride), not held', () => withEnvVars(SMALL_ON, async () => {
+  const w = await resumeServerWorld();
+  try {
+    await post('/api/settings', { pipelineCostLimitUsd: 1 });
+    getDb().prepare('UPDATE pipelines SET total_cost_usd = 2 WHERE id = ?').run(w.pid);
+    await assert.rejects(testing.resumeRun(w.pid, { by: 'ann' }), (e) => e.status === 403 && e.body?.needsOverride === true);
+    assert.equal(testing.heldStops.heldResumeOf(w.pid), null, 'nothing is held');
+    assert.equal(testing.liveSliceOf(w.pid), null);
+  } finally { await post('/api/settings', { pipelineCostLimitUsd: null }); await w.cleanup(); }
+}));
+
+test('slice 7: two resumes at once on runs 3 and 5 with nothing going: run 3 starts, run 5 is held after it', () => withEnvVars(SMALL_ON, async () => {
+  const w = await resumeServerWorld({ paused: 3, second: 5, working: null });
+  try {
+    const [three, five] = await Promise.all([testing.resumeRun(w.pid, { by: 'ann' }), testing.resumeRun(w.pid2, { by: 'bo' })]);
+    assert.ok(three.runId, JSON.stringify(three));
+    assert.deepEqual(five, { ok: true, held: true, pipelineId: w.pid2, after: 3 });
+    assert.deepEqual(w.entriesOf(w.pid2), [], 'run 5 started nothing');
+    assert.equal(testing.liveSliceOf(w.pid)?.resuming, undefined, 'the claim is released once run 3 is live');
+  } finally { await w.cleanup(); }
+}));
+
+test('slice 7: a second Resume while a held resume is being delivered answers 409, not a second run', () => withEnvVars(SMALL_ON, async () => {
+  const w = await resumeServerWorld();
+  try {
+    await testing.resumeRun(w.pid, { by: 'ann' });
+    w.finishWorking();
+    const delivery = testing.heldStops.deliver();
+    assert.equal(testing.liveSliceOf(w.pid)?.resuming, true, 'it reads as being resumed');
+    const r = await post('/api/resume', { pipelineId: w.pid });
+    assert.equal(r.status, 409);
+    assert.equal((await r.json()).code, 'RESUME_IN_FLIGHT');
+    await delivery;
+    assert.equal(w.entriesOf().length, 1, 'one run');
+  } finally { await w.cleanup(); }
+}));
+
+test('slice 7: a scheduled-resume ticket held for its turn is kept for the next tick, not fired', () => withEnvVars(SMALL_ON, async () => {
+  const w = await resumeServerWorld();
+  try {
+    const out = await testing.fireResumeTicket({ id: 'tk-s7', createdBy: 'ann', request: {} }, w.pid);
+    assert.deepEqual(out, { ok: false, hold: true, error: 'the run waits its turn (after run 8)' });
+    assert.deepEqual(testing.heldStops.heldResumeOf(w.pid), { after: 8 });
+    assert.deepEqual(w.entriesOf(), []);
+    assert.ok(!eventsOf(w.pid).some((t) => /resumed/i.test(t)), 'no "resumed" audit line');
+  } finally { await w.cleanup(); }
+}));
+
+test('slice 7: a scheduled-resume ticket that fires while its held resume is being delivered is held, not failed', () => withEnvVars(SMALL_ON, async () => {
+  const w = await resumeServerWorld();
+  try {
+    await testing.resumeRun(w.pid, { by: 'ann' });
+    w.finishWorking();
+    const delivery = testing.heldStops.deliver();
+    const out = await testing.fireResumeTicket({ id: 'tk-s7-flight', createdBy: 'ann', request: {} }, w.pid);
+    assert.deepEqual(out, { ok: false, hold: true, error: 'the run is being resumed' }, 'the next tick skips the resumed run');
+    await delivery;
+    assert.equal(w.entriesOf().length, 1, 'one run');
+  } finally { await w.cleanup(); }
+}));
+
+/** A network-paused resume point (network-wait.mjs) the watch would resume once the endpoint answers. */
+const netPaused = () => ({ pauseReason: 'recoverable', pauseClass: 'network',
+  network: { since: new Date(Date.now() - 10 * 60_000).toISOString(), origin: 'https://api.anthropic.com', reachable: false, waiting: false } });
+
+test('slice 7: the network watch leaves a held run alone: no resume, no "Network back" line', () => withEnvVars({ ...SMALL_ON, WORCA_NETWORK_WAIT: '1' }, async () => {
+  const w = await resumeServerWorld({ rp: netPaused() });
+  try {
+    assert.equal((await testing.resumeRun(w.pid, { by: 'ann' })).held, true);
+    testing.setNetworkProbe(async () => true);
+    for (let i = 0; i < 2; i++) assert.ok(!(await testing.networkWatchTick()).includes(w.pid));
+    assert.deepEqual(w.entriesOf(), []);
+    assert.ok(!eventsOf(w.pid).some((t) => /^Network back/.test(t)), 'no "Network back" audit line');
+    assert.deepEqual(testing.heldStops.heldResumeOf(w.pid), { after: 8 });
+  } finally { await w.cleanup(); }
+}));
+
+test('slice 7: Pause on a held run cancels its resume tickets, and neither a tick nor the network watch holds it again', () => withEnvVars({ ...SMALL_ON, WORCA_NETWORK_WAIT: '1' }, async () => {
+  const w = await resumeServerWorld({ rp: netPaused() });
+  try {
+    const entry = { id: `s7-paused-${w.pid}`, kind: 'run', pipelineId: w.pid, status: 'paused', events: [], pendingQuestion: null,
+      orch: { pause: () => false, state: {} } };
+    runs.set(entry.id, entry);
+    const r = await post('/api/schedules/resume', { pipelineId: w.pid, scheduledFor: new Date(Date.now() + 3_600_000).toISOString() });
+    assert.equal(r.status, 202, await r.text());
+    const ticket = getDb().prepare("SELECT id FROM scheduled_runs WHERE resume_pipeline_id = ? AND status = 'scheduled'").get(w.pid);
+    assert.ok(ticket);
+    assert.equal((await testing.resumeRun(w.pid, { by: 'ann' })).held, true);
+    testing.chatActions.pause(entry.id, 'ann');
+    assert.equal(getTicket(ticket.id).status, 'canceled', 'the resume ticket is canceled');
+    await schedulerTick();
+    testing.setNetworkProbe(async () => true);
+    assert.ok(!(await testing.networkWatchTick()).includes(w.pid), 'the network watch does not take it up');
+    assert.equal(testing.heldStops.heldResumeOf(w.pid), null, 'nothing holds it again');
+    assert.deepEqual(w.entriesOf().filter((e) => e !== entry), [], 'nothing started');
+    assert.equal(testing.heldStops.watchSkips(w.pid), true);
+    testing.heldStops.holdResume(w.pid, { by: 'ann' });
+    testing.heldStops.dropResume(w.pid);
+    assert.equal(testing.heldStops.watchSkips(w.pid), false, "the next Resume clears the Pause's drop");
+  } finally { runs.delete(`s7-paused-${w.pid}`); await w.cleanup(); }
+}));
+
+// ── Shaper small runs, slice 8 (R-ux-2): the run page learns before the press which run a Resume would wait for ──
+test('s8: GET /api/shape/pipelines/:pid/slice of paused run 5 while run 8 works returns resumeAfter 8', () => withEnvVars(SMALL_ON, async () => {
+  const w = await resumeServerWorld();
+  try {
+    const r = await get(`/api/shape/pipelines/${w.pid}/slice`);
+    assert.equal(r.status, 200);
+    const info = await r.json();
+    assert.deepEqual([info.index, info.state, info.resumeAfter], [5, 'paused', 8]);
+    assert.equal(testing.heldStops.heldResumeOf(w.pid), null, 'reading holds nothing');
+  } finally { await w.cleanup(); }
+}));
+
+// ── Shaper small runs, slice 9 (R-arch-3): no live slice reads "paused with a held stop answer" ─────────────────────
+test('slice 9: pausing a run with a held stop answer clears its question, so liveSliceOf carries no stop', () => withEnvVars(SMALL_ON, async () => {
+  const pid = pipe('running');
+  const entry = liveEntry(pid, { pending: { id: 'q2', kind: 'plan', stop: { reason: 'requirement', run: 2 } } });
+  const answered = [];
+  entry.heldStop = { id: 'q2', payload: { decision: 'keep' }, by: 'ann', after: 3 };
+  entry.orch.pause = () => true;
+  entry.orch.answer = (...args) => { answered.push(args); };
+  try {
+    assert.equal(testing.liveSliceOf(pid).stop.held, true);
+    pauseRun(entry.id, 'ann');
+    assert.equal(entry.status, 'pausing');
+    assert.equal(entry.pendingQuestion, null);
+    assert.equal('stop' in testing.liveSliceOf(pid), false, 'no stop while pausing');
+    entry.status = 'paused';                                 // as the state and done frames set it
+    const paused = testing.liveSliceOf(pid);
+    assert.equal(paused.status, 'paused');
+    assert.equal('stop' in paused, false, 'no stop once paused');
+    await testing.heldStops.deliver();
+    assert.equal(entry.heldStop, null, 'the stale held answer is dropped');
+    assert.deepEqual(answered, [], 'nothing is sent to the run');
+  } finally { dropEntry(entry); }
 }));

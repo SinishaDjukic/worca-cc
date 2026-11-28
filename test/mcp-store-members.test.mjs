@@ -117,3 +117,39 @@ test('a member marked pending by an interrupted write stays pending until its ne
   await putMember('billing', S, { values: { org: 'a' } }, { def });
   assert.deepEqual(disk('sets').sets.billing.members[0], { server: S, enabled: true, values: { org: 'a' } });
 });
+
+// ── secretVault on (file-backed OS-store fake): secrets are vault references, bound to SERVERID/FIELDKEY ──────────
+const { readFileSync: vaultRead } = await import('node:fs');
+const { isVaultRef } = await import('../src/core/secrets/refs.mjs');
+const { file: storeFile, vaultOn, vaultOf } = await import('./helpers/mcp-store-fixtures.mjs');
+
+test('flag on: a secret is stored as a vault reference, $env verbatim, the echo keeps the reference, a re-save leaves one entry', () => vaultOn(async () => {
+  await createSet('Billing');
+  await putMember('billing', S, { values: { org: 'acme' }, secrets: { token: 'tok-vault-0001', key: { $env: 'MCP_SENTRY_KEY' } } }, { def });
+  const text = vaultRead(storeFile('secrets'), 'utf8');
+  assert.ok(!text.includes('tok-vault-0001'));
+  const sec = disk('secrets').sets.billing[S];
+  assert.ok(isVaultRef(sec.token.value), sec.token.value);
+  assert.deepEqual(sec.key.value, { $env: 'MCP_SENTRY_KEY' });
+  assert.deepEqual((await vaultOf().list()).map((e) => [e.store, e.field]), [['mcp', `${S}/token`]]);
+  await putMember('billing', S, { values: { org: 'beta' }, secrets: { token: { set: true } } }, { def });
+  assert.equal(disk('secrets').sets.billing[S].token.value, sec.token.value, 'the echo keeps the reference');
+  await putMember('billing', S, { secrets: { token: ` ${sec.token.value} ` } }, { def });
+  assert.equal(disk('secrets').sets.billing[S].token.value, sec.token.value, 'a padded echo keeps the trimmed reference');
+  assert.equal(await vaultOf().resolve(sec.token.value, { store: 'mcp', field: `${S}/token` }), 'tok-vault-0001', '… and its entry');
+  await putMember('billing', S, { secrets: { token: 'tok-vault-0002' } }, { def });
+  const next = disk('secrets').sets.billing[S].token.value;
+  assert.ok(isVaultRef(next) && next !== sec.token.value);
+  const list = await vaultOf().list();
+  assert.deepEqual(list.map((e) => e.ref), [next], 'the old entry was released');
+  assert.equal(await vaultOf().resolve(next, { store: 'mcp', field: `${S}/token` }), 'tok-vault-0002');
+  await putMember('billing', S, { secrets: { token: null } }, { def });
+  assert.equal((await vaultOf().list()).length, 0, 'a cleared secret leaves no entry');
+}));
+
+test('flag on: an MCP write inside a vault transaction is refused lock-order before it waits', () => vaultOn(async () => {
+  await createSet('Billing');
+  await vaultOf().transaction(async () => {
+    await assert.rejects(putMember('billing', S, { secrets: { token: 'tok-x' } }, { def }), (err) => err.code === 'lock-order');
+  });
+}));

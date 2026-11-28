@@ -6,7 +6,7 @@ import {
   readSettings, writeSettingsKeys, assertCostLimitInputs, assertModelRolesInput, assertAskModelsInput, assertTestSettingsAccess,
   nextUsdCap, nextCostLimitResetPeriod, nextUiLevel, nextAutoGeneratePrDescription, nextSmartNaming, nextRunEngine,
   nextModelRoles, nextAskModels, nextNetworkProxy, nextProviders,
-  nextSyncSettings, nextNetworkWait, assertHideBuiltinModelsInput, DEFAULT_HIDE_BUILTIN_MODELS, assertExecEnvInput,
+  nextSyncSettings, nextNetworkWait, assertHideBuiltinModelsInput, DEFAULT_HIDE_BUILTIN_MODELS, assertExecEnvInput, sealSecrets,
 } from '../settings.mjs';
 import { settingsErrorReply, userLine, INTERNAL_KEY } from '../settings-errors.mjs';
 import { assertProxyLoginInput, savedLoginRefusal, saveProxyLogin, ProxyLoginError } from '../proxy-credentials.mjs';
@@ -18,7 +18,7 @@ import { SAVED_TEXT, SAVED_OFF_TEXT, PORT_PENDING_TEXT } from '../../shared/netw
 
 export const SETUP_GROUPS = Object.freeze({
   network: Object.freeze(['networkProxy', 'login']),
-  access: Object.freeze(['copilot', 'openai', 'anthropic']),
+  access: Object.freeze(['copilot', 'openai', 'anthropic', 'vault']),
   models: Object.freeze(['modelRoles', 'askModels', 'testRoles']),
   work: Object.freeze(['uiLevel', 'pipelineCostLimitUsd', 'totalCostLimitUsd', 'costLimitResetPeriod', 'autoGeneratePrDescription', 'smartNaming', 'runEngine',
     'hideBuiltinModels', 'sync', 'networkWait', 'execEnv']),
@@ -96,9 +96,30 @@ function importIds(name, v) {
 const isMaskedEcho = (v) => typeof v === 'string' && v.startsWith('••');
 
 /**
- * Phase 1: validate every group and compute what would be stored. Writes nothing, spawns nothing.
+ * Seal a provider patch's key in place (settings.mjs sealSecrets: with the secretVault flag on it becomes a vault
+ * reference; a reference that is not the stored one, in the key or the base URL, is refused). A refusal is the key
+ * field's error. Returns the seal's plain-fallback recheck, run on the fresh read in commitSetupPlan.
+ */
+async function sealProviderKey(name, patch, current) {
+  const stored = isObj(current.providers) && isObj(current.providers[name]) ? current.providers[name] : {};
+  const keys = Object.keys(patch).filter((k) => typeof patch[k] === 'string');
+  const items = keys.map((k) => ({ value: patch[k], current: stored[k], field: k === 'apiKey' ? `providers.${name}.apiKey` : null, vaulted: k === 'apiKey', allowRef: false }));
+  let values;
+  let recheck;
+  try { ({ values, recheck } = await sealSecrets(items)); } catch (err) {
+    if (err?.name === 'SettingsVaultError') throw new SetupFieldError(`access.${name}.apiKey`, err.message);
+    throw err;
+  }
+  keys.forEach((k, i) => { patch[k] = values[i]; });
+  return { name, recheck };
+}
+
+/**
+ * Phase 1: validate every group and compute what would be stored. Writes no settings and spawns nothing; with the
+ * secretVault flag on, a provider key is sealed into the vault here (an entry stays orphaned when a later field
+ * fails or the commit conflicts). `rechecks` carries each seal's plain-fallback recheck for commitSetupPlan.
  * @throws {SetupFieldError} the first invalid field, as { field, message, code? }
- * @returns {Promise<{values:Record<string,any>, written:string[], before:Record<string,any>, steps:object[], refused:object[], fromStep:string|null}>}
+ * @returns {Promise<{values:Record<string,any>, written:string[], before:Record<string,any>, steps:object[], refused:object[], fromStep:string|null, rechecks:{name:string, recheck:(settings:object)=>void}[]}>}
  */
 export async function planSetupApply(body, deps = {}) {
   // checkProxy has no default on purpose: a caller that forgets it must not skip the UNTESTED gate (fail closed).
@@ -113,6 +134,7 @@ export async function planSetupApply(body, deps = {}) {
     for (const k of Object.keys(body[g])) if (!keys.includes(k)) throw new SetupFieldError(`${g}.${k}`, `Worca has no setup field “${g}.${k}”.`);
   }
   const current = d.readSettings();
+  const rechecks = [];
   const next = {};            // top-level key -> value to store (undefined = delete)
   const refused = [];
   const steps = [];
@@ -171,9 +193,17 @@ export async function planSetupApply(body, deps = {}) {
   let signIn = false;
   let signInRefused = false;
   let openaiKey;
+  // access.vault (the secretVault flag, docs/secrets.md): 'move' moves the keys saved in files into the vault after
+  // the write (the vault-move step, which runs the OS key store check first); 'keep' leaves them. Not a provider.
+  let vaultMove = false;
+  if (own(access, 'vault')) {
+    if (access.vault !== 'move' && access.vault !== 'keep') throw new SetupFieldError('access.vault', '“Secret vault” must be move or keep.');
+    vaultMove = access.vault === 'move';
+  }
   // The body's own order (every key was checked against SETUP_GROUPS.access above), so refusal rows
   // follow the order the person entered the providers in; the side-effect steps keep the D20 order below.
   for (const name of Object.keys(access)) {
+    if (name === 'vault') continue;
     const a = access[name];
     if (!isObj(a)) throw new SetupFieldError(`access.${name}`, `“${PROVIDER_LABELS[name]}” must be an object.`);
     for (const k of Object.keys(a)) if (!PROVIDER_FIELDS[name].includes(k)) throw new SetupFieldError(`access.${name}.${k}`, `Worca has no setup field “access.${name}.${k}”.`);
@@ -197,6 +227,8 @@ export async function planSetupApply(body, deps = {}) {
     if (own(a, 'importModels')) imports[name] = importIds(name, a.importModels);
     if (Object.keys(patch).length) {
       assertTestSettingsAccess();
+      try { nextProviders(providers, name, patch); } catch (err) { throw providerFieldError(name, err); }   // validate before sealing
+      rechecks.push(await sealProviderKey(name, patch, current));
       try { providers = nextProviders(providers, name, patch); } catch (err) { throw providerFieldError(name, err); }
     }
   }
@@ -248,6 +280,7 @@ export async function planSetupApply(body, deps = {}) {
   }
   if (login) steps.push({ id: 'proxy-login', label: 'Proxy login', login });
   if (signIn) steps.push({ id: 'copilot-signin', label: 'GitHub Copilot sign-in' });
+  if (vaultMove) steps.push({ id: 'vault-move', label: 'Secret vault' });
   if (imports.copilot) steps.push({ id: 'copilot-import', label: 'Import Copilot models', ids: imports.copilot,
     ...(signInRefused ? { skip: 'Not run: GitHub Copilot sign-in is on the key page.' } : {}) });
   if (imports.openai) steps.push({ id: 'openai-import', label: 'Import OpenAI-compatible models', ids: imports.openai,
@@ -263,7 +296,7 @@ export async function planSetupApply(body, deps = {}) {
     }
   }
   if (fromStep !== null && !steps.some((s) => s.id === fromStep)) throw new SetupFieldError('fromStep', 'That step is not part of this setup, so there is nothing to retry there.');
-  return { values, written, before, steps, refused, fromStep };
+  return { values, written, before, steps, refused, fromStep, rechecks };
 }
 
 /**
@@ -276,6 +309,13 @@ export async function commitSetupPlan(plan, deps = {}) {
   const fresh = (deps.readSettings || readSettings)();
   const moved = plan.written.filter((k) => !sameValue(fresh[k], plan.before[k]));
   if (moved.length) throw new SetupConflictError(moved);
+  // After a plain fallback in Plan, a vault or a reference that appeared since refuses the plain write (D9).
+  for (const { name, recheck } of plan.rechecks || []) {
+    try { recheck(fresh); } catch (err) {
+      if (err?.name === 'SettingsVaultError') throw new SetupFieldError(`access.${name}.apiKey`, err.message);
+      throw err;
+    }
+  }
   return (deps.writeSettingsKeys || writeSettingsKeys)(plan.values);
 }
 
@@ -295,8 +335,26 @@ const DEFAULT_RUN_DEPS = {
   importCopilot: (ids) => importCopilotModels(ids),
   importEndpoint: (ids, o) => importEndpointModels(ids, o),
   testModel: (id) => testModel(id),
+  moveIntoVault: async () => moveIntoVault(),
 };
+
+/** The vault-move step: the OS key store check, then the one-time move (secrets/flag.mjs; only a native install). */
+export async function moveIntoVault({ env = process.env } = {}) {
+  const { secretVaultEnabled, migrateSecretsIfEnabled } = await import('../secrets/flag.mjs');
+  if (!secretVaultEnabled()) return { ok: false, line: 'The secret vault is not available here. Nothing was moved.' };
+  const { checkOsStore } = await import('../secrets/status.mjs');
+  const check = await checkOsStore({ env });
+  if (!check.ok) return { ok: false, line: `${check.label} did not pass its write and read check. Nothing was moved.` };
+  const { detectDeployment } = await import('../deployment.mjs');
+  const { isRemoteMode, readRemoteAccessConfig } = await import('../remote-access.mjs');
+  const deployment = detectDeployment(env, { remoteMode: isRemoteMode(readRemoteAccessConfig(env)) });
+  const r = await migrateSecretsIfEnabled({ reason: 'setup', deployment, env });
+  if (r.state !== 'done') return { ok: false, line: 'The keys were not moved. They keep working from their files. Try again from Settings › General.' };
+  const n = Object.values(r.moved || {}).reduce((a, b) => a + b, 0);
+  return { ok: true, line: n ? `Moved ${n} saved ${n === 1 ? 'secret' : 'secrets'} into the vault (${check.label}).` : 'Nothing was left to move.' };
+}
 const RUNNERS = {
+  'vault-move': async (_s, d) => d.moveIntoVault(),
   'proxy-swap': async (s, d) => {
     const r = await d.applyProxy(s.networkProxy, s.beforeFixed);
     if (r.upstreamError) return { ok: false, line: sentence(r.upstreamError) };

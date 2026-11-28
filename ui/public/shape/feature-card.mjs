@@ -11,6 +11,7 @@ import { FEATURE_KIND } from '../run-status-card.mjs';
 import { prototypeDetail } from './prototype-body.mjs';
 import { REQUIREMENTS_AGREED } from '../../../src/shared/shape/feature-log.mjs';
 import { VERIFY_WORDS } from '../../../src/shared/shape/verifier.mjs';
+import { confirmHold } from '../../../src/shared/shape/ship-ledger.mjs';
 import { runStatus } from '../../../src/shared/shape/run-status.mjs';
 import { stopLinesOf } from './stop-list.mjs';
 
@@ -33,17 +34,24 @@ const TARGET_STATUS = Object.freeze({ starting: 'starting', shaping: 'running', 
 /** s3: what the feature's controls act on (feature-actions.mjs). `cur` is the run the status line names. */
 function controlsOf(view, cur, m) {
   const active = view.status === 'active';
+  // Slice 8 (d8-7): the halted run's Resume would wait for run N (the server's preview); the Verifier's has no slice.
+  const haltedSlice = view.halted && Array.isArray(view.slices) ? view.slices[view.halted.index - 1] : null;
+  const resumeAfter = haltedSlice && Number.isInteger(haltedSlice.resumeAfter) ? haltedSlice.resumeAfter : null;
+  // Slice 16 (D9): the halted run's Resume is held for its turn after run N.
+  const resumeHeld = haltedSlice && haltedSlice.heldResume && Number.isInteger(haltedSlice.heldResume.after) ? haltedSlice.heldResume.after : null;
   return {
     // C5: a halted Verifier is Resume too (resumeFeature starts a fresh check); Re-plan the rest stays the runs'.
     featureId: view.id, active, halted: active && (!!view.halted || (!!view.verify && view.verify.state === 'halted')),
     rest: active && !!(view.open || view.halted),
     approveEach: view.approveEach !== false, planPipelineId: view.originPipelineId || null,
-    held: view.held ? { index: view.held.index } : null,
+    held: view.held ? { index: view.held.index, ...(view.held.reason ? { reason: view.held.reason } : {}) } : null,
     target: cur ? { index: cur.index, runId: (m && m.runId) || cur.runId || null, pipelineId: cur.pipelineId || null,
       status: m ? String(m.status || '') : TARGET_STATUS[cur.state] || null,
       // A run waiting at a question still reports `running`: it asks (Pause is off) while this tab sees its ask or the
       // server says the slice waits for an approval or answers.
       asks: (m && asks(m)) || cur.state === 'approval' || cur.state === 'questions' } : null,
+    ...(resumeAfter !== null ? { resumeAfter } : {}),
+    ...(resumeHeld !== null ? { resumeHeld } : {}),
   };
 }
 
@@ -57,7 +65,7 @@ function shapingModel(own, log) {
  * @returns {{phase: 'shaping'|'feature', log: object[],
  *   step: {index: number|null, runId: string|null, pipelineId: string|null, kind: string, id: string|null, snap: object|null}|null,
  *   controls: {featureId: string, active: boolean, halted: boolean, rest: boolean, approveEach: boolean, planPipelineId: string|null,
- *     held: {index: number}|null,
+ *     held: {index: number}|null, resumeAfter?: number, resumeHeld?: number,
  *     target: {index: number, runId: string|null, pipelineId: string|null, status: string|null, asks: boolean}|null}|null,
  *   notesLine: string|null, watch: {text: string, prUrl: string|null}|null}}
  */
@@ -126,6 +134,10 @@ const ONE_DETAIL = Object.freeze({
 });
 /** Fail closed: the ship ledger holds an agreed requirement with no run and no person (ship-ledger.mjs). */
 const unownedOf = (sr) => !!(sr && Array.isArray(sr.unowned) && sr.unowned.length);
+/** Shaper slice 7 (D9): a judged ledger (the server passed the runs: the Shaper small runs flag is on) carries `shown`
+ *  on its rows. Only then does an open confirmation hold the card; with the flag off the card is as before. */
+const judgedOf = (sr) => !!sr && [...(sr.confirmed || []), ...(sr.owned || [])].some((e) => e && 'shown' in e);
+const confirmOf = (sr) => (judgedOf(sr) ? confirmHold(sr) : null);
 /** Feature D1 (D16): the ship step's detail: `waiting for Compliance` while a confirmed requirement waits (role labels
  *  joined by "and"), the Ship card mounted or not (the owner's call: the state detail says who it waits for); the ledger's
  *  reason while a requirement has no run and no person;
@@ -133,8 +145,16 @@ const unownedOf = (sr) => !!(sr && Array.isArray(sr.unowned) && sr.unowned.lengt
 function shipDetail(view) {
   const ship = (view && view.ship) || {};
   const sr = ship.smallRuns || null;
-  if (ship.mode) return plural(sr ? sr.order.filter((o) => o.pr).length : (view.slices || []).filter((s) => s.pr && s.pr.url).length, 'PR') + ' open';
+  if (ship.mode) {
+    const prs = sr ? sr.order.filter((o) => o.pr) : [];
+    // Shipped as One: every run holds the same PR, counted once.
+    const n = !sr ? (view.slices || []).filter((s) => s.pr && s.pr.url).length : ship.mode === 'one' ? new Set(prs.map((o) => o.pr.url)).size : prs.length;
+    return `${plural(n, 'PR')} open`;
+  }
   if (unownedOf(sr)) return sr.reason;
+  const hold = confirmOf(sr);
+  if (hold) return hold;
+  if (sr && sr.blocked && judgedOf(sr)) return sr.reason;   // slice 7: only a reason is missing
   if (sr && sr.blocked) {
     const labels = [...new Set(sr.confirmed.filter((c) => c.state === 'waiting').map((c) => c.roleLabel))];
     return `waiting for ${labels.join(' and ')}`;
@@ -185,7 +205,8 @@ export function featureStateLine(view, { snapOf = () => null } = {}) {
   const next = nx ? `next: run ${nx.index}` : '';
   if (work || next) return [work, next].filter(Boolean).join(' · ');
   if (view.asks.length || all.some((s) => PERSON_ACTS.has(s.state) || s.cannotStart)) return MUST_ACT;
-  if (view.held && Number.isInteger(view.held.index)) return `Run ${view.held.index} waiting for you to start`;
+  // A clash hold names its reason once, on the held row; here it only reads held.
+  if (view.held && Number.isInteger(view.held.index)) return `Run ${view.held.index} ${view.held.reason ? 'is held' : 'waiting for you to start'}`;
   return VERIFY_WAIT.clean;
 }
 
@@ -258,8 +279,11 @@ export function oneCardModel({ own = null, card = null, snapOf = () => null } = 
   const vs = view && view.verify ? view.verify.state : null;
   const verify = state === 'SV' || state === 'SR' || (state === 'S8' && vs && !['clean', 'accepted', 'verifying'].includes(vs)) ? view.verify : null;
   // Fail closed: the Verifier's own "Ready to ship" gives way while a requirement has no run and no person.
-  const heldShip = state === 'SR' && unownedOf(view.ship && view.ship.smallRuns);
-  const vx = verify ? { verify, word: heldShip ? ICON_WORD.scheduled : VERIFY_WORDS[verify.state] || null } : {};
+  // Slice 7 (D9): so does it while a confirmation is open (flag on): the person is needed.
+  const sr = view && view.ship && view.ship.smallRuns;
+  const confirm = state === 'SR' && !unownedOf(sr) && !!confirmOf(sr);
+  const heldShip = state === 'SR' && (unownedOf(sr) || confirm);
+  const vx = verify ? { verify, word: confirm ? ICON_WORD.ask : heldShip ? ICON_WORD.scheduled : VERIFY_WORDS[verify.state] || null } : {};
   // Slice 7 (D5): S8 leads with the feature's state line and keeps its runs-done figure after it.
   const stateLine = state === 'S8' ? featureStateLine(view, { snapOf }) : null;
   const line = verify && verify.state === 'halted' && state === 'S8' ? VERIFY_HALTED : stateLine ? `${stateLine} · ${detail}` : detail;

@@ -5,7 +5,7 @@ name: CI
 # gated a publish, never a merge. Tags are left to that workflow; this one gates
 # every pull request and every push to dev.
 #
-# Tests run in two tiers (test/tiers.json): fast on every run, slow on dev pushes
+# Tests run in two tiers (test/tiers.json): fast on every code change, slow on dev pushes
 # and on PRs that touch what the slow tier exercises.
 #
 # Pushes to other branches don't run: a branch with an open PR is covered by the
@@ -13,29 +13,35 @@ name: CI
 # left the cancelled push run's checks red on the PR. A branch gets CI once it
 # has a PR (a draft PR is enough).
 #
-# Docs-only changes skip CI.
-# Safe while no status check is required on dev: a skipped workflow would
-# otherwise leave a required check pending forever.
+# The workflow starts on every pull request and every dev push, docs-only ones
+# included, and every run ends in one `CI gate` job, so a required gate always
+# reports (a required check that never runs would stay pending forever). A
+# docs-only pull request runs only `changes`, the fast tier (its tests read pages
+# under docs/) and `CI gate` (the `changes` job's `code` filter skips the rest);
+# a dev push runs every job.
+#
+# The fast tier runs on .nvmrc's Node only on a pull request, and on every supported
+# Node (22.19.0, 24, 26) on a dev push. The `full-node-matrix` label runs all three on
+# a PR from its next push (or a close and reopen), and keeps them while it stays. Adding
+# a label starts no run: a run that skipped the gate would read as Success to the
+# required check.
 on:
   push:
     branches: [dev]
-    paths:
-      - "**"
-      - "!docs/**"
   pull_request:
-    paths:
-      - "**"
-      - "!docs/**"
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: read
 
-# A new push to a PR (or to dev) cancels the run it supersedes. Group on the
-# branch name — head_ref on pull_request, ref_name on push — plus the head repo,
-# so a fork's same-named branch can't cancel ours.
+# A new push to a PR cancels the run it supersedes. The PR group is the head repo
+# plus head_ref, so a fork's same-named branch can't cancel ours. Dev pushes are
+# never cancelled: each push run gets a group of its own (run_id), because a
+# shared group with cancel-in-progress: false still cancels the older *pending*
+# run when a third one queues.
 concurrency:
-  group: ci-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}-{1}', github.event.pull_request.head.repo.full_name, github.head_ref) || format('push-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # Does a pull request touch what the slow tier (test/tiers.json "slow") exercises? A push
@@ -44,7 +50,7 @@ jobs:
   # test/tools-test-runner.test.mjs fails when they drift.
   changes:
     name: changed paths
-    if: github.event_name == 'pull_request'
+    if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     # The workflow-level `permissions: contents: read` drops every other scope; the filter
@@ -54,8 +60,20 @@ jobs:
       pull-requests: read
     outputs:
       engine: ${{ steps.filter.outputs.engine }}
+      code: ${{ steps.code.outputs.code }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Anything outside docs/? Its own step: `every` makes the negated pattern exclude docs/,
+      # and it would change the meaning of the any-of `engine` list below.
+      - id: code
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          predicate-quantifier: every
+          filters: |
+            code:
+              - '**'
+              - '!docs/**'
 
       - id: filter
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
@@ -129,20 +147,28 @@ jobs:
     # tools/test.mjs balances the shards by test/timings.json (longest first); each shard has
     # its own runner, WORCA_HOME and real-claude guard log. Every test file that
     # test/tiers.json does not list as slow.
-    # The supported range, both ends and the middle: the exact floor (package.json engines and
-    # MIN_NODE), .nvmrc's major (every other job, the release and the image run it) and the newest
-    # LTS, so a difference between them (1.15.0-rc.1 failed on one) shows up on dev instead of on a
-    # burned release tag. test/supply-chain.test.mjs keeps this list in step with both.
+    # A dev push runs the supported range, both ends and the middle: the exact floor (package.json
+    # engines and MIN_NODE), .nvmrc's major (every other job, the release and the image run it) and
+    # the newest LTS, so a difference between them (1.15.0-rc.1 failed on one) shows up on dev instead
+    # of on a burned release tag. A pull request runs .nvmrc's major only, unless it carries the
+    # full-node-matrix label (its current labels, so later pushes keep all three). `env` is not
+    # available in `strategy`, so both lists are literals; test/supply-chain.test.mjs keeps them in
+    # step with .nvmrc and MIN_NODE.
     name: fast tests (Node ${{ matrix.node }}, ${{ matrix.shard }}/4)
+    needs: changes
+    # No docs-only skip here: fast tests read pages under docs/, so a docs-only pull request runs them too.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        node: ['22.19.0', 24, 26]
+        node: ${{ fromJSON((github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-node-matrix')) && '["22.19.0", 24, 26]' || '[24]') }}
         shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
 
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -165,7 +191,21 @@ jobs:
       - name: Run fast tests
         env:
           WORCA_TEST_SHARD: ${{ matrix.shard }}/4
-        run: npm run test:fast -- --timings-out .test-timings/fast-${{ matrix.shard }}.json
+          # test/suite-guard.test.mjs compares with this base (fetch-depth 2 above): on a pull request HEAD is
+          # GitHub's merge commit, so HEAD^1 is the base branch tip; on a dev push it is the previous dev commit.
+          WORCA_SUITE_GUARD_BASE: HEAD^1
+        run: npm run test:fast -- --timings-out .test-timings/fast-${{ matrix.shard }}.json --failures-out .test-failures/fast-${{ matrix.node }}-${{ matrix.shard }}.json
+
+      # A red shard's failure record (the test files that failed), for the CI gate's summary. The run
+      # attempt is in the name so the gate reads only this attempt's records; a green shard writes none.
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-failures-${{ github.run_attempt }}-fast-${{ matrix.node }}-${{ matrix.shard }}
+          path: .test-failures/
+          include-hidden-files: true
+          if-no-files-found: ignore   # a leg that failed before its tests (npm ci) has no record
+          retention-days: 7
 
       # This shard's per-file seconds, measured on the runner that ran it. test/timings.json is
       # refreshed from a green dev run's set (tools/test-timings-merge.mjs), so the shards are
@@ -192,7 +232,7 @@ jobs:
     # checkout + npm ci.
     name: slow tests (${{ matrix.shard }}/2)
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.engine != 'false') }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || (needs.changes.outputs.code != 'false' && needs.changes.outputs.engine != 'false')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -214,7 +254,17 @@ jobs:
       - name: Run slow tests
         env:
           WORCA_TEST_SHARD: ${{ matrix.shard }}/2
-        run: npm run test:slow -- --timings-out .test-timings/slow-${{ matrix.shard }}.json
+        run: npm run test:slow -- --timings-out .test-timings/slow-${{ matrix.shard }}.json --failures-out .test-failures/slow-${{ matrix.shard }}.json
+
+      # A red shard's failure record, for the CI gate's summary (see test-fast).
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-failures-${{ github.run_attempt }}-slow-${{ matrix.shard }}
+          path: .test-failures/
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -233,6 +283,8 @@ jobs:
     # distinct within each group. Across groups only theme and feature-page share one (9336), which
     # is safe while the groups run on separate runners (set CDP_PORT if they ever share a machine).
     name: headless-Chrome UI proofs (${{ matrix.group }})
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.code != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
@@ -272,6 +324,7 @@ jobs:
       # nothing else has to be provisioned. --no-sandbox is required whenever
       # headless Chrome runs as root. Every proof in the group runs even after one fails
       # (one group holds twelve), and the step fails at the end naming each failed proof.
+      # A quarantined proof (test/quarantine.json) is skipped: it runs in quarantine.yml.
       - name: Headless-Chrome UI proofs
         env:
           CHROME_NO_SANDBOX: "1"
@@ -279,6 +332,7 @@ jobs:
         run: |
           failed=
           for proof in $PROOFS; do
+            if node tools/quarantine.mjs skips-proof "$proof"; then continue; fi
             echo "::group::npm run $proof"
             npm run "$proof" || failed="$failed $proof"
             echo "::endgroup::"
@@ -307,6 +361,8 @@ jobs:
   # targets and their store zips, lint the Firefox build and smoke it in Firefox.
   extension:
     name: Browser extension (build, zips, Firefox lint + smoke)
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.code != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -327,6 +383,8 @@ jobs:
   # not in this image, which is why the Firefox steps stay in the job above.
   extension-e2e:
     name: Browser extension (Playwright E2E)
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.code != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     container:
@@ -353,6 +411,8 @@ jobs:
   # produce, and gating it only added its ~1.5 min to every run's wall time.
   docker:
     name: container image
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.code != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -439,3 +499,77 @@ jobs:
           ignore-unfixed: true
           exit-code: "0"
           skip-setup-trivy: true
+
+  # The one check a branch rule requires. Every other job must be in `needs` (file order), and the
+  # gate must never be skipped: a job skipped by its `if` reads as Success to a required check, so
+  # it runs with always(), on cancelled runs too, and tools/ci-gate.mjs decides. A cancel always fails;
+  # a run a newer PR push superseded says so in its summary, and its red mark sits on the old SHA only.
+  # test/tools-test-runner.test.mjs enforces all of it.
+  ci-gate:
+    name: CI gate
+    needs: [changes, test-fast, test-slow, cdp, extension, extension-e2e, docker]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # pull-requests: read for the PR-head lookup; the workflow-level permissions drop it.
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      # Cone mode: `tools` is a directory pattern (a file path is not a valid cone pattern), and
+      # root files such as .nvmrc come along. The script imports only node: builtins, so no npm ci.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: ${{ always() }}
+        with:
+          sparse-checkout: tools
+
+      - name: Set up Node.js
+        if: ${{ always() }}
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+
+      # The PR's head now, not when the run started: a different SHA means a newer push superseded
+      # this run. A failed lookup leaves it empty, and then the summary does not call it superseded.
+      - id: pr-head
+        if: ${{ always() && github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          sha=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq .head.sha || true)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      # This attempt's failure records from red fast and slow shards (none on a green run). A failed
+      # download never fails the gate: the verdict then names the failed job without its files.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: ${{ always() }}
+        continue-on-error: true
+        with:
+          pattern: test-failures-${{ github.run_attempt }}-*
+          path: ${{ runner.temp }}/test-failures
+
+      # The base branch's live quarantine list, so a failing file dev has quarantined is marked
+      # "(quarantined)". The run's own list is not read: its files never run. A failed call marks nothing.
+      - id: base-quarantine
+        if: ${{ always() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BASE_REF: ${{ github.base_ref || github.ref_name }}
+        run: |
+          out="$RUNNER_TEMP/base-quarantine/test/quarantine.json"
+          mkdir -p "$(dirname "$out")"
+          gh api -H 'Accept: application/vnd.github.raw' "repos/$REPO/contents/test/quarantine.json?ref=$BASE_REF" > "$out" || rm -f "$out"
+
+      - name: Verdict
+        if: ${{ always() }}
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PR_HEAD_SHA: ${{ steps.pr-head.outputs.sha }}
+          FAILURES_DIR: ${{ runner.temp }}/test-failures
+          BASE_QUARANTINE_ROOT: ${{ runner.temp }}/base-quarantine
+        run: node tools/ci-gate.mjs

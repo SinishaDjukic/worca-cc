@@ -14,6 +14,11 @@
 .run-status-detail{grid-area:2 / 2;min-width:0;margin-top:2px;font-size:var(--fs-meta);line-height:var(--lh-body);color:var(--ink-2);
   overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
 .run-status-detail[hidden]{display:none;}   /* display:-webkit-box beats the UA [hidden] rule */
+/* Shaper slice 7: a reason that leads somewhere (a confirmation hold) is the status itself, a link in the word's place
+   and type; the dot keeps the tone. Tokens only. */
+.run-status-detail:has(> .run-status-link){grid-area:1 / 2;margin-top:0;font-size:var(--fs-section);font-weight:600;line-height:var(--lh-title);color:var(--ink);}
+.run-status-link,.run-status-link:visited{color:inherit;text-decoration:underline;text-underline-offset:3px;}
+.run-status-link:hover{text-decoration-thickness:2px;}
 /* A12: live role-review rows under the status line, divider rows, no box. */
 .run-status-roles{display:flex;flex-direction:column;}
 .run-role-row{display:flex;align-items:center;gap:8px;min-height:24px;font-size:12px;color:var(--ink-2);}
@@ -65,10 +70,17 @@
    the title sits as far under it as the run page's (the glance's 28px top padding, 20px on a phone; the page gap is 22px). */
 .gpage > .gpage-bar.rd-bar{width:auto;margin:-28px -32px 6px;}
 @media (max-width:640px){.gpage{padding:16px 16px var(--ask-dock-clearance);}.gpage > .gpage-bar.rd-bar{margin:-16px -16px -2px;}}
+/* "Mark and ship" lands the Ship card below the sticky bar (57px) with air. */
+.gpage [data-ship-card]{scroll-margin-top:69px;}
 .gpage-spacer{flex:1;}
 .gpage-actions{display:inline-flex;gap:6px;}
 .gpage-ship{margin:8px 0 0;font-size:13px;color:var(--ink-2);}
 .gpage-ship[hidden],.gpage-panel[hidden],.gpage-question[hidden]{display:none;}
+/* Feature page slice 6: the Log tab's step log under the Open logs rows, and the Cost table's run number (the member
+   rows' number style). Only existing tokens. */
+.gpage-steplog{display:grid;gap:8px;margin-top:16px;}
+.gpage-logs[hidden] + .gpage-steplog{margin-top:0;}
+.gpage-cost .row-num{display:inline-block;min-width:20px;margin-right:8px;font-size:12px;font-weight:500;color:var(--ink-2);}
 /* Before the phone block: same specificity, so on a ≤600px viewport its two-line areas win; cost stays hidden there. */
 @container chat-rc-members (max-width:480px){
   .run-members.is-table{grid-template-columns:12px 20px minmax(0,1fr) max-content 16px;}

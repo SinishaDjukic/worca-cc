@@ -291,3 +291,51 @@ export const fileOf = (doc, path, project = '') => filesOf(doc).find((button) =>
 export const paneOf = (doc) => doc.querySelector('#hist-detail .hd-diff-pane');
 
 export { confirmDialog, proposalFor, MAX_FILE_SECTION_CODE_UNITS, MAX_HIGHLIGHT_INPUT_BYTES };
+
+// ── the History family over the one shared app of a test file (test/helpers/shared-app-boot.mjs) ──
+// Neither imports the shared boot nor app.js; they take the `app` useSharedApp returned.
+
+// boot()'s /api/projects answer, behind the test's own handler.
+export function historyFetch(fetchHandler = null) {
+  return (url, opts) => {
+    const mine = fetchHandler ? fetchHandler(url, opts) : null;
+    if (mine) return mine;
+    if (String(url).includes('/api/projects')) return ok({ projects: [{ name: 'proj', path: PROJECT, exists: true }] });
+    return null;
+  };
+}
+
+// page() is boot() on the shared app; detail() is bootDetail() on it. `deepLink: true` routes to the run after the
+// reset (the shared app is already loaded): a test that needs the link at load time goes to a sibling file booted with
+// useSharedApp({ url }).
+export function detailOn(app) {
+  const ctxOf = () => ({ window: app.window, calls: app.calls, wsBox: app.wsBox });
+  async function openPage({ fetchHandler = null, hooks = null, local = null, hljsLoader = null } = {}) {
+    const options = {
+      fetchHandler: historyFetch(fetchHandler),
+      hooks: { ...(hljsLoader ? { hljsLoader } : {}), ...hooks },
+    };
+    if (local) options.local = local;
+    await app.fresh(options);
+    return ctxOf();
+  }
+  async function openDetailPage({
+    rows = [ROW], detail = DETAIL, budget = okBudget(), arms = null,
+    deepLink = false, hljsLoader = null, hooks = null, local = null,
+  } = {}) {
+    const box = { rows, detail, budget };
+    const base = historyArms(box);
+    const ctx = await openPage({
+      fetchHandler: (url, opts) => (arms && arms(url, opts, box)) || base(url, opts),
+      hljsLoader, hooks, local,
+    });
+    ctx.box = box;
+    // after the reset, so the route's requests meet the test's answers (fresh() installs them last)
+    if (deepLink) {
+      go(app.window, detailHash);
+      await settle(app.window);
+    }
+    return ctx;
+  }
+  return { page: openPage, detail: openDetailPage };
+}

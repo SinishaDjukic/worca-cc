@@ -42,6 +42,50 @@ test('Dockerfile: the node base image is pinned by digest', () => {
   assert.ok(d.indexOf('ARG NODE_BASE_IMAGE=') < d.indexOf(froms[0]), 'declared before the first FROM, so FROM can use it');
 });
 
+// The fast matrix's node is one expression, `${{ fromJSON(COND && 'FULL' || 'PR') }}`: anything else
+// (a plain YAML list, a bare JSON string) throws, so a hand edit can't slip past nodeMatrixProblems.
+const MATRIX_SHAPE = /^\$\{\{\s*fromJSON\(\s*(.+)\s*&&\s*'([^']*)'\s*\|\|\s*'([^']*)'\s*\)\s*\}\}$/s;
+export function parseNodeMatrix(expr) {
+  const bad = () => new Error(`fast matrix: node must be \${{ fromJSON(COND && FULL || PR) }}, got ${JSON.stringify(expr)}`);
+  const m = typeof expr === 'string' ? expr.match(MATRIX_SHAPE) : null;
+  if (!m) throw bad();
+  const list = (json) => {
+    let v;
+    try { v = JSON.parse(json); } catch { throw bad(); }
+    if (!Array.isArray(v) || v.length === 0) throw bad();
+    return v.map(String);
+  };
+  return { full: list(m[2]), pr: list(m[3]), cond: m[1].trim() };
+}
+
+// Whitespace and wrapping parentheses don't change a condition; anything else does.
+const normCond = (s) => {
+  let c = s.replace(/\s+/g, '');
+  const wraps = (x) => {
+    if (!x.startsWith('(') || !x.endsWith(')')) return false;
+    let depth = 0;
+    for (let i = 0; i < x.length; i++) {
+      if (x[i] === '(') depth++;
+      else if (x[i] === ')' && --depth === 0 && i < x.length - 1) return false;
+    }
+    return true;
+  };
+  while (wraps(c)) c = c.slice(1, -1);
+  return c;
+};
+const FULL_COND = normCond("github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-node-matrix')");
+
+export function nodeMatrixProblems({ nodeExpr, nvmrc, minNode }) {
+  const { full, pr, cond } = parseNodeMatrix(nodeExpr);
+  const problems = [];
+  if (full[0] !== minNode) problems.push(`full matrix starts at ${full[0]}, want MIN_NODE ${minNode}`);
+  if (!full.includes(nvmrc)) problems.push(`full matrix lacks .nvmrc's ${nvmrc}`);
+  if (Number(full.at(-1)) < Number(nvmrc)) problems.push(`full matrix ends at ${full.at(-1)}, below .nvmrc's ${nvmrc}`);
+  if (pr.length !== 1 || pr[0] !== nvmrc) problems.push(`PR matrix is ${pr.join(', ')}; want exactly ${nvmrc} (.nvmrc)`);
+  if (normCond(cond) !== FULL_COND) problems.push(`matrix condition must pick the full list on push or on the full-node-matrix label, got ${cond}`);
+  return problems;
+}
+
 // One Node for everything this repo runs: .nvmrc names the major, the image and every single-version
 // workflow job follow it, and the fast-test matrix covers the supported range (the exact floor,
 // .nvmrc's major, the newest LTS). A Node bump is .nvmrc plus the image digest.
@@ -70,11 +114,58 @@ test('one Node: the image and every single-version job use .nvmrc; the matrix sp
   const { MIN_NODE } = await import('../src/core/preflight-node.mjs');
   const matrix = setups.filter((s) => s.with['node-version'] === '${{ matrix.node }}');
   assert.equal(matrix.length, 1, 'one matrix job (ci.yml test-fast)');
-  const nodes = matrix[0].matrix.node.map(String);
-  assert.equal(nodes[0], MIN_NODE, 'the matrix starts at the exact floor');
-  assert.ok(nodes.includes(nvmrc), "the matrix runs .nvmrc's major");
-  assert.ok(Number(nodes.at(-1)) >= Number(nvmrc), 'the matrix ends at the newest LTS');
+  const self = await selfExports();
+  assert.deepEqual(self.nodeMatrixProblems({ nodeExpr: matrix[0].matrix.node, nvmrc, minNode: MIN_NODE }), [], 'the real fast matrix');
   assert.equal(JSON.parse(read('package.json')).engines.node, `>=${MIN_NODE}`, 'engines is MIN_NODE');
+});
+
+// The fast matrix is one expression: dev pushes (and a PR carrying the full-node-matrix label) run
+// the full list, every other PR run the .nvmrc Node only. parseNodeMatrix / nodeMatrixProblems are pure
+// and exported by this file (the gateProblems pattern); the tests below fail until they exist.
+async function selfExports() {
+  const mod = await import(import.meta.url);
+  assert.equal(typeof mod.parseNodeMatrix, 'function', 'test/supply-chain.test.mjs exports parseNodeMatrix');
+  assert.equal(typeof mod.nodeMatrixProblems, 'function', 'test/supply-chain.test.mjs exports nodeMatrixProblems');
+  return mod;
+}
+const COND = "github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-node-matrix')";
+const expr = (full, pr, cond = COND) => `\${{ fromJSON((${cond}) && '${full}' || '${pr}') }}`;
+const REAL = expr('["22.19.0", 24, 26]', '[24]');
+const args = (nodeExpr) => ({ nodeExpr, nvmrc: '24', minNode: '22.19.0' });
+
+test('fast matrix: the real ci.yml has no matrix problem', async () => {
+  const { nodeMatrixProblems } = await selfExports();
+  assert.deepEqual(nodeMatrixProblems(args(REAL)), []);
+});
+
+test('fast matrix: a PR list of [22.19.0, 24] is rejected', async () => {
+  const { nodeMatrixProblems } = await selfExports();
+  assert.deepEqual(nodeMatrixProblems(args(expr('["22.19.0", 24, 26]', '["22.19.0", 24]'))), ['PR matrix is 22.19.0, 24; want exactly 24 (.nvmrc)']);
+});
+
+test('fast matrix: a full list without the floor or without .nvmrc is rejected', async () => {
+  const { nodeMatrixProblems } = await selfExports();
+  const noFloor = nodeMatrixProblems(args(expr('[24, 26]', '[24]')));
+  assert.ok(noFloor.some((p) => /^full matrix starts at 24, want MIN_NODE 22\.19\.0/.test(p)), JSON.stringify(noFloor));
+  const noNvmrc = nodeMatrixProblems(args(expr('["22.19.0", 22]', '[24]')));
+  assert.ok(noNvmrc.some((p) => /^full matrix lacks \.nvmrc's 24/.test(p)), JSON.stringify(noNvmrc));
+  assert.ok(noNvmrc.some((p) => /^full matrix ends at 22, below \.nvmrc's 24/.test(p)), JSON.stringify(noNvmrc));
+});
+
+test('fast matrix: a condition without the label, or joined by &&, is rejected', async () => {
+  const { nodeMatrixProblems } = await selfExports();
+  const want = /^matrix condition must pick the full list on push or on the full-node-matrix label/;
+  const noLabel = nodeMatrixProblems(args(expr('["22.19.0", 24, 26]', '[24]', "github.event_name != 'pull_request'")));
+  assert.ok(noLabel.some((p) => want.test(p)), JSON.stringify(noLabel));
+  const anded = nodeMatrixProblems(args(expr('["22.19.0", 24, 26]', '[24]', COND.replace('||', '&&'))));
+  assert.ok(anded.some((p) => want.test(p)), JSON.stringify(anded));
+});
+
+test('fast matrix: any other shape throws', async () => {
+  const { parseNodeMatrix } = await selfExports();
+  assert.deepEqual(parseNodeMatrix(REAL), { full: ['22.19.0', '24', '26'], pr: ['24'], cond: parseNodeMatrix(REAL).cond });
+  assert.throws(() => parseNodeMatrix(['22.19.0', 24]), /fast matrix:/);
+  assert.throws(() => parseNodeMatrix('["22.19.0", 24]'), /fast matrix:/);
 });
 
 test('workflows: every third-party action is pinned by full commit SHA, with its tag in a comment', () => {
@@ -101,4 +192,48 @@ test('dependabot.yml: npm, docker and github-actions updates', () => {
   assert.equal(by.docker?.directory, '/docker');
   assert.equal(by['github-actions']?.directory, '/');
   for (const u of cfg.updates) assert.ok(u.schedule?.interval, `${u['package-ecosystem']} has a schedule`);
+});
+
+// Optional dependencies are pinned like the rest: an exact version, locked with an integrity hash. Only the two that
+// already download or build at install may run an install script.
+const INSTALL_SCRIPT_ALLOWED = ['node-pty', 'ffmpeg-static'];
+
+test('optionalDependencies: exact versions, locked with integrity, install scripts only where already allowed', () => {
+  const pkg = JSON.parse(read('package.json'));
+  const lock = JSON.parse(read('npm-shrinkwrap.json'));
+  for (const [dep, version] of Object.entries(pkg.optionalDependencies)) {
+    assert.match(version, /^\d+\.\d+\.\d+$/, `${dep} is pinned to an exact version`);
+    const entry = lock.packages[`node_modules/${dep}`];
+    assert.ok(entry && entry.version === version && entry.integrity, `${dep} is locked at ${version} with an integrity hash`);
+    if (!INSTALL_SCRIPT_ALLOWED.includes(dep)) assert.ok(!entry.hasInstallScript, `${dep} runs no install script`);
+  }
+});
+
+test('@napi-rs/keyring and its platform packages: one exact version, locked, optional, no install script, in the notices', () => {
+  const pkg = JSON.parse(read('package.json'));
+  const lock = JSON.parse(read('npm-shrinkwrap.json'));
+  const notices = read('THIRD_PARTY_NOTICES.md');
+  const main = lock.packages['node_modules/@napi-rs/keyring'];
+  assert.ok(main, '@napi-rs/keyring is in the shrinkwrap');
+  const platforms = Object.keys(main.optionalDependencies ?? {});
+  assert.equal(platforms.length, 12);
+  for (const name of ['@napi-rs/keyring', ...platforms]) {
+    const version = pkg.optionalDependencies[name];
+    assert.equal(version, main.version, `${name} is listed in package.json at ${main.version}`);
+    if (name !== '@napi-rs/keyring') assert.equal(main.optionalDependencies[name], version, `${name} matches the keyring's own pin`);
+    const entry = lock.packages[`node_modules/${name}`];
+    assert.ok(entry && entry.version === version && entry.integrity, `${name} is locked with an integrity hash`);
+    assert.equal(entry.optional, true, `${name} is optional`);
+    assert.ok(!entry.hasInstallScript, `${name} runs no install script`);
+    assert.ok(notices.includes(name), `THIRD_PARTY_NOTICES.md names ${name}`);
+  }
+});
+
+test('dependabot.yml: the keyring group comes before the minor-and-patch group (the first matching group wins)', () => {
+  const text = read('.github/dependabot.yml');
+  const keyring = text.indexOf('napi-rs-keyring:');
+  assert.ok(keyring > 0, 'a napi-rs-keyring group exists');
+  assert.ok(keyring < text.indexOf('npm-minor-and-patch:'));
+  const npm = YAML.parse(text).updates.find((u) => u['package-ecosystem'] === 'npm');
+  assert.deepEqual(npm.groups['napi-rs-keyring'].patterns, ['@napi-rs/keyring*']);
 });

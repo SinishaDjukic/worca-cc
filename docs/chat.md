@@ -1,13 +1,17 @@
 # Chat
 
 Chat (Ask Worca) is Worca's home page. It answers from Worca's own records, and any change it suggests comes as a
-card you confirm. To drive runs from Telegram, Slack, Discord or Teams, see [Plugins](plugins.md).
+card you confirm. To drive runs from Telegram, Slack, Discord or Teams, see [Plugins](plugins.md). For the small things in the composer and the chats list, see [Chat basics](chat-basics.md).
 
 ## Which engine answers
 
 A chat runs on the model you pick. The composer's model button lists each engine that has models. An engine with
 none yet (Gemini CLI, Goose, OpenCode, Qwen Code) sits under **More harnesses**: pick one to open `Add model` on it in
 [Models > Catalogue](models.md#the-catalogue-tab). Once it has a model it gets its own row and a chat can move to it.
+
+The composer is a compact bar of icons: the **+** button (attach files), the project button, **Requirements** (when the requirements flag is on in Labs) and **Sets** (the layers icon, Advanced, shown once a set in play has a member), then
+the context ring, the model button (Advanced), which carries the mark of the engine the chat runs on, and one voice control. In a design's chat, the
+**Models and Build fast** gear sits beside the model button ([Design](design.md#in-the-chat)).
 
 ## A chat that is the home page
 
@@ -18,8 +22,12 @@ Chat answers from Worca's own records: runs with their diffs, progress and clari
 schedules, team metrics and policy, models, Actions, and tasks from installed trackers.
 
 It reads code in read-only, detached worktrees, with an allowlisted `git` (`log`, `diff`, `blame`, `grep`…). You can
-attach text files, images and PDFs. Chat has no file-editing tools of its own. In agent mode (below) it changes
+attach files of any type. Chat has no file-editing tools of its own. In agent mode (below) it changes
 files only through commands you ask for.
+
+Installed command-line tools, such as `gh`, `az` and `jira`, work in a chat once you are signed in to them. Ask for an
+issue, a comment or a label and Chat checks the tool's login first, then runs it. It acts on a code host or tracker
+only for what you asked, and asks first when the target is unclear or the action deletes or merges.
 
 Settings › **Chat** (Advanced) sets:
 
@@ -57,6 +65,10 @@ new agents and scripts.
 Other changes are cards too: model and provider, workspace, Actions, team-metrics, team-policy and Away mode
 changes, creating, adding or cloning a project, and reading a new website.
 
+In Telegram, Slack, Discord and Teams, a chat app can also hold a freeform chat in a thread, once you turn on
+**Freeform chat** for that plugin. A run proposal there is a card with a **Start run** button. Setup is in
+[Plugins](plugins.md).
+
 ### Following a run from the chat
 
 A started run becomes a live card. It shows the status, elapsed time, cost, the agents and the workflow graph, with
@@ -82,6 +94,9 @@ Ask it "is this run sandboxed?", "why can't I use Docker?" or "what does the har
   in use and the cap, and the wait limit.
 - **a project's sandbox environment**: its network (open or allow), its template or image, its environment spec and
   its builds, current or stale.
+- **the secret vault** (Labs flag `secretVault`): its state, the OS key store's name and how many saved secrets of each
+  kind are in it or still in files. Never a value, a name or a key. The `security:` line then carries `vault=`. Chat
+  changes nothing here: see [Secrets and the vault](secrets.md).
 - **a sandbox run**: waiting for a slot, building the image, the answer-by time and the files held for review.
 
 It states the claim exactly: no model key, no git token and no proxy login in an agent's reach. It never says "no
@@ -100,8 +115,41 @@ Chat changes a project's sandbox with cards you apply:
 Chat can also change the Docker and E2B limits in Settings › Runs, with a receipt and Revert.
 
 Chat never changes the credential broker, agent users, the allow-list or the box's base image. Whoever runs Worca
-sets those. In the hardened box, Chat adds a project by cloning it only. Chat never reads the proxy login file,
-`/run/secrets` or the egress sidecar's data.
+sets those. In the hardened box, Chat adds a project by cloning it only. Chat's own file tools never read the proxy
+login file, `/run/secrets` or the egress sidecar's data.
+
+### Known limits of the command guard
+
+In agent mode, a check runs before each of Chat's own commands. It refuses a command that names the proxy login,
+Docker secrets or the egress sidecar's data, however the path is spelled.
+
+The check is a guard on Chat's own commands, on an install where Chat runs as you. It is not the security boundary.
+The boundary is file permissions, agent users and the egress sidecar. On a native install, an agent or a chat that
+runs as your OS user can reach every file you can read.
+
+When a command holds something the check cannot work out, it treats the whole command as unsure. That includes a
+variable set at run time, `$(…)`, `eval`, `read` or a `cd` to such a folder. An unsure command is refused when any
+word names `secrets`, `egress` or the proxy login file. It is also refused when it runs a reader that walks folders
+(`find`, `grep -r`, `rg`, `tar`, `cp -r`, and a few more) without plain paths. The refusal says how to rephrase it.
+Put a `cd` to a written-out path first, then give plain paths.
+
+What the check does not catch:
+
+- A program that builds a path when it runs: a script, `python -c`, `node -e`.
+- A symlink made earlier that points into a protected folder.
+- A tool that reads a folder it is not told about, such as a config file that names one.
+- Any other way of spelling a path. Each new one goes on this list, not into the check.
+
+For the secret vault the check refuses the OS key store tools (`security`, `secret-tool`, keyring modules) and
+`worca secrets export`, `reset` and `ack`. It matches them after removing quotes and backslashes. It also refuses an
+unsure command that names those tools or Worca's own CLI, or that holds a `$'…'` string with a backslash escape.
+
+The check reads text, so it is defence in depth. That is why `worca secrets export`, `reset` and `ack` run only in a
+person's own terminal, after they type a word the command shows. No variable or option lifts that. On a native
+install, anything that runs as your OS user can reach the OS key store. The secret vault is at-rest encryption, not a
+sandbox.
+
+See [Security overview](security-overview.md) and [Secrets and the vault](secrets.md).
 
 More: [Choose a setup](choose-a-setup.md), [Security overview](security-overview.md),
 [Environment spec](environment-spec.md), [Network proxy](network-proxy.md).
@@ -144,11 +192,14 @@ file came from.
 Files are copied into the chat. Credential files, and anything outside the chat's folders, are refused. See
 [Files in the chat](show-files.md).
 
+File paths and web links in answers, and the assistant's own tab tools, open in the tool panel
+([Terminal](terminal.md#the-tool-panel)). This needs **Tool panel** in Settings › **Labs**, which is off by default.
+
 ## Memory
 
 Say "remember …" or state a lasting preference, and Ask saves it to Worca's memory. Global memory is for how you
 work. Project memory is for facts about one repository. Pipeline agents load the same memory. You can view, edit,
-delete or restore it on Settings › **Memory** and on a project's **Memory** tab.
+delete or restore it on Settings › **Memory** and on a project's **Memory** tab. More in [Memory](memory.md).
 
 - A run loads memory as it was when the run started, and a resume loads that same set. Each step records which set
   it loaded (a sha256 in the step record; the files are in the run's `memory.json`).

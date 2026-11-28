@@ -54,6 +54,11 @@ if [ -n "${WORCA_DATA_DIR:-}" ]; then
     # (cheap) so a directory added by a newer image is never left root-owned.
     if [ "$(stat -c %U "$data")" != worca ]; then chown -R worca:worca "$data"; fi
     chown worca:worca "$data" "$data/worca" "$data/projects" "$data/home" "$data/home/.claude"
+    # The image's own mount points are world-writable (0777) for a named volume under any uid. Everything lives
+    # on $data here, so the ones nothing is mounted on are unused: no agent user may write there.
+    for d in /worca /projects /home/worca/.claude /home/worca; do
+      if [ -d "$d" ] && ! mountpoint -q "$d" 2>/dev/null; then chmod 0755 "$d"; fi
+    done
     # Agents under their own uid (src/core/agent-user.mjs), unless WORCA_AGENT_ISOLATION=0.
     # Shared with worca-agent through the worca-share group: the projects, the run checkouts
     # (runs/), the run store (store/) and the design library (design/). Private to worca:

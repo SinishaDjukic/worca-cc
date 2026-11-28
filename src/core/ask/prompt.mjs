@@ -474,7 +474,7 @@ export function renderCommandsSection() {
  *  thread is mirrored to a chat app, freeform chat) adds the chat channel section after it. `commands` (agent mode,
  *  #574) appends the commands section. `tabs` (issue 1064 slice 3) appends the tool panel section, and `design` (start_design) the
  *  Designs section after it; `designChat` (the chat has a design) the design rules (DESIGN_CHAT_RULES) last. */
-export function buildSystemPrompt(catalog, { scripts = null, deployment = 'local', web = null, mcp = null, commands = false, engine = 'claude', shape = false, git = true, chat = null, tabs = false, design = false, designChat = false, designPictures = true } = {}) {
+export function buildSystemPrompt(catalog, { scripts = null, deployment = 'local', web = null, mcp = null, commands = false, engine = 'claude', shape = false, git = true, chat = null, tabs = false, design = false, designChat = false, designPictures = true, vault = false } = {}) {
   const own = engineSystemRules(engine);
   const hosted = deployment === 'container' || deployment === 'hosted' ? `${own}\n${ASK_HOSTING_RULE}` : own;
   // `git` (P0): false = this machine has no git — the rules then name no git-only tool (noGitSystemRules).
@@ -491,8 +491,12 @@ export function buildSystemPrompt(catalog, { scripts = null, deployment = 'local
   // A locked-down chat (Codex) reads the design with worca's file tools, which reach its work/ folder and project only
   // through the absolute paths get_design returns (ask/file-deps.mjs askFileRoots).
   const designRules = designChat && chatDescriptor(engine) ? `${DESIGN_CHAT_RULES}\n${DESIGN_LOCKED_FILES}` : DESIGN_CHAT_RULES;
-  return designChat ? `${withHandoff}\n\n${designRules}` : withHandoff;
+  const withVault = vault ? `${withHandoff}\n\n${VAULT_CHAT_RULE}` : withHandoff;   // the secretVault flag only
+  return designChat ? `${withVault}\n\n${designRules}` : withVault;
 }
+
+/** The secret vault in one sentence (the secretVault flag; docs/secrets.md), appended to the rules while it is on. */
+export const VAULT_CHAT_RULE = 'Secret vault: it is at-rest encryption of the keys Worca saves on a native install, with its key in the OS key store, not a sandbox (an agent running as the user can still reach the key store) and not available in a container; read its state with get_secrets_status or the security: line\'s vault= item, point the user to `worca secrets status` and docs/secrets.md, and never ask for, read or repeat a key.';
 
 /** Composer rule 12's image/PDF sentence; buildComposerSystemPrompt swaps it for its Codex form (D16). */
 const COMPOSER_READ_BINARY = 'For an image or PDF, read_attachment returns a file path: pass it to your Read tool to view it.';
@@ -647,6 +651,7 @@ export function securityHeaderLine(f = {}) {
   const w = (v) => label(String(v)).replace(/\s+/g, '-');
   const parts = [`setup=${w(f.setup)}`];
   for (const k of ['broker', 'agentUsers', 'network', 'proxyLogin']) if (f[k]) parts.push(`${k}=${w(f[k])}`);
+  if (f.vault) parts.push(`vault=${w(f.vault)}`);   // the secretVault flag only (security-deps.mjs vaultLineFact)
   if (f.execEnv) parts.push(`execEnv=${w(f.execEnv)}${f.execEnv === 'local' ? (f.sandboxed ? ' (inside the box)' : ' (not sandboxed)') : ''}`);
   return `security: ${parts.join(' ')}`;
 }

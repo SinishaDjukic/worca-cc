@@ -111,6 +111,7 @@
    take a row of their own and the card starts at its progress bar. */
 .run-status-head:has(> .run-status-word[hidden]){column-gap:0;}
 .run-status-head:has(> .run-status-word[hidden]) > .run-status-detail{margin-top:0;line-height:var(--rd-word-line);}
+.run-status-head:has(> .run-status-detail > .run-status-link){column-gap:8px;}   /* Shaper slice 7: the linked status beside its dot */
 .rd-sheet-head:has(> .run-status > .run-status-head[hidden]) > .run-status{grid-area:2 / 1 / 3 / -1;}
 .rd-sheet-head:has(> .run-status > .run-status-head[hidden]) > .rd-head-acts:not([hidden]){grid-area:1 / 1 / 2 / 4;justify-self:end;margin:0;}
 .rd-sheet-head:has(> .run-status > .run-status-head[hidden]) > .hd-publish:not([hidden]){margin:0 0 0 8px;}
@@ -320,6 +321,15 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
 .rd-pr-slot:is(.is-pending,.is-morph,.is-out){overflow:hidden;background:var(--panel);box-shadow:inset 0 0 0 1px var(--line);}
 .rd-pr-slot > [data-rd-cta]{position:relative;max-width:100%;}   /* above the colour layer */
 .rd-pr-slot > [data-rd-cta] > span:not(.ic){min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* Lock tip (Shaper slice 7): why a small-runs feature's Create N PRs is off, drawn above the button so it never covers
+   the status line (a native title opens below the pointer, on top of it). The Composer bar tip's look, tokens only, no
+   motion, no box at rest. A disabled button takes no focus: the same reason is the linked status line, and the button's
+   aria-describedby names this tip. .rd-pr-slot is already positioned; a head button gets .rd-tip-host. */
+.rd-tip-host{position:relative;display:inline-flex;}
+.rd-tip{display:none;position:absolute;z-index:9;bottom:calc(100% + 8px);right:0;width:max-content;max-width:min(320px, calc(100vw - 32px));padding:5px 8px;border-radius:var(--r-sm);background:var(--ink);color:var(--on-ink);font:500 11px/1.3 var(--sans);white-space:normal;pointer-events:none;}
+.rd-pr-slot:hover > .rd-tip,.rd-tip-host:hover > .rd-tip{display:block;}
+/* A narrow head puts the buttons on their own row under the status line, left-aligned: the tip opens below them. */
+@container rd-head (max-width:420px){.rd-head-acts .rd-tip{top:calc(100% + 8px);bottom:auto;left:0;right:auto;}}
 .rd-pr-wait{display:flex;align-items:center;justify-content:center;gap:6px;box-sizing:border-box;height:32px;padding:0 12px;
   font:500 13px var(--sans);color:var(--ink-2);cursor:default;}
 .rd-pr-wait > *{opacity:0;}
