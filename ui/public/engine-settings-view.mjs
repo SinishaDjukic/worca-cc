@@ -14,7 +14,7 @@ export const ENGINE_EFFORTS = Object.freeze({ claude: Object.freeze(['medium', '
 const engineName = (v) => (v == null ? null : engineLabel(v));
 export const helpersNote = (engine) => (engine === 'copilot' ? "Copilot runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on its own default model."
   : `${engineLabel(engine)} runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on Claude. Pick them under Claude Code.`);
-export const JOB_LABELS = Object.freeze({ title: 'Titles', classifier: 'Auto workflow classifier', overview: 'Run overview', prDescription: 'PR description', memoryDefrag: 'Memory defragment', agentGen: 'Agent generation', naming: 'Run naming', commandSummary: 'Command summaries', workspaceScan: 'Workspace scan', requirementsInterview: 'Requirements interview', secondOpinion: 'Second-opinion reviewer' });
+export const JOB_LABELS = Object.freeze({ title: 'Titles', classifier: 'Auto workflow classifier', overview: 'Run overview', prDescription: 'PR description', memoryDefrag: 'Memory defragment', agentGen: 'Agent generation', naming: 'Run naming', commandSummary: 'Command summaries', guide: 'Guide', workspaceScan: 'Workspace scan', requirementsInterview: 'Requirements interview', secondOpinion: 'Second-opinion reviewer' });
 // The setting id of an engine's helper slot, as settings-cascade.mjs names it: memory defragment
 // and workspace scan are runs of their own (spec §3.1 "own-run models"), the rest are utility jobs.
 // Agent generation, Run naming and Command summaries have no cascade entry (user-only, Claude-only); their ids are the
@@ -40,6 +40,7 @@ export const JOB_HINTS = Object.freeze({
   agentGen: 'Drafts a new agent\'s prompt and metadata in Workflows › Agents (Generate).',
   naming: 'Suggests the title and branch name on the New run form (Smart run naming). Unset: the cheapest ready Claude model.',
   commandSummary: 'Writes the one-line summary of a chat command when the chat gave none, from the command alone (secrets hidden, never its output). Turn it off in Settings › Chat › Summarise commands. Unset: the cheapest ready Claude model; with none ready, commands keep their raw text.',
+  guide: 'The quick check of a Shaper prompt in the chat composer.',
   workspaceScan: 'Runs the workspace scan that maps how member projects connect.',
   requirementsInterview: 'Makes product briefs, does code looks for a feature and runs the interview rounds on the Requirements page.',
   secondOpinion: 'The one role review that runs on another model than its step, so one reviewer judges on its own (Shaper\'s Product reviewer).',
@@ -300,8 +301,8 @@ export function paintRoleFallbacks(engineHost, roles, catalog = []) {
   }
   for (const box of engineHost.querySelectorAll('.engine-slots')) box.dispatchEvent(new (engineHost.ownerDocument.defaultView.Event)('roles-changed'));
 }
-const CLAUDE_HELPER_KEYS = Object.freeze({ title: 'titleModel', classifier: 'autoWorkflowModel', prDescription: 'prDescriptionModel', memoryDefrag: 'memoryDefrag', agentGen: 'agentGenModel', naming: 'namingModel', commandSummary: 'commandSummaryModel', secondOpinion: 'secondOpinionModel' });
-const CLAUDE_PAIR_KEYS = new Set(['memoryDefrag', 'agentGenModel', 'namingModel', 'commandSummaryModel', 'secondOpinionModel']);
+const CLAUDE_HELPER_KEYS = Object.freeze({ title: 'titleModel', classifier: 'autoWorkflowModel', prDescription: 'prDescriptionModel', memoryDefrag: 'memoryDefrag', agentGen: 'agentGenModel', naming: 'namingModel', commandSummary: 'commandSummaryModel', guide: 'guideModel', secondOpinion: 'secondOpinionModel' });
+const CLAUDE_PAIR_KEYS = new Set(['memoryDefrag', 'agentGenModel', 'namingModel', 'commandSummaryModel', 'guideModel', 'secondOpinionModel']);
 export function enginePatchToSettingsBody(patch) {
   const body = {};
   for (const [id, value] of Object.entries(patch || {})) {
@@ -317,7 +318,7 @@ export function enginePatchToSettingsBody(patch) {
       const pair = {}; if (value && value.model) pair.model = value.model; if (value && value.effort) pair.effort = value.effort;
       body.requirementsInterview = Object.keys(pair).length ? pair : null; continue;
     }
-    match = /^models\.claude\.(?:utility\.)?(title|classifier|prDescription|memoryDefrag|agentGen|naming|commandSummary|secondOpinion)$/.exec(id);
+    match = /^models\.claude\.(?:utility\.)?(title|classifier|prDescription|memoryDefrag|agentGen|naming|commandSummary|guide|secondOpinion)$/.exec(id);
     if (match) { const key = CLAUDE_HELPER_KEYS[match[1]]; body[key] = CLAUDE_PAIR_KEYS.has(key) ? (value && value.model ? { model: value.model, effort: value.effort || '' } : null) : (value && value.model) || ''; }
   }
   return body;

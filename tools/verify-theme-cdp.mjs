@@ -77,7 +77,7 @@ const STRAY_AUDIT = (sel) => `(${auditStray})(document.querySelector(${JSON.stri
 const strayReport = [];   // { state, theme, sig, rule, text }
 // Beside STRAY_ROOTS: the same action selector as test/ui-catalogue-rulebook.test.mjs (keep both in step).
 const FOOT = ['.confirm-actions', '.stop-actions', '.add-project-actions', '.mode-foot', '.report-head-actions', '.publish-actions',
-  '.shipit-actions', '.mv-editor-btns', '.viewer-actions', '[data-card-actions]'].map((s) => `${s} .btn`).concat('#plugin-modal-close', '#claude-setup-close').join(', ');
+  '.shipit-actions', '.mv-editor-btns', '.viewer-actions', '[data-card-actions]'].map((s) => `${s} .btn`).concat('#plugin-modal-close', '#engine-setup-close').join(', ');
 const DEBT = JSON.parse(readFileSync(new URL('../test/fixtures/design-debt.json', import.meta.url), 'utf8'));
 const SIZE_AUDIT = `(${auditSizes})(document.body, ${JSON.stringify({ ...SIZE_SPEC, debt: DEBT.fieldSizeOverrides })}, null)`;
 const SIZE_STATES = new Set(['settings-general', 'settings-runs', 'settings-tags', 'settings-ask', 'settings-guardrails', 'settings-memory', 'settings-presets',

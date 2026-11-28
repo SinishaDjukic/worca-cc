@@ -9,6 +9,7 @@ import { classifyError } from '../recoverable-error.mjs';
 import { bridgeEvents } from '../bridge/telemetry.mjs';
 import { resolveClaudeBin } from '../preflight.mjs';
 import { CLAUDE_CLI } from './cli-specs.mjs';
+import { cliNotInstalled } from '../cli-resolve.mjs';
 import { hostGuardEnabled, hostGuardHookEntry, hostGuardSystemPrompt } from '../host-guard.mjs';
 import { memoryUsageHookEntry } from '../memory-usage.mjs';
 import { readGuardHookEntry, readGuardDecisions } from '../file-read-guard.mjs';
@@ -191,7 +192,13 @@ function spawnFailure(err, prefix) {
   // pipeline bug: stamp the recovery class so the orchestrator's gate pauses
   // the run for manual resume instead of hard-failing it (ENOENT matches no
   // message-sniff pattern, so without the stamp it would classify null).
-  if (unspawnable) out.errorClass = 'network';
+  // `notInstalled`: the reason in words when the binary is not on this machine, so a chat says so instead of the
+  // network class's "endpoint unreachable" (ask/turn.mjs).
+  if (unspawnable) {
+    out.errorClass = 'network';
+    const why = cliNotInstalled(err && err.path, CLAUDE_CLI, 'Claude Code');
+    if (why) out.notInstalled = why;
+  }
   return out;
 }
 

@@ -11,7 +11,7 @@ import { buildMessageBody, pickModel, validPick, reservedSlots } from '../compos
 import { CAPTURE_MAX } from '../page-context.mjs';
 import { COMMANDS } from '../manifest.mjs';
 import { ATTACH_MAX_FILES, bytesToBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from '../../../ui/public/attach-files.mjs';
-import { chatEngineOf, engineOfEntry, pickerEngineName } from '../../../ui/public/ask-engine.mjs';
+import { chatEngineOf, engineOfEntry, engineNotReady, pickerEngineName, needsHarness, SET_UP_HARNESS } from '../../../ui/public/ask-engine.mjs';
 import { createThreadModel } from '../../../ui/public/ask-model.mjs';
 import { createMarkdownRenderer } from '../../../ui/public/ask-markdown.mjs';
 import * as V from './sidebar-view.mjs';
@@ -210,7 +210,7 @@ async function enterPaired() {
     loadLists(),
   ]);
   st.catalog = catalog;
-  st.pick = validPick(catalog, st.pick) || pickModel(catalog);   // the stored pick when the catalog still offers it
+  st.pick = validPick(catalog, st.pick, { lock: lockEngine() }) || pickModel(catalog);   // the stored pick when the catalog still offers it
   st.threads = threads.threads || [];
   if (st.threadId) st.threads = V.upsertThread(st.threads, { id: st.threadId });   // the open chat stays listed
   setPhase('paired');
@@ -709,18 +709,32 @@ function patchScope() { if (el) V.patchScopePill(el.scope, el.scopeLabel, scopeV
 /** ask-panel.mjs updatePickerButton: the catalog label (+ ⚠ for a flagged model), the effort unless it takes none. */
 function patchModel() {
   if (!el) return;
+  const btn = el.modelLabel.parentNode;
+  const models = (st.catalog && st.catalog.models) || [];
+  const opts = { active: lockEngine(), notReady: st.catalog && st.catalog.notReady, current: st.pick && st.pick.model };
+  // No engine has a model a chat can take: the button asks for a harness to be set up (ask-panel.mjs updatePickerButton).
+  if (needsHarness(st.catalog, models.filter((m) => m && !m.hidden), { ...opts, lock: opts.active })) {
+    el.modelLabel.textContent = SET_UP_HARNESS;
+    el.modelEffort.textContent = '';
+    el.modelEffort.hidden = true;
+    el.modelEngine.textContent = '';
+    el.modelEngine.hidden = true;
+    if (btn) { delete btn.dataset.engine; btn.dataset.setup = ''; }
+    return;
+  }
   const entry = catalogEntry(st.pick && st.pick.model);
-  const flagged = !!entry && (entry.costUnreliable === true || (Array.isArray(entry.secretsMissing) && entry.secretsMissing.length > 0));
+  const eng = pickerEngine();
+  // A chat on an engine whose CLI is not installed here keeps its model, flagged (ask-panel.mjs updatePickerButton).
+  const notReady = engineNotReady(st.catalog, eng);
+  const flagged = !!notReady || (!!entry && (entry.costUnreliable === true || (Array.isArray(entry.secretsMissing) && entry.secretsMissing.length > 0)));
   el.modelLabel.textContent = (entry ? entry.label || entry.id : (st.pick ? st.pick.model : '')) + (flagged ? ' ⚠' : '');
   el.modelEffort.textContent = entry && entry.noEffort ? '' : (st.pick ? st.pick.effort : '');
   el.modelEffort.hidden = !!(entry && entry.noEffort);
   // #943: the engine the next message runs on, as Chat's button says it.
-  const eng = pickerEngine();
-  const engName = pickerEngineName((st.catalog && st.catalog.models) || [], eng);
+  const engName = pickerEngineName(models, eng, opts);
   el.modelEngine.textContent = engName;
   el.modelEngine.hidden = !engName;
-  const btn = el.modelLabel.parentNode;
-  if (btn) btn.dataset.engine = eng;
+  if (btn) { btn.dataset.engine = eng; delete btn.dataset.setup; }
 }
 
 /** The meter and an open context popover, only when the figures changed: every streaming frame lands here. */

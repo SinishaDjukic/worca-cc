@@ -505,3 +505,30 @@ test('the theme proof requires every shared-control check', () => {
   }
   assert.match(read('test/fixtures/theme-kitchen-sink.html'), /class="sw-input"[^>]*disabled/);
 });
+
+test('openMenu: a pick and Escape focus the anchor by default, and `returnFocus` when one is given and connected', async () => {
+  const { openMenu, toggleMenu, closeMenus } = await import('../ui/public/workflows/menu.mjs');
+  const { window } = new JSDOM('<!doctype html><body><button id="a">Role</button><textarea id="field"></textarea></body>');
+  const doc = window.document;
+  const anchor = doc.getElementById('a');
+  const field = doc.getElementById('field');
+  const picked = [];
+  const items = [{ label: 'QA', checked: false, onSelect: () => picked.push(doc.activeElement) }];
+  const esc = (m) => m.el.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  const run = (extra) => {
+    let m = openMenu({ doc, anchor, items, ...extra });
+    m.el.querySelector('.wfv-menu-item').click();
+    const afterPick = doc.activeElement;
+    m = toggleMenu({ doc, anchor, items, ...extra });
+    esc(m);
+    assert.equal(m.el.isConnected, false);
+    assert.equal(anchor.getAttribute('aria-expanded'), 'false');
+    return [afterPick, doc.activeElement];
+  };
+  assert.deepEqual(run({}).map((e) => e.id), ['a', 'a'], 'default: the anchor');
+  assert.deepEqual(run({ returnFocus: field }).map((e) => e.id), ['field', 'field']);
+  assert.equal(picked.at(-1), field, 'focus has moved before onSelect runs');
+  assert.deepEqual(run({ returnFocus: doc.createElement('textarea') }).map((e) => e.id), ['a', 'a'], 'a detached target: the anchor');
+  assert.deepEqual(run({ returnFocus: null }).map((e) => e.id), ['a', 'a']);
+  closeMenus();
+});

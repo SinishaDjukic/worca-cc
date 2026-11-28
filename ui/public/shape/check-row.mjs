@@ -56,7 +56,7 @@ export function checkMark(doc, kind, cls = '') {
  *  and its detail in one `.plan-check-text`, so the detail sits beside the label only when both fit on the line (an empty
  *  id keeps the column, so a list's texts share one x). `textWrap` (small runs C2) wraps them the same way with no id
  *  column. `data` fills the row's dataset (a null value is left out); `noteLead` ({text, href}) starts the note with a
- *  link. */
+ *  link. `markRole` (Guide rows) sets the mark's `role`, so its `aria-label` is read as an image's name. */
 export function buildCheckRows(doc, check) {
   const h = (tag, cls, text) => { const e = doc.createElement(tag); e.className = cls; if (text != null) e.textContent = text; return e; };
   return (check && Array.isArray(check.items) ? check.items : []).map((it) => {
@@ -65,6 +65,7 @@ export function buildCheckRows(doc, check) {
     for (const [k, v] of Object.entries(it.data || {})) if (v != null) row.dataset[k] = v;
     const mark = checkMark(doc, it.mark || (it.state === 'dropped' ? 'none' : met ? 'check' : 'x'));
     mark.setAttribute('aria-label', it.ariaLabel || (it.pass ? 'met' : 'unmet'));
+    if (typeof it.markRole === 'string') mark.setAttribute('role', it.markRole);
     row.appendChild(mark);
     const noted = it.note != null;
     const idCol = !!it.idCol && typeof it.id === 'string';   // '' keeps the column, empty, so the text lines up

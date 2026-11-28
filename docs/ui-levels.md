@@ -480,7 +480,7 @@ missing (`data-needs-git`), at every level.
 | Ask: files card (show_files) — image tiles, file rows, viewer | S — an answer is never hidden (rule 4) |
 | Ask: the context ring and its popover's window fill and topics | S |
 | Ask: the chat scope pill and its menu (No project, projects, workspaces, Add project…) | S |
-| Ask: model picker, cost meter, tool rows, branches, guardrails, "Open in New run" | A |
+| Ask: model picker (with its harness marks, a not-installed engine's *not installed* tag and Set up row, and *Set up a harness* when no engine is installed), cost meter, tool rows, branches, guardrails, "Open in New run" | A |
 | Ask: the project switch card ("Your turn: pick a project") and the "Switched to …" divider | all (rule 4) |
 | Ask: the chevron on a reply's activity line (`Done · 7.4s · …`) | A when it opens tool rows, E when it opens only sub-agents; the line itself shows at every level |
 | Ask: per-agent lane, the context popover's Agents and Worktrees sections, sub-agent logs | E — a run card carrying Chat's per-agent picks shows its lane at every mode (the picks apply at Start) |

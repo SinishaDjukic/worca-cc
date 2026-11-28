@@ -518,6 +518,37 @@ test('14: Command summaries sits under Helper jobs while its flag is on, with it
   assert.equal(rowEffort(doc, id), '', 'it inherits the model only');
 });
 
+test('14b: Guide sits under Helper jobs only while shaperSmallRuns is on, with its default model, and saves guideModel', async () => {
+  const settings = { ...SETTINGS, guideModel: { model: null, effort: null },
+    guideModelEffective: { model: 'claude-opus-5-5', effort: 'medium', source: 'auto', stale: null } };
+  const { window, doc, posts } = await boot({ settings });
+  const id = 'models.claude.utility.guide';
+  applyFlags({ shaperSmallRuns: false }, doc);
+  await settle();
+  press(window, doc.querySelector('#jobs-helpers .mdl-show-all'));
+  await settle(2);
+  assert.equal(jobRow(doc, id), null, 'flag off: no row');
+  applyFlags({ shaperSmallRuns: true }, doc);
+  await settle();
+  try {
+    assert.ok(jobRow(doc, id), 'flag on: the tab repaints with the row');
+    assert.equal(jobRow(doc, id).querySelector('.mdl-job-name').textContent, 'Guide');
+    assert.equal(rowText(doc, id), 'Opus 5.5 (default)', 'the cheapest ready Claude model');
+    assert.equal(rowEffort(doc, id), '', 'it inherits the model only');
+    press(window, jobRow(doc, id).querySelector('.mdl-pick'));
+    await settle(2);
+    await pick(window, doc, 'Haiku 4.5');
+    press(window, bar(doc).querySelector('.mdl-save'));
+    await settle();
+    const body = settingsPosts(posts).at(-1)?.body;
+    assert.deepEqual(Object.keys(body || {}), ['guideModel'], 'saved under guideModel alone');
+    assert.equal(body.guideModel.model, 'claude-haiku-4-5');
+  } finally {
+    applyFlags({ shaperSmallRuns: false }, doc);
+    await settle();
+  }
+});
+
 test('15: a Codex default opens the tab on OpenAI Codex, its rows reading the Codex roles', async () => {
   const { window, doc } = await boot({ settings: { ...SETTINGS, runEngine: 'codex', modelRoles: { codex: { everyday: { model: 'gpt-6.1-sol' } } } } });
   assert.equal(pressed(doc), 'codex');

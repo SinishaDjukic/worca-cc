@@ -57,6 +57,33 @@ test('the set has the Marketplace glyphs (marketplace CONTRACT §3.2); cube is t
   assert.equal(ICONS.bag, '<path d="M5 8h14l-1.2 12H6.2L5 8z"></path><path d="M9 10V6.5a3 3 0 0 1 6 0V10"></path>');
 });
 
+test('R-arch-6: scale (Compliance) and person (no role) are in the set, as the mock draws them, 24x24 strokes', () => {
+  assert.equal(ICONS.scale, '<path d="M12 4v16M8 20h8M5 7h14"></path><path d="M5 7l-2.5 6a2.6 2.6 0 0 0 5 0zM19 7l-2.5 6a2.6 2.6 0 0 0 5 0z"></path>');
+  assert.equal(ICONS.person, '<circle cx="12" cy="8" r="3.5"></circle><path d="M5 20c.8-3.6 3.6-5.5 7-5.5s6.2 1.9 7 5.5"></path>');
+  const doc = new JSDOM('<body></body>').window.document;
+  for (const name of ['scale', 'person']) {
+    const svg = icon(doc, name, 14).querySelector('svg');
+    assert.equal(svg.getAttribute('viewBox'), '0 0 24 24', name);
+    assert.equal(svg.getAttribute('stroke-width'), '2', name);
+    assert.equal(svg.getAttribute('stroke-linecap'), 'round', name);
+    assert.ok(svg.childElementCount > 0, name);
+  }
+});
+
+test('R-po-1: the 8 role picker icons are distinct, in the set, and none is a Chat home pin or the Shaper pin icon', async () => {
+  const { ROLE_ICONS, NO_ROLE_ICON } = await import('../ui/public/chat/role-picker.mjs');
+  const { INTENTS } = await import('../ui/public/chat/intent.mjs');
+  const names = [...Object.values(ROLE_ICONS), NO_ROLE_ICON];
+  assert.deepEqual(names, ['briefcase', 'terminal', 'design', 'eye', 'shield', 'cloud', 'scale', 'person']);
+  for (const name of names) assert.ok(Object.hasOwn(ICONS, name), name);
+  assert.equal(new Set(names.map((n) => ICONS[n])).size, 8, 'distinct glyphs');
+  const pins = new Set([...Object.values(INTENTS).map((i) => i.icon), 'shape']);
+  for (const name of names) {
+    assert.ok(!pins.has(name), `${name} is a pin icon`);
+    assert.ok(![...pins].some((p) => ICONS[p] === ICONS[name]), `${name} draws a pin icon`);
+  }
+});
+
 test('no icon key is written twice (a later one would silently replace the earlier glyph)', () => {
   const src = readFileSync(new URL('../ui/public/icons.mjs', import.meta.url), 'utf8');
   const body = src.slice(src.indexOf('export const ICONS = Object.freeze({'), src.indexOf('});', src.indexOf('export const ICONS')));

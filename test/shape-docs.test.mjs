@@ -598,3 +598,173 @@ test('s18: the guide and the design system say a failed Verifier round or an ope
   const design = flat(read('design-system.md'));
   assert.deepEqual(missing(design, [/failed Verifier round or an open confirmation outranks In review/i]), [], 'design-system.md');
 });
+
+test('ask screens s2 (R-po-6): Requirements first describes the flag-on card and Settings › Chat "Your role", and keeps the flag-off sentence; Who is asking points there', () => {
+  const requirements = flat(section(read('shape-it-first.md'), 'Requirements first'));
+  assert.ok(requirements.includes('You lead as'), 'the flag-off sentence stays');
+  for (const term of ['shaperSmallRuns', 'Your role', 'Supported by', 'Settings › Chat', 'Shape requirements', 'saved lead, else Product']) {
+    assert.ok(requirements.includes(term), `"${term}" in Requirements first`);
+  }
+  const small = section(read('shape-it-first.md'), 'Small runs (`shaperSmallRuns`)');
+  const asking = flat((small.split('\n**Who is asking.**')[1] || '').split('\n### ')[0]);
+  assert.ok(asking.includes('(#requirements-first)'), 'the Who is asking paragraph points at the card');
+});
+
+// Shaper ask screens, slice 3: the Guide job on Models, and the Guide switch and line in the composer.
+test('ask screens s3 (R-arch-3): docs/models.md names the Guide job with its flag, under Helper jobs\' wording', () => {
+  const blocks = read('models.md').split(/\n\n+/);
+  assert.ok(blocks.some((b) => /\bGuide\b/.test(b) && b.includes('shaperSmallRuns')), 'a paragraph names Guide and shaperSmallRuns together');
+  assert.match(read('models.md'), /^\|[^\n]*Helper jobs › Guide\b[^\n]*\|/m, 'a Guide row in the models table');
+});
+
+test('ask screens s3: the design system\'s Composer bar part describes the Guide switch and the one Guide line', () => {
+  const bar = flat((read('design-system.md').split('\n### Composer bar\n')[1] || '').split(/\n##+ /)[0]);
+  assert.deepEqual(missing(bar, ['Guide', '.ask-guide', '.ask-guide-t', 'Sending works as it is.',
+    'New: Guide checks your idea for gaps before you send. Switch it off any time.', /ellipsis/i, /never wraps/i, /32px/, /40px/, /coarse/i]), []);
+});
+
+// Shaper ask screens, slice 4: what the Guide job is asked and what it returns.
+test('slice 4: the Guide paragraph of docs/models.md says what Guide is asked, what it returns and the 8000 limit', () => {
+  const doc = read('models.md');
+  const at = doc.indexOf('\n*Guide* is ');
+  const end = doc.indexOf('\nThe *Requirements interview* helper', at);
+  assert.ok(at >= 0 && end > at, 'the Guide paragraph, before the Requirements interview one');
+  assert.deepEqual(missing(flat(doc.slice(at, end)), [/\bfive\b|\b5\b/i, /\bcovered\b/i, /\bquestion\b/i, /\bplain\b/i, /\btechnical\b/i,
+    /\bsmall\b/i, /\bmedium\b/i, /\blarge\b/i, /\b8,?000\b/]), []);
+});
+
+// Shaper ask screens, slice 5: the check in the composer, and its result and size in the Guide line.
+const SIZE_PHRASES = ['Prompt 5/5 · Large: several runs', 'Prompt 5/5 · Medium: a few runs', 'Clear enough · Small: one run'];
+/** A home-directory path (a mock or scratch folder) never belongs in a doc. */
+const HOME_PATH = /(?:^|[\s("'`])(?:~\/|\/Users\/|\/home\/)/;
+
+test('slice 5: the guide\'s Guide checks paragraph, after Who is asking, says when the check runs, what the line reads and the size words', () => {
+  const small = section(read('shape-it-first.md'), 'Small runs (`shaperSmallRuns`)');
+  const paragraphs = small.split(/\n\s*\n/).map((p) => p.trim());
+  const at = paragraphs.findIndex((p) => p.startsWith('**Guide checks.**'));
+  assert.ok(at >= 0, 'a "**Guide checks.**" paragraph in the Small runs section');
+  assert.ok(at > paragraphs.findIndex((p) => p.startsWith('**Who is asking.**')), 'after **Who is asking.**');
+  const text = flat(paragraphs[at]);
+  assert.deepEqual(missing(text, ['2 seconds', '12 characters', 'Checking your prompt…', 'checking…', 'Prompt 2/5 · 3 gaps',
+    ...SIZE_PHRASES, /never on send/i, /dropped/i]), []);
+  assert.doesNotMatch(text, /small runs/i);
+  assert.doesNotMatch(text, HOME_PATH);
+});
+
+test('slice 5: chat-home\'s Ask worca beside the page says the docked composer checks and sizes under the same pin rule', () => {
+  const beside = section(read('chat-home.md'), 'Ask worca beside the page');
+  const bullet = flat(beside.split(/\n(?=- |\n|## )/).find((b) => b.startsWith('- **Guide.**')) || '');
+  assert.ok(bullet, 'a "- **Guide.**" bullet');
+  assert.deepEqual(missing(bullet, ['Guide', 'Shaper pin', '2 seconds', 'Clear enough · Small: one run']), []);
+  assert.doesNotMatch(bullet, /small runs/i);
+  assert.doesNotMatch(bullet, HOME_PATH);
+});
+
+test('slice 5: the design system\'s Composer bar part describes the result fold, and that the size words give way first', () => {
+  const bar = designPart('Composer bar');
+  assert.deepEqual(missing(bar, ['.ask-guide-fold', /give way first/i]), []);
+  assert.doesNotMatch(bar, HOME_PATH);
+});
+
+// Shaper ask screens, slice 6: what the Guide line says when a check fails, and the one announcement.
+test('slice 6: Guide checks names both failure lines and their actions, and the once-per-result announcement', () => {
+  const failures = ['Guide is not answering right now.', 'Try again', 'Guide has no model to run on.', 'Open Models'];
+  const small = section(read('shape-it-first.md'), 'Small runs (`shaperSmallRuns`)');
+  const checks = flat(small.split(/\n\s*\n/).map((p) => p.trim()).find((p) => p.startsWith('**Guide checks.**')) || '');
+  assert.deepEqual(missing(checks, [...failures, /announced once/i]), []);
+  assert.doesNotMatch(checks, /leaves the line empty/);
+  assert.doesNotMatch(checks, HOME_PATH);
+  const bar = designPart('Composer bar');
+  // `.btn.btn-sm.btn-quiet` is the failure action's own spelling: the part already names the role picker's button.
+  assert.deepEqual(missing(bar, ['Guide is not answering right now.', 'Guide has no model to run on.', '.btn.btn-sm.btn-quiet']), []);
+  assert.doesNotMatch(bar, HOME_PATH);
+});
+
+// Shaper ask screens, slice 7: the check rows under the fold, and Add.
+test('slice 7: a Guide rows paragraph, right after Guide checks, says the rows are shut, what Add writes, and the keys', () => {
+  const small = section(read('shape-it-first.md'), 'Small runs (`shaperSmallRuns`)');
+  const paragraphs = small.split(/\n\s*\n/).map((p) => p.trim());
+  const checks = paragraphs.findIndex((p) => p.startsWith('**Guide checks.**'));
+  const text = flat(paragraphs[checks + 1] || '');
+  assert.ok(text.startsWith('**Guide rows.**'), 'a "**Guide rows.**" paragraph after **Guide checks.**');
+  assert.deepEqual(missing(text, ['Who is it for: people on the team', /question mark/i, /shut/, /Escape/, /dropped/]), []);
+  assert.doesNotMatch(text, /small runs/i);
+  assert.doesNotMatch(text, HOME_PATH);
+});
+
+test('slice 7: the design system\'s Composer bar part describes the Guide rows pattern', () => {
+  const bar = designPart('Composer bar');
+  assert.deepEqual(missing(bar, ['.ask-guide-rows', '.ask-guide-ans', '--ink-2', 'Add: who is it for']), []);
+  assert.doesNotMatch(bar, HOME_PATH);
+});
+
+// Shaper ask screens, slice 8: Write it out, with Stop and Undo.
+test('slice 8: a Write it out paragraph, right after Guide rows, names the button, Stop, "(suggested)", the written line and Undo', () => {
+  const small = section(read('shape-it-first.md'), 'Small runs (`shaperSmallRuns`)');
+  const paragraphs = small.split(/\n\s*\n/).map((p) => p.trim());
+  const rows = paragraphs.findIndex((p) => p.startsWith('**Guide rows.**'));
+  assert.ok(rows >= 0, 'the "**Guide rows.**" paragraph');
+  const text = flat(paragraphs[rows + 1] || '');
+  assert.ok(text.startsWith('**Write it out.**'), 'a "**Write it out.**" paragraph after **Guide rows.**');
+  assert.deepEqual(missing(text, ['Write it out', 'Writing it out…', 'Stop', '(suggested)', 'Guide filled 4 gaps · check them', 'Undo']), []);
+  assert.doesNotMatch(text, /small runs/i);
+  assert.doesNotMatch(text, HOME_PATH);
+});
+
+test('slice 8: chat-home\'s Guide bullet says Write it out, Stop and Undo work in the docked chat', () => {
+  const beside = section(read('chat-home.md'), 'Ask worca beside the page');
+  const bullet = flat(beside.split(/\n(?=- |\n|## )/).find((b) => b.startsWith('- **Guide.**')) || '');
+  assert.ok(bullet, 'a "- **Guide.**" bullet');
+  assert.deepEqual(missing(bullet, ['Write it out', 'Stop', 'Undo']), []);
+  assert.doesNotMatch(bullet, /small runs/i);
+  assert.doesNotMatch(bullet, HOME_PATH);
+});
+
+test('slice 8: the design system\'s Composer bar part describes the line\'s Write it out, Stop and Undo buttons', () => {
+  const bar = designPart('Composer bar');
+  assert.deepEqual(missing(bar, ['.ask-guide-do', '.ask-guide-sp', '.ask-guide-mid', 'Write it out', 'Stop', 'Undo', '(suggested)']), []);
+  assert.doesNotMatch(bar, HOME_PATH);
+});
+
+test('slice 8: the Guide paragraph of docs/models.md says what a write asks for and returns', () => {
+  const doc = read('models.md');
+  const at = doc.indexOf('\n*Guide* is ');
+  const end = doc.indexOf('\nThe *Requirements interview* helper', at);
+  assert.ok(at >= 0 && end > at, 'the Guide paragraph, before the Requirements interview one');
+  assert.deepEqual(missing(flat(doc.slice(at, end)), [/\bwrit(e|es|ing|ten)\b/i, /\bgaps?\b/i]), []);
+});
+
+// Shaper ask screens, slice 9 (R-rel-1): the last docs pass. Each guide's own Guide text names every part.
+const SIZE_WORDS = ['Large: several runs', 'Medium: a few runs', 'Small: one run'];
+/** The `*Guide* is …` paragraph of docs/models.md, up to the Requirements interview one (flattened), or ''. */
+function guideJob() {
+  const doc = read('models.md');
+  const at = doc.indexOf('\n*Guide* is ');
+  const end = doc.indexOf('\nThe *Requirements interview* helper', at);
+  return at >= 0 && end > at ? flat(doc.slice(at, end)) : '';
+}
+const guideBullet = () => flat(section(read('chat-home.md'), 'Ask worca beside the page')
+  .split(/\n(?=- |\n|## )/).find((b) => b.startsWith('- **Guide.**')) || '');
+
+test('slice 9 (R-rel-1): shape-it-first, chat-home and models name the role picker, Guide, the check, Add, Write it out and the three size phrases', () => {
+  const passages = {
+    'shape-it-first.md, Small runs': flat(DOCS['shape-it-first.md'].text()),
+    'chat-home.md, the Guide bullet': guideBullet(),
+    'models.md, the Guide job paragraph': guideJob(),
+  };
+  const out = {};
+  for (const [where, text] of Object.entries(passages)) {
+    assert.ok(text, `${where}: found`);
+    out[where] = missing(text, [/Your role|role picker/, 'Guide', /\bcheck/i, /\bAdd\b/, 'Write it out', ...SIZE_WORDS]);
+    assert.doesNotMatch(text, HOME_PATH, where);
+  }
+  assert.deepEqual(out, Object.fromEntries(Object.keys(passages).map((where) => [where, []])));
+});
+
+test('slice 9: Care and its record says the Size row is the one place with a number of runs, at Worca\'s pick; Composer bar lists the size words; the flag row names the Size row', () => {
+  assert.deepEqual({
+    care: missing(smallPart('Care and its record'), [/about \d+ runs/, 'one place', 'at Worca\'s pick']),
+    composerBar: missing(designPart('Composer bar'), SIZE_WORDS),
+    flagRow: missing(slices['feature-flags.md'], ['Size row']),
+  }, { care: [], composerBar: [], flagRow: [] });
+});

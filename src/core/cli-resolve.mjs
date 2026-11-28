@@ -240,6 +240,20 @@ function findOnPath(name, pathEnv, exists, exts, sep) {
 }
 
 /**
+ * Why `bin` is not installed here, for a person (cliReady): the platform's own hint when there is one, else
+ * "<label> is not installed: <bin> was not found. Install it, or set <envVar> to its path." null when it is
+ * spawnable, when no binary is named, or when the check itself fails. Never spawns.
+ */
+export function cliNotInstalled(bin, spec, label) {
+  const name = String(bin || '').trim();
+  if (!name) return null;
+  let r = null;
+  try { r = cliReady(name, spec); } catch { return null; }
+  if (!r || r.ready) return null;
+  return r.hint || `${label} is not installed: ${name} was not found. Install it${spec && spec.envVar ? `, or set ${spec.envVar} to its path` : ''}.`;
+}
+
+/**
  * Is `bin` spawnable on this host? Never spawns — a handful of stat()s.
  * @returns {{ready:boolean, bin:string, hint:string|null}}
  */

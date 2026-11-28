@@ -10,7 +10,7 @@
 // the send), which is where the home arms its hero → dock glide (onSend).
 import { registerComposerAddon } from './extensions.mjs';
 import { homeIcon } from './home-icons.mjs';
-import { INTENT_LEADS } from '../../../src/shared/intent-leads.mjs';
+import { INTENT_LEADS, splitShapeRole } from '../../../src/shared/intent-leads.mjs';
 
 export const INTENT_ADDON_ID = 'intent';
 
@@ -57,18 +57,24 @@ const asWorkflow = (w) => (w && typeof w.id === 'string' && w.id
   ? Object.freeze({ id: w.id, name: String(w.name || w.id) }) : null);
 
 /** The person's sent text split for their bubble (D21): the Shaper lead is for the model only, so a message
- *  that opens with it — alone, or then a blank line — shows the intent chip and the rest. Exact match. */
+ *  that opens with it — alone, or then a blank line — shows the intent chip and the rest. Exact match. A role
+ *  paragraph right after the lead (the role picker's) leaves the bubble too and comes back as `role`. The same
+ *  paragraph typed by the person at that spot is read the same way and hidden too: accepted, it is the picker's shape. */
 export function splitIntentLead(text) {
   const s = String(text ?? '');
   const lead = INTENTS.shape.lead;
   if (s === lead) return { intent: 'shape', text: '' };
-  if (s.startsWith(`${lead}\n\n`)) return { intent: 'shape', text: s.slice(lead.length + 2) };
+  if (s.startsWith(`${lead}\n\n`)) {
+    const rest = s.slice(lead.length + 2);
+    const role = splitShapeRole(rest);
+    return role ? { intent: 'shape', role: role.role, text: role.text } : { intent: 'shape', text: rest };
+  }
   return { intent: null, text: s };
 }
 
 /**
  * @param {{ onSend?: () => void }} o
- * @returns {{ addon: { id: string, mount(leadEl, ctx) }, set(id, { focus, workflow }?): boolean, clear({ focus }?): void, leave(): void, current(): string|null, workflow(): { id, name }|null }}
+ * @returns {{ addon: { id: string, mount(leadEl, ctx) }, set(id, { focus, workflow }?): boolean, clear({ focus }?): void, leave(): void, current(): string|null, workflow(): { id, name }|null, onChange(fn): () => void }}
  */
 export function createIntentAddon({ onSend = null } = {}) {
   let current = null;
@@ -76,6 +82,11 @@ export function createIntentAddon({ onSend = null } = {}) {
   const key = () => (current == null ? null : `${current}|${workflow ? workflow.id : ''}`);
   let pending = null;        // { count }: a send carried the intent; it is spent once the chat holds more than `count` messages
   const mounts = new Set();
+  const subscribers = new Set();   // onChange: told after every set / clear repaint
+  const sendSubscribers = new Set();   // subscribeSend: told about every Ask send, with the sending composer's field
+  const changed = () => {
+    for (const fn of [...subscribers]) { try { fn(); } catch { /* a subscriber never breaks the chip */ } }
+  };
 
   function set(id, { focus = true, workflow: wf = null } = {}) {
     if (!known(id)) return false;
@@ -83,6 +94,7 @@ export function createIntentAddon({ onSend = null } = {}) {
     workflow = id === 'run' ? asWorkflow(wf) : null;
     pending = null;
     for (const m of mounts) m.paint(focus);
+    changed();
     return true;
   }
   function clear({ focus = false } = {}) {
@@ -91,6 +103,7 @@ export function createIntentAddon({ onSend = null } = {}) {
     current = null;
     workflow = null;
     for (const m of mounts) m.paint(focus);
+    changed();
   }
   /** The Chat page was left (app.js showView): an intent no send carries never outlives the visit. */
   function leave() {
@@ -198,6 +211,7 @@ export function createIntentAddon({ onSend = null } = {}) {
         if (typeof onSend === 'function') {
           try { onSend(); } catch { /* the home's animation never blocks a send */ }
         }
+        for (const fn of [...sendSubscribers]) { try { fn({ field: input }); } catch { /* a subscriber never blocks a send */ } }
         if (current == null) return text;
         if (!pending) pending = { count: messageCount(call('thread')) };
         return intentText(current, text, workflow);
@@ -215,7 +229,20 @@ export function createIntentAddon({ onSend = null } = {}) {
     return handle;
   }
 
-  return { addon: Object.freeze({ id: INTENT_ADDON_ID, mount }), set, clear, leave,
+  /** Call `fn()` after every set and clear (the chip already repainted). Returns an unsubscribe. */
+  function onChange(fn) {
+    subscribers.add(fn);
+    return () => { subscribers.delete(fn); };
+  }
+
+  /** Call `fn({ field })` once per Ask send (every transformSend), after the onSend option; `field` is the sending
+   *  composer's `.ask-input`. Returns an unsubscribe. */
+  function subscribeSend(fn) {
+    sendSubscribers.add(fn);
+    return () => { sendSubscribers.delete(fn); };
+  }
+
+  return { addon: Object.freeze({ id: INTENT_ADDON_ID, mount }), set, clear, leave, onChange, onSend: subscribeSend,
     current: () => current, workflow: () => workflow };
 }
 

@@ -74,3 +74,12 @@ test('a healthy run through the same fake-bin path resolves and the reducer sees
   assert.equal(s.text, 'hi back');
   assert.equal(s.sessionId, 'sess-1');
 });
+
+test('a claude binary that is not there: the network class (a run pauses), plus the reason in words for a chat', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'ask-no-claude-'));
+  const missing = join(dir, 'claude');
+  const err = await runClaude({ bin: missing, prompt: 'hi', model: 'claude-sonnet-5' }).catch((e) => e);
+  assert.ok(err instanceof Error);
+  assert.equal(err.errorClass, 'network');
+  assert.equal(err.notInstalled, `Claude Code is not installed: ${missing} was not found. Install it, or set WORCA_CLAUDE_BIN to its path.`);
+});

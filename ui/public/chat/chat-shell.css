@@ -3,6 +3,40 @@
    empty, it takes no room. */
 .chat-composer-lead{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:2px 4px 0;}
 .chat-composer-lead:empty{display:none;}
+/* Who is asking (chat/role-picker.mjs): a small quiet button right after the Shaper pin — role icon, name, arrow. When
+   the lead row would wrap it folds to its icon; the name stays in its aria-label and title. */
+.chat-composer-lead > .ask-asker-pick{gap:5px;padding:0 6px;color:var(--ink);}
+.ask-asker-pick.is-folded > .ask-asker-l{display:none;}
+/* Guide (chat/guide-line.mjs): the app's switch after the role picker, and one line of fixed height between the field
+   and the bar (32px plus its divider). It never wraps; its words end in an ellipsis. */
+.chat-composer-lead > .ask-guide-sw{min-height:26px;margin-left:4px;}
+.chat-composer-lead > .ask-guide-sw .switch-label{font-size:var(--fs-meta);}
+.ask-guide{display:flex;align-items:center;gap:8px;box-sizing:border-box;height:33px;margin:0 6px;border-top:1px solid var(--line);font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;min-width:0;}
+.ask-guide-t{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;}
+/* The check's result: the app's fold (.plan-fold, from shape-it.css, which loads later: hence the child selector) or,
+   small with no gap, plain words. The size words give way first; the score, the chevron and "checking…" never shrink. */
+.ask-guide > .ask-guide-fold{align-self:center;flex:0 1 auto;min-width:0;overflow:hidden;}
+.ask-guide-fold .plan-fold-text,.ask-guide-sum{display:flex;min-width:0;overflow:hidden;}
+.ask-guide-head{flex:none;color:var(--ink);font-weight:600;}
+.ask-guide-rest{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:pre;}   /* pre: a flex item drops its leading space */
+.ask-guide-q{flex:none;color:var(--ink-2);}
+.ask-guide-chev{flex:none;}
+.ask-guide-fold[aria-expanded="true"] .ask-guide-chev{transform:rotate(180deg);}
+/* Write it out, Stop and Undo: the app's quiet small button at the line's right end, after a flexible spacer. The
+   written words' " · check them" never shrinks; their size words give way first. */
+.ask-guide-sp{flex:1 1 0;}
+.ask-guide-mid{flex:none;white-space:pre;}
+.ask-guide > .ask-guide-do{flex:none;}
+/* Written out: words that do not fit go whole, the size words first (they wrap out of the one line shown), never cut mid-word. */
+.ask-guide-filled{flex-wrap:wrap;max-height:1lh;}
+/* Guide rows (design system, Composer bar): the five checks under the line, built by buildCheckRows; an open Add field wraps under its label. */
+.ask-guide-rows{margin:0 6px;font-size:var(--fs-body);}
+.ask-guide-rows .plan-check-row.ok .plan-check-mark{color:var(--ink-2);}
+.ask-guide-rows .plan-check-row:has(> .ask-guide-ans){flex-wrap:wrap;row-gap:4px;}
+.ask-guide-rows .plan-check-row:has(> .ask-guide-ans) > .plan-check-text{flex-basis:12em;}
+.ask-guide-ans{display:flex;gap:8px;flex:1 0 100%;padding-left:calc(var(--row-mark) + var(--row-gap));box-sizing:border-box;}
+.ask-guide-ans > .input{flex:1 1 auto;min-width:0;}
+@media (pointer:coarse){.ask-guide{height:41px;}.chat-composer-lead > .ask-guide-sw{min-height:40px;}}
 /* The page (worca Chat P1): it fills the content column — .main stops scrolling and gives up its gutter, the section
    takes the rest, and the page is a row: history column · conversation · run panel slot (P4 sets its width). */
 body.view-chat .main{display:flex;flex-direction:column;overflow:hidden;padding:0;}

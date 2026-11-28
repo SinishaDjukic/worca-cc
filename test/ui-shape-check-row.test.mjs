@@ -203,6 +203,23 @@ test('checkMark wait: the box holds one wrapped dev status dot (the grey waiting
   assert.equal(mark.textContent, '');
 });
 
+// Shaper ask screens, slice 7: a Guide row's mark is an image with a name (`open`, `covered`).
+test('buildCheckRows markRole: the mark takes it as its role; an item without one has no role and is unchanged', () => {
+  const [gap, covered, plain] = buildCheckRows(doc, { items: [
+    { id: 'who', label: 'Who is it for', pass: false, mark: 'wait', markRole: 'img', ariaLabel: 'open' },
+    { id: 'what', label: 'What they get', pass: true, markRole: 'img', ariaLabel: 'covered' },
+    item('c', true),
+  ] });
+  const mark = (r) => r.querySelector('.plan-check-mark');
+  assert.ok(mark(gap).matches('.plan-check-mark.is-wait'));
+  assert.deepEqual([mark(gap).getAttribute('role'), mark(gap).getAttribute('aria-label')], ['img', 'open']);
+  assert.deepEqual([mark(covered).getAttribute('role'), mark(covered).getAttribute('aria-label')], ['img', 'covered']);
+  assert.ok(mark(covered).querySelector('svg'), 'the tick');
+  assert.equal(mark(plain).hasAttribute('role'), false, 'every other caller is as before');
+  const [ref] = buildCheckRows(doc, { items: [item('c', true)] });
+  assert.equal(plain.outerHTML, ref.outerHTML);
+});
+
 // The feature page's Requirements rows: their hooks and the run link come from the builder, never from a post-pass.
 test('buildCheckRows: data fills the row\'s dataset, without the null and undefined ones', () => {
   const [row, bare] = buildCheckRows(doc, { items: [{ ...item('a', true), data: { key: 'R-po-1', owner: 'run 2', role: null, x: undefined } }, item('a', true)] });

@@ -1,6 +1,8 @@
 // src/shared/intent-leads.mjs — the one plain sentence each Chat intent puts in front of a sent message
 // (ui/public/chat/intent.mjs), and the strip the server's fallback chat title takes before it reads the first line
 // (run 4, D19). Shared: the browser imports /src/shared, and the server cannot import the composer's browser modules.
+import { isAnswererLead } from './answerer.mjs';
+
 export const INTENT_LEADS = Object.freeze({
   run: 'Propose a pipeline run for this task.',
   shape: 'Shape this task first: propose a run with `shape`.',
@@ -20,11 +22,39 @@ const LEADS = new Set(Object.values(INTENT_LEADS));
 // workflowLead in intent.mjs: `Propose a pipeline run of workflow ${id} ("${name}") for this task.`
 const WORKFLOW_LEAD = /^Propose a pipeline run of workflow \S+ \(".*"\) for this task\.$/;
 
-/** The text without a leading intent lead: a lead alone gives '', a lead then a blank line gives what follows. */
+/** Who is asking (the composer's role picker): one paragraph right after the Shaper lead, for the model only. */
+export const SHAPE_ROLE_PREFIX = 'Asking as: ';
+const ROLE_LINE = /^Asking as: ([a-z]+)\.$/;
+
+/** The role paragraph for lead key `key`; a key the small-runs leads do not admit throws a TypeError. */
+export function shapeRoleLine(key) {
+  if (!isAnswererLead(key, { smallRuns: true })) throw new TypeError(`shapeRoleLine: not a lead key: ${String(key)}`);
+  return `${SHAPE_ROLE_PREFIX}${key}.`;
+}
+
+/** The lead key of an exact role paragraph, else null. Reads no flag, so a sent message reads the same later. */
+export function parseShapeRoleLine(s) {
+  const m = typeof s === 'string' ? ROLE_LINE.exec(s) : null;
+  return m && isAnswererLead(m[1], { smallRuns: true }) ? m[1] : null;
+}
+
+/** `rest` (what follows the Shaper lead and its blank line) without its first paragraph when that is a role line:
+ *  `{ role, text }`, or null when it is not one. */
+export function splitShapeRole(rest) {
+  const cut = rest.indexOf('\n\n');
+  const role = parseShapeRoleLine(cut === -1 ? rest : rest.slice(0, cut));
+  return role ? { role, text: cut === -1 ? '' : rest.slice(cut + 2) } : null;
+}
+
+/** The text without a leading intent lead: a lead alone gives '', a lead then a blank line gives what follows. After
+ *  the Shaper lead, a role paragraph is dropped too. */
 export function stripIntentLead(text) {
   const s = String(text ?? '');
   const cut = s.indexOf('\n\n');
   const first = cut === -1 ? s : s.slice(0, cut);
   if (!LEADS.has(first) && !WORKFLOW_LEAD.test(first)) return s;
-  return cut === -1 ? '' : s.slice(cut + 2);
+  if (cut === -1) return '';
+  const rest = s.slice(cut + 2);
+  const role = first === INTENT_LEADS.shape ? splitShapeRole(rest) : null;
+  return role ? role.text : rest;
 }

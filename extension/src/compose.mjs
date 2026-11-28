@@ -22,11 +22,14 @@ export function pickModel(catalog, thread = null) {
 }
 
 /** A stored composer pick (D12) the catalog still offers — pickModel's case-insensitive id match and effort check —
- *  → {model: entry.id, effort}, else null (never a fallback: the caller picks the default then). */
-export function validPick(catalog, p) {
+ *  → {model: entry.id, effort}, else null (never a fallback: the caller picks the default then). A pick on an engine
+ *  whose CLI is not installed here (the catalog's `notReady`) is not offered, unless the open chat is on it (`lock`). */
+export function validPick(catalog, p, { lock = null } = {}) {
   if (!p || typeof p.model !== 'string' || typeof p.effort !== 'string') return null;
   const models = catalog && Array.isArray(catalog.models) ? catalog.models : [];
   const entry = models.find((m) => String(m.id).toLowerCase() === p.model.toLowerCase());
+  const engine = entry ? entry.engine || 'claude' : null;
+  if (engine && engine !== lock && catalog.notReady && typeof catalog.notReady[engine] === 'string') return null;
   const efforts = entry && Array.isArray(entry.efforts) && entry.efforts.length ? entry.efforts : ((catalog && catalog.efforts) || []);
   return entry && efforts.includes(p.effort) ? { model: entry.id, effort: p.effort } : null;
 }

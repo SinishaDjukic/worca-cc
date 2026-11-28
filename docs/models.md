@@ -487,6 +487,7 @@ their factory default applies to role reviews only:
 | Models › Jobs › Steps › Requirements Review | role reviews of the requirements (Shaper with requirements first) | Sonnet 5.5 · medium |
 | Models › Jobs › Helper jobs › Second-opinion reviewer | the one role a role review names as its second opinion (Shaper's Product reviewer) | Opus 5.5 · medium |
 | Models › Jobs › Helper jobs › Memory defragment | the Memory defragment run | Sonnet 5 |
+| Models › Jobs › Helper jobs › Guide | the quick check of a Shaper prompt in the chat composer (`shaperSmallRuns`) | the cheapest ready Claude model |
 | Settings › Runs › Workspaces | the workspace scan | your Everyday tasks role (else Sonnet 5 · medium), project agents `sonnet` · medium |
 
 The factory default comes after your role: a node pick, a project pick, your
@@ -832,6 +833,21 @@ free model touching only the pipeline steps. Command summaries' redaction is bes
 switch in Settings › Chat turns the job off. A changed Command summaries model applies to new
 commands within a minute, while lines already written stay until a restart.
 
+*Guide* is the quick check of a Shaper prompt in the chat composer, listed under Helper jobs only
+while the shaperSmallRuns flag is on (`shaperSmallRuns`). It takes a model and an effort, on the
+Claude Code tile only (`guideModel`, user-level); unset, it runs on the cheapest ready Claude model
+at its lowest effort. Change it at Models › Jobs › Helper jobs › Guide: the composer's Guide switch
+names the model in its tooltip and follows a save without a reload. Guide is asked the prompt
+alone: no chat, no files, no role name and no tools, from an empty folder. It checks five things in
+the asker's wording, plain for Product, UX and Compliance and technical otherwise: who it is for,
+what they get, what starts it, its limits and how you know it worked. For each check it returns
+covered or one open question, plus a size of small, medium or large. A prompt over 8000 characters
+is not sent, and with the Guide switch off nothing is sent. Write it out asks the same model for one short line per
+open gap and nothing else; it never returns the prompt, so the written text is your prompt unchanged plus one
+"(suggested)" line per filled gap. The check's wording follows the role picked in the composer's role picker, the
+composer shows the size as "Large: several runs", "Medium: a few runs" or "Small: one run", and Add on a gap row puts
+your own answer in with no model call.
+
 The *Requirements interview* helper (the Requirements page's product briefs, code looks and interview
 rounds) runs on Claude only and is set per user. Unlike Memory defragment, it takes an effort without a
 model: the default model then runs at that effort. A model picked with no effort runs at that model's own default effort. A model removed from the
@@ -1064,7 +1080,7 @@ because the CLI is signed out, worca says so instead of showing the bare error.
 
 worca can run pipelines and chats on OpenAI's Codex CLI.
 
-1. Install the `codex` CLI (or use the one bundled with the ChatGPT desktop app) and make sure worca finds it: on `PATH`, or `WORCA_CODEX_BIN=/path/to/codex` in worca's environment. On Windows an npm install needs no `WORCA_*_BIN`: worca runs the package's native `.exe` when it finds one next to npm's `.cmd` shim, else `node <entry script>` from the shim (never a shell), and the variable may point at a `.exe` or a `.cmd`.
+1. Install the `codex` CLI (`npm install -g @openai/codex`, or use the one bundled with the ChatGPT desktop app) and make sure worca finds it: on `PATH`, or `WORCA_CODEX_BIN=/path/to/codex` in worca's environment. On Windows an npm install needs no `WORCA_*_BIN`: worca runs the package's native `.exe` when it finds one next to npm's `.cmd` shim, else `node <entry script>` from the shim (never a shell), and the variable may point at a `.exe` or a `.cmd`.
 2. Sign in once in a terminal: `codex login`. `codex login status` must say you are logged in.
 3. Pick Codex per run on New run, or as a default with **Default for new runs** (Models › Catalogue or Models › Jobs). For Chat, Settings › Chat › Engine & models.
 
@@ -1340,7 +1356,7 @@ worca can run pipelines on [Goose](https://github.com/aaif-goose/goose)'s headle
 
 worca can run pipelines on [OpenCode](https://opencode.ai) (`opencode run`), both the 1.x and the 2.x line. OpenCode is in beta in worca. Chat runs on OpenCode 1.19.4 or newer (1.x) or 2.3.2 or newer (2.x), locked down to worca's own tools (see the end of this section). Checked against opencode 1.18.23 (1.x, npm `opencode-ai`) and opencode 2.3.2 (2.x, npm `@opencode/cli` and Homebrew's `opencode` formula). worca reads the binary's major version once and runs each line its own way; the differences are noted below.
 
-1. Install OpenCode and make sure worca finds it: on `PATH`, or `WORCA_OPENCODE_BIN=/path/to/opencode` in worca's environment. On Windows an npm install needs no `WORCA_*_BIN`: worca runs the package's native `.exe` when it finds one next to npm's `.cmd` shim, else `node <entry script>` from the shim (never a shell), and the variable may point at a `.exe` or a `.cmd`. worca supports OpenCode 1.x (npm `opencode-ai`) and 2.x (npm `@opencode/cli`, and Homebrew's `opencode` formula).
+1. Install OpenCode (`npm install -g @opencode/cli` for 2.x, or `brew install opencode`) and make sure worca finds it: on `PATH`, or `WORCA_OPENCODE_BIN=/path/to/opencode` in worca's environment. On Windows an npm install needs no `WORCA_*_BIN`: worca runs the package's native `.exe` when it finds one next to npm's `.cmd` shim, else `node <entry script>` from the shim (never a shell), and the variable may point at a `.exe` or a `.cmd`. worca supports OpenCode 1.x (npm `opencode-ai`) and 2.x (npm `@opencode/cli`, and Homebrew's `opencode` formula).
 2. Connect a provider once in a terminal: `opencode auth login`, or set the provider's key (for example `ANTHROPIC_API_KEY`) in worca's own environment. `opencode providers list` (1.x) or `opencode auth list` (2.x) shows what OpenCode sees. Without either, only OpenCode Zen's free models run, and they send the code to opencode.ai, so Models › Jobs shows OpenCode as *Not ready* and a run is refused, unless every step names its model or you opt in (below). worca checks the credentials in the environment the agent gets: under a set that scrubs the environment, a key only worca has does not count. For Google models, set `GOOGLE_GENERATIVE_AI_API_KEY`: OpenCode 1.18 lists a `GEMINI_API_KEY` under `providers list` but does not use it, so a run stops with "Google Generative AI API key is missing".
 3. Pick OpenCode per run on New run, or as a default with **Default for new runs** (Models › Catalogue or Models › Jobs).
 
@@ -1373,7 +1389,20 @@ worca can run pipelines on [OpenCode](https://opencode.ai) (`opencode run`), bot
 **Which engine a chat runs on.** Chat runs on Claude Code, and on the engines worca can lock down to its own tools:
 [Codex](#codex), [GitHub Copilot CLI](#github-copilot-cli), [Gemini CLI and Qwen Code](#gemini-cli-and-qwen-code), [Goose](#goose) and
 [OpenCode](#opencode). Pick one in Settings › Chat › Engine & models, or by picking one of its models for a new chat.
-Cursor models are not offered in Chat: worca has no verified lockdown for Cursor. On every engine but Claude, a chat has no shell and no
+Cursor models are not offered in Chat: worca has no verified lockdown for Cursor. Nor is an engine whose program is not
+installed on this machine: worca looks for it (the engine's `WORCA_<ENGINE>_BIN`, else its usual name on your `PATH`)
+whenever the model picker loads, without starting it. The picker leaves such an engine out, and a new chat starts on the
+first engine that is installed (in the picker's order) when that engine is your Chat engine; install it and it is offered the next time you open the picker. A chat
+already on it keeps its model, marked *not installed* with the reason, led by a **Set up** row for that engine, and can
+move to another engine. An engine that
+is installed but not signed in stays offered: the chat says what to fix when you send. Claude Code follows the same rule
+(`WORCA_CLAUDE_BIN`, else `claude` on your `PATH`). Every engine's setup row opens its setup dialog (**Connect
+OpenAI Codex**, **Connect Goose**, … **Connect Claude Code**): the install command and sign-in step from that engine's section below, its
+`WORCA_<ENGINE>_BIN`, a link to the section, and **Check again**. Check again asks the server whether the program is
+installed (the same look as the picker's) and, once it is, whether the engine is ready, as Models › Jobs reports it
+(`GET /api/engines/<engine>/setup`). When no engine is installed, the model button says **Set up a harness**, and its
+menu lists the engines to set up. A Claude chat sent while it is missing says "Claude Code is not installed" with the path it looked
+for, and its **Set up…** link opens the same dialog. On every engine but Claude, a chat has no shell and no
 file tools of its own, reads through worca's `read_file`, `grep` and `glob`, and stops with an error the moment the engine
 calls a tool that is neither worca's nor one of your sets' MCP servers.
 
@@ -1464,9 +1493,11 @@ click Apply.
 ### Switching a chat's engine
 
 A chat is not tied to the engine it started on. The model picker lists the models of the chat's engine, marked
-*this chat*, and one row for each other engine that has models. Open an engine's row to see its models, and pick one to
-move the chat there. The engines with no model yet are listed under **More harnesses**; a row there opens `Add model`
-with that harness picked:
+*this chat*, and one row for each other engine that has models and is installed here. Open an engine's row to see its models, and pick one to
+move the chat there. The installed engines with no model yet are listed under **More harnesses**; a row there opens `Add model`
+with that harness picked. Below them, dimmed and marked *not installed*, are the engines not installed on this machine; a
+row there opens that engine's setup dialog (in the browser extension, its setup section of this page in a new tab).
+Moving a chat:
 
 - worca first shows what changes: the tools the new engine has, images or PDFs it cannot view, whether it reports a
   cost, both models' context windows, the MCP servers from your sets it cannot start, the attachments it gets only by
@@ -1485,8 +1516,9 @@ with that harness picked:
 - Each reply records its engine, model and effort. The chat's cost is the sum over all of them. The context meter
   starts over at the switch, since the new session has no context yet.
 - Event turns (a card you answered, a finished command) run on the engine the chat is on when they start.
-- In Chat the model button leads with the engine's harness mark (its tooltip names the engine); in the browser
-  extension it names the engine in words when more than one is set up.
+- In Chat the model button leads with the engine's harness mark (its tooltip names the engine), and so do each
+  engine's heading and row in the model picker and its row under **More harnesses**; in the browser extension it
+  names the engine in words when more than one is set up.
 - Your browser remembers the last model and effort you used on each engine; another engine's list shows that model
   first, tagged *last used*. The Workflows chat and the browser extension do not switch: the extension shows the chat's engine and lists
   its models only.

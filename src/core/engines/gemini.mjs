@@ -440,11 +440,11 @@ export function geminiChatSelfTest({ bin = geminiDefaultBin(), ...o } = {}) {
 export const geminiChat = Object.freeze({ ...makeChatDescriptor({
   engine: 'gemini',
   lockdown: () => GEMINI_ASK_LOCKDOWN,
+  bin: geminiDefaultBin,
   askSupport: (o, impl = geminiAskSupport) => impl(o),
   selfTest: (o, impl = geminiChatSelfTest) => impl(o),
   preflight: (_ctx, impl = geminiPreflight) => impl(),
   resumeNotFound: (err) => GEMINI_RESUME_NOT_FOUND_RE.test(String((err && err.message) || err || '')),
-  docsAnchor: 'gemini-cli-and-qwen-code',
   signIn: () => ['GEMINI_', 'GOOGLE_'],
   prompt: { cli: "Gemini CLI with Gemini CLI's own sign-in" },
 }), ownFolder: true });
