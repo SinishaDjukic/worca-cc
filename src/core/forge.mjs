@@ -3,8 +3,10 @@
 // (Ship-it, sync, clone, metrics; the workspace map shares the Azure fold via src/shared/azure-remote.mjs).
 import { isAzureHost, parseAzurePath, parseAzurePrUrl, parseAzureWorkItemUrl } from '../shared/azure-remote.mjs';
 import { parseBitbucketIssueUrl, parseBitbucketPrUrl } from '../shared/bitbucket-remote.mjs';
+import { parseBitbucketServerPrUrl } from '../shared/bitbucket-server-remote.mjs';
+import { isBitbucketServerHost } from './bitbucket-server-credentials.mjs';
 
-export const FORGE_LABEL = Object.freeze({ github: 'GitHub', azure: 'Azure DevOps', bitbucket: 'Bitbucket' });
+export const FORGE_LABEL = Object.freeze({ github: 'GitHub', azure: 'Azure DevOps', bitbucket: 'Bitbucket', 'bitbucket-server': 'Bitbucket Server' });
 
 export function parseGithubPrUrl(value) {
   if (typeof value !== 'string') return null;
@@ -139,12 +141,13 @@ export function sameRepo(a, b) {
     && a.repo.toLowerCase() === b.repo.toLowerCase();
 }
 
-/** 'github' | 'azure' | 'bitbucket' | null for a parsed remote (or a listRemotes entry). null = plain git. */
+/** 'github' | 'azure' | 'bitbucket' | 'bitbucket-server' | null for a parsed remote (or a listRemotes entry). null = plain git. */
 export function forgeOf(parsed) {
   if (!parsed) return null;
   if (parsed.host === 'github.com') return 'github';
   if (parsed.host === 'dev.azure.com' && parsed.org) return 'azure';
   if (parsed.host === 'bitbucket.org') return 'bitbucket';
+  if (isBitbucketServerHost(parsed.host)) return 'bitbucket-server';
   return null;
 }
 
@@ -152,7 +155,9 @@ export function forgeOf(parsed) {
 export function forgeOfPrUrl(url) {
   if (/^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+/i.test(String(url || ''))) return 'github';
   if (parseAzurePrUrl(url)) return 'azure';
-  return parseBitbucketPrUrl(url) ? 'bitbucket' : null;
+  if (parseBitbucketPrUrl(url)) return 'bitbucket';
+  const server = parseBitbucketServerPrUrl(url);
+  return server && isBitbucketServerHost(server.host) ? 'bitbucket-server' : null;
 }
 
 /** PR number from a GitHub (/pull/N), Azure DevOps (/pullrequest/N) or Bitbucket (/pull-requests/N) URL, else null. */
@@ -185,6 +190,12 @@ export function prIdentity(url) {
   if (bb) {
     const number = posInt(bb.number);
     return number ? { forge: 'bitbucket', owner: bb.owner, repo: bb.repo, number, key: `bitbucket.org/${bb.owner}/${bb.repo}/pull-requests/${number}`.toLowerCase() } : null;
+  }
+  const server = parseBitbucketServerPrUrl(text);
+  if (server) {
+    const number = posInt(server.number);
+    return number ? { forge: 'bitbucket-server', host: server.host, owner: server.key, repo: server.slug, number,
+      key: `${server.host}/${server.key}/${server.slug}/pull-requests/${number}`.toLowerCase() } : null;
   }
   return null;
 }

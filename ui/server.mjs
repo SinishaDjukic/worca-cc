@@ -438,8 +438,9 @@ import { ensureAutomationTemplate, listAutomationTemplates, TEMPLATE_FOR_ACTION 
 import { createAzureAutomationHost, azureWebhookItems } from '../src/core/automation-azure.mjs';
 import { forkRefusal, workItemIdFromSourceRef, prSummary, workItemSummaries } from '../src/core/pr/azure.mjs';
 import { forkRefusal as bitbucketForkRefusal } from '../src/core/pr/bitbucket.mjs';
+import { forkRefusal as bbServerForkRefusal } from '../src/core/pr/bitbucket-server.mjs';
 // Forges whose PRs worca opens over REST (pr/azure.mjs, pr/bitbucket.mjs): gh body edits and GitHub "Closes" lines skip them.
-const REST_PR_FORGES = new Set(['azure', 'bitbucket']);
+const REST_PR_FORGES = new Set(['azure', 'bitbucket', 'bitbucket-server']);
 import { checkRunPrBody, resolveRunPr } from '../src/core/pr-auto.mjs';
 import { createPrAutoFinisher, setPrAutoFinisher, prAutoFinisher } from '../src/core/pr-auto-finish.mjs';
 import { workspaceMembers as prStateMembers, memberPrTarget, relatedPrsBlock, withRelatedPrsBlock, openWorkspaceRunPrs, createPrWithDraftRetry } from '../src/core/workspace-prs.mjs';
@@ -7143,9 +7144,9 @@ async function pickPrRemotes(body, repoDir) {
   return { remotes, pushRemote, baseRemote, pushR: byName.get(pushRemote) || null, baseR: byName.get(baseRemote) || null };
 }
 
-// Azure DevOps and Bitbucket (for now) cannot open a PR between forks: the refusal text when the branch would be
-// pushed to another repo than such a base remote, else null. Checked BEFORE anything is pushed.
-const FORK_REFUSALS = { azure: forkRefusal, bitbucket: bitbucketForkRefusal };
+// Azure DevOps, Bitbucket and a self-hosted Bitbucket Server (for now) cannot open a PR between forks: the refusal
+// text when the branch would be pushed to another repo than such a base remote, else null. Checked BEFORE anything is pushed.
+const FORK_REFUSALS = { azure: forkRefusal, bitbucket: bitbucketForkRefusal, 'bitbucket-server': bbServerForkRefusal };
 function forkPrRefusal(pushR, baseR) {
   const refuse = FORK_REFUSALS[prProviderFor(baseR).forge];
   return refuse && pushR && !sameRepo(pushR, baseR) ? refuse(baseR) : null;

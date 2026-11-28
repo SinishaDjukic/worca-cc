@@ -162,6 +162,26 @@ test('planClone: a Bitbucket Clone-button URL drops its user; a password is refu
   assert.deepEqual([plan({ url: 'https://altssh.bitbucket.org/acme/bb-alt1' }).url, plan({ url: 'https://altssh.bitbucket.org/acme/bb-alt1' }).host], ['https://bitbucket.org/acme/bb-alt1.git', 'bitbucket.org']);
 });
 
+test('planClone: an allow-listed Bitbucket Server /scm/<project>/<repo> URL is accepted and keeps its scm path (#1576)', () => {
+  const env = { WORCA_BB_SERVER_HOSTS: 'bbs.example.com' };
+  const p = plan({ url: 'https://bbs.example.com/scm/PROJ/bb-server1.git' }, env);
+  assert.deepEqual([p.url, p.host, p.owner, p.repo, p.name], ['https://bbs.example.com/scm/PROJ/bb-server1.git', 'bbs.example.com', 'PROJ', 'bb-server1', 'bb-server1']);
+  // a Clone-button-style user@ URL drops the user, like Cloud and Azure
+  const p2 = plan({ url: 'https://jdoe@bbs.example.com/scm/proj/bb-server2.git' }, env);
+  assert.deepEqual([p2.url, p2.owner, p2.repo], ['https://bbs.example.com/scm/proj/bb-server2.git', 'proj', 'bb-server2']);
+  // a plain (non-/scm/) server URL still works and stays plain
+  const p3 = plan({ url: 'https://bbs.example.com/proj/bb-server3.git' }, env);
+  assert.equal(p3.url, 'https://bbs.example.com/proj/bb-server3.git');
+  // a password names the server token variable
+  assert.throws(() => plan({ url: 'https://jdoe:secret@bbs.example.com/scm/proj/x.git' }, env), /WORCA_BB_SERVER_TOKEN/);
+  // not an allow-listed host (or no allowlist): /scm/ URLs stay rejected — the fix is scoped, not global
+  assert.throws(() => plan({ url: 'https://bbs.example.com/scm/proj/x.git' }, {}), /must name one repository/);
+  assert.throws(() => plan({ url: 'https://github.com/acme/scm/x.git' }, env), /must name one repository/);
+  // project-slash-repo required after the leading scm
+  assert.throws(() => plan({ url: 'https://bbs.example.com/scm/api.git' }, env), /must name one repository/);
+});
+
+
 test('runClone: a Bitbucket plan gets the Bitbucket read helper, never a GitHub credential', async () => {
   const seen = [];
   const git = fakeGit();

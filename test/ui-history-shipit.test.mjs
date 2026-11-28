@@ -1397,6 +1397,12 @@ test('(e) Create PR eligibility reads any PR host: an Azure DevOps token alone o
       assert.equal(hdPr(ctx.window).hidden, false);
       assert.equal(ctx.window.__np.histPrEligible(ROW), true);
     } },
+    { name: 'gh missing, Bitbucket Server configured', run: async () => {
+      const ctx = await bootShip({ gh: false, prHosts: { github: false, azure: false, 'bitbucket-server': true } });
+      await openDetail(ctx);
+      assert.equal(hdPr(ctx.window).hidden, false);
+      assert.equal(ctx.window.__np.histPrEligible(ROW), true);
+    } },
     { name: 'neither host', run: async () => {
       const ctx = await bootShip({ gh: false, prHosts: { github: false, azure: false } });
       await openDetail(ctx);

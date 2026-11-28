@@ -114,6 +114,40 @@ with a pointer to `WORCA_BB_TOKEN`), and clones from `https://bitbucket.org/<wor
 `WORCA_EGRESS_ALLOW`. Step logs are served from a storage host that the log request redirects to:
 add that host too if Watch PR cannot read logs. Worca follows that redirect without the token.
 
+## Bitbucket Server (self-hosted, Data Center)
+
+Alongside Bitbucket Cloud, Worca can clone, fetch, push and open pull requests on a self-hosted
+**Bitbucket Server / Data Center** instance. Set it apart in two variables:
+
+| Variable | Meaning |
+| --- | --- |
+| `WORCA_BB_SERVER_HOSTS` | the server host(s) to treat as Bitbucket Server, comma-separated (e.g. `git.example.com`). Hosts not listed are left alone |
+| `WORCA_BB_SERVER_TOKEN` | a Bitbucket Server **HTTP access token** for that host: clone, fetch, push and pull requests all use it |
+| `WORCA_BB_SERVER_READ_TOKEN`, `WORCA_BB_SERVER_WRITE_TOKEN` | optional read/write split, the same rules as the Cloud pair |
+
+Credentials are **Bearer-only**: Bitbucket Server "HTTP access tokens" reject basic `user:token`
+(401), so git gets the token as a per-call `http.<url>.extraHeader = Authorization: Bearer <token>`
+(injected into one command's environment, never written to a config file) and REST calls send the same
+header. A deployment that already renders the header into `~/.gitconfig` (`GIT_CONFIG_GLOBAL`) keeps
+cloning and pushing without `WORCA_BB_SERVER_TOKEN`; pull requests need the REST token either way.
+
+What works on Bitbucket Server:
+
+- **Clone** — **Add project → Clone from URL** accepts `https://<host>/scm/<project>/<repo>.git`
+  (the leading `scm` is dropped from owner/repo but kept in the clone URL) and the Server "Clone"
+  button's `https://<user>@<host>/scm/…` form. The URL validator's two-segment rule is scoped: only an
+  allow-listed server host gets the `/scm/` treatment.
+- **Open a PR / reuse** — a finished run's **Create PR** pushes the branch and opens the pull request
+  via the Bitbucket Server REST API (`/rest/api/1.0/projects/{key}/repos/{slug}/pull-requests`); an
+  already-open PR for the same source+destination branch pair is reused, never duplicated. Draft PRs
+  work.
+- **Mark ready / Close** from the run page (draft → ready; decline).
+
+What does not work on Bitbucket Server (yet): **Watch PR**, the PR card's **checks**, **comments** and
+**threads**, and **forks** (a PR between two repositories is refused). The Runs list's **mergeable**
+chip reads *unknown* (Bitbucket Server exposes no synchronous mergeability). A Server PR URL is
+recognized by host allowlist only — a URL for a non-listed host is not treated as a pull request.
+
 ## Watch PR
 
 Watch PR works the same on a Bitbucket pull request as on GitHub (see [UI levels](ui-levels.md)).

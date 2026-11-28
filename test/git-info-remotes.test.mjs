@@ -646,8 +646,15 @@ test('prProviderFor / prHostsAvailable / anyPrHost', async () => {
     assert.equal(prProviderFor({ host: 'bitbucket.org', owner: 'acme', repo: 'api' }).label, 'Bitbucket');
     assert.deepEqual(await prProviderFor({ host: 'bitbucket.org', owner: 'acme', repo: 'api' }).available(),
       { ok: false, reason: 'Bitbucket is not configured: set WORCA_BB_TOKEN (an access token, or an Atlassian API token with WORCA_BB_EMAIL) with Repositories and Pull requests: Read & Write, and Pipelines: Read, where worca runs' });
-    assert.deepEqual(await prHostsAvailable(), { github: false, azure: false, bitbucket: false });
+    assert.deepEqual(await prHostsAvailable(), { github: false, azure: false, bitbucket: false, 'bitbucket-server': false });
     assert.equal(await anyPrHost(), false);
+  });
+  await withEnv({ ...NO_ADO, WORCA_BB_SERVER_HOSTS: 'bbs.example.com', WORCA_BB_SERVER_TOKEN: 't' }, async () => {
+    const provider = prProviderFor({ host: 'bbs.example.com', owner: 'PROJ', repo: 'api' });
+    assert.equal(provider.label, 'Bitbucket Server');
+    assert.equal(provider.forge, 'bitbucket-server');
+    assert.deepEqual(await provider.available(), { ok: true });
+    assert.equal(await anyPrHost(), true);
   });
 });
 

@@ -19,6 +19,7 @@ import { githubEnv } from './github-credentials.mjs';
 import { gitEnvFor } from './host-credentials.mjs';
 import { isAzureHost, parseAzurePath } from '../shared/azure-remote.mjs';
 import { isBitbucketHost } from '../shared/bitbucket-remote.mjs';
+import { isBitbucketServerHost } from './bitbucket-server-credentials.mjs';
 import { gitAvailable, GIT_MISSING } from './git-available.mjs';
 
 export const CLONE_TIMEOUT_MS = 10 * 60_000;
@@ -59,10 +60,12 @@ export function planClone({ url, branch = null, name = null } = {}, { projectsRo
   if (u.protocol !== 'https:') throw new CloneError('invalid', 'only https:// repository URLs are supported');
   const azure = isAzureHost(u.hostname);
   const bitbucket = isBitbucketHost(u.hostname);
-  // Azure's and Bitbucket's "Clone" buttons put a user in the URL ("https://acme@dev.azure.com/…",
-  // "https://jdoe@bitbucket.org/…"): a user alone is dropped (the canonical URL below carries none).
-  if (u.password || (u.username && !azure && !bitbucket)) {
-    const vars = azure ? 'WORCA_ADO_TOKEN' : bitbucket ? 'WORCA_BB_TOKEN' : 'the GitHub token or App variables';
+  const server = isBitbucketServerHost(u.hostname, env);
+  // Azure's, Bitbucket's and a Bitbucket Server's "Clone" buttons put a user in the URL ("https://acme@dev.azure.com/…",
+  // "https://jdoe@bitbucket.org/…", "https://jdoe@bitbucket.example.com/scm/…"): a user alone is dropped
+  // (the canonical URL below carries none).
+  if (u.password || (u.username && !azure && !bitbucket && !server)) {
+    const vars = azure ? 'WORCA_ADO_TOKEN' : bitbucket ? 'WORCA_BB_TOKEN' : server ? 'WORCA_BB_SERVER_TOKEN' : 'the GitHub token or App variables';
     throw new CloneError('invalid', `the URL contains credentials; remove them and set ${vars} where worca is deployed`);
   }
   if (u.search || u.hash) throw new CloneError('invalid', 'the URL must not have a query or fragment');
@@ -80,11 +83,17 @@ export function planClone({ url, branch = null, name = null } = {}, { projectsRo
     canonical = `https://dev.azure.com/${e(az.org)}/${e(az.project)}/_git/${e(az.repo)}`;
   } else {
     host = bitbucket ? 'bitbucket.org' : u.hostname.toLowerCase();
-    if (segs.length !== 2 || !segs.every((s) => SEG_RE.test(s))) {
+    // Bitbucket Server clone URLs (https://<host>/scm/<project>/<repo>.git) put the project in a leading "scm"
+    // segment that is not part of owner/repo — drop it only for an allow-listed server host, then validate
+    // (the rest of the product already parses this shape; see metrics/sync.mjs and forge.mjs#parseRemoteUrl).
+    const s = server && segs[0] === 'scm' ? segs.slice(1) : segs;
+    if (s.length !== 2 || !s.every((x) => SEG_RE.test(x))) {
       throw new CloneError('invalid', 'the URL must name one repository, like https://github.com/owner/repo');
     }
-    [owner, repo] = segs;
-    canonical = `https://${host}/${owner}/${repo}.git`;
+    [owner, repo] = s;
+    // The /scm/ prefix is part of the real clone URL on a Bitbucket Server: keep it so the clone hits a real path.
+    const scm = server && segs[0] === 'scm' ? '/scm' : '';
+    canonical = `https://${host}${scm}/${owner}/${repo}.git`;
   }
   if (!cloneAllowed(parseCloneAllow(env.WORCA_CLONE_ALLOW), { host, owner, repo })) {
     throw new CloneError('not-allowed', `${host}/${owner}/${repo} is not in WORCA_CLONE_ALLOW`);
