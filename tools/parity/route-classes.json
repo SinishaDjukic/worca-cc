@@ -581,6 +581,7 @@
   "POST /api/settings": {"class": "skip", "reason": "mandated skip: {} clears the Worca root (ui/server.mjs:12192)"},
   "POST /api/setup/apply": {"class": "skip", "reason": "mandated skip: applies setup (ui/server.mjs:13710)"},
   "POST /api/setup/team/draft": {"class": "probe", "reason": "read-only: builds a draft from local settings and model catalog; try/catch"},
+  "POST /api/shape/features/:id/acknowledge": {"class": "probe", "reason": "featureView misses an unknown feature, 404 before any write; try/catch"},
   "POST /api/shape/features/:id/approve-each": {"class": "probe", "reason": "400 when on is not a boolean"},
   "POST /api/shape/features/:id/cancel": {"class": "probe", "reason": "cancelRest refuses an unknown feature; shapeRouteError catches"},
   "POST /api/shape/features/:id/confirm": {"class": "probe", "reason": "featureView misses an unknown feature, 404 before any write; try/catch"},

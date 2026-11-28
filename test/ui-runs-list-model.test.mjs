@@ -1364,6 +1364,17 @@ test('s7: a confirmation hold sits in Needs you with the amber dot; an unowned h
   assert.equal(countNeedsYou({ history, groups: [smallFeature({ members, hold: unowned })] }), 0, 'an unowned hold is not counted');
 });
 
+test('a confirmation hold on a feature with a stopped run is not counted: the badge follows the list, which keeps it under Waiting', () => {
+  const hold = 'Needs your confirmation: R-ux-2';
+  const members = TEN.slice(0, 2).map((id, i) => ({ position: i + 1, title: `Slice ${i + 1}`, pipelineId: id, kind: 'hist', run: { status: i ? 'stopped' : 'done' } }));
+  const history = TEN.slice(0, 2).map((id, i) => histIt(id, { run: { status: i ? 'stopped' : 'done' }, pr: null }));
+  const g = smallFeature({ members, hold });
+  const row = groupRow(g, { now: NOW });
+  assert.equal(row.model.hold, undefined, 'the group model keeps no hold while a run is stopped');
+  const inList = buildRunsModel({ history, groups: [g], now: NOW }).sections.find((x) => x.id === 'needs')?.count || 0;
+  assert.equal(countNeedsYou({ history, groups: [g] }), inList, 'the badge equals the Needs you section');
+});
+
 test('s7 owner direction: the Runs badge counts a feature held for your confirmation only with the flag on', () => {
   const hold = 'Needs your confirmation: R-ux-2';
   const members = TEN.slice(0, 2).map((id, i) => ({ position: i + 1, title: `Slice ${i + 1}`, pipelineId: id, kind: 'hist', run: { status: 'done' } }));
@@ -1626,11 +1637,11 @@ test('s18: an In review feature with a failed newest round sits in Needs you, it
   assert.deepEqual([needs?.count, countNeedsYou({ history, groups: two })], [2, 2]);
 });
 
-// The control: the checkpoint's row and badge for a notes hold (the badge counts it, the row reads In review).
-test('s18 control: an In review feature with only a notes hold keeps its row and its badge count', () => {
+// The control: a notes hold on an In review feature. The row reads In review outside Needs you, and the badge agrees.
+test('s18 control: an In review feature with only a notes hold keeps its row; the badge follows the list', () => {
   const d = s18Draw(inReview({ hold: "Acknowledge the Verifier's note to ship" }));
   assert.deepEqual([d.row.model.state, d.row.model.line, d.row.needs], ['in-review', 'In review · 1 PR', false]);
   assert.deepEqual(d.needs, []);
   assert.ok(d.sub.startsWith('In review · 1 PR'), d.sub);
-  assert.equal(d.badge, 1);
+  assert.equal(d.badge, 0);
 });

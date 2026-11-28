@@ -304,7 +304,11 @@ export function needsYouItems({ live = [], history = [], groups = [] } = {}) {
 /** Slice 7 (owner direction): the run groups held for your confirmation. `groups` = GET /api/run-groups' groups; the
  *  server sends a confirmation `hold` only on a marked feature with the Shaper small runs flag on. */
 export const confirmHeldCount = (groups) => (Array.isArray(groups) ? groups : [])
-  .filter((g) => g && g.smallRuns && isNeedsYouHold(g.hold)).length;
+  .filter((g) => g && g.smallRuns && holdNeedsYou(g)).length;
+
+/** A confirmation or notes hold needs you only while the group model keeps it (a group whose runs are not all in
+ *  shows no hold and sits under Waiting): the Runs list's rule (groupRow), so the badge and the list agree. */
+const holdNeedsYou = (g) => isNeedsYouHold(g.hold) && isNeedsYouHold(groupModelOf(g).hold);
 
 /** Slice 11: whether a marked feature needs you, by groupRow's rule. A newest Verifier round that holds the group
  *  (groupModel `check`) decides: a failed or asking round needs you, unless its own run is already counted (`counted`
@@ -314,7 +318,8 @@ export const confirmHeldCount = (groups) => (Array.isArray(groups) ? groups : []
 function groupNeedsYou(g, counted) {
   if (!g || !g.smallRuns) return false;
   const model = Array.isArray(g.checks) && g.checks.length ? groupModelOf(g) : null;
-  if (!model || !model.check) return isNeedsYouHold(g.hold);
+  if (!model) return holdNeedsYou(g);
+  if (!model.check) return isNeedsYouHold(model.hold);
   return (model.state === 'needs-you' || model.state === 'failed') && !counted.has(String(g.checks.at(-1).pipelineId || ''));
 }
 

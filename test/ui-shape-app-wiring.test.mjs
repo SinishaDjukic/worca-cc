@@ -1288,11 +1288,13 @@ test('s7: homeForRun reads the slice route; featureId only for a run with `owns`
 });
 
 test('s7 R-arch-4: the run panel\'s Prototype stop of a chat-less feature run links to its feature page', async () => {
+  let n = 0;
   const open = async (info) => {
-    const ctx = await bootApp({ fetchHandler: (url) => (url === '/api/shape/pipelines/p-rr/slice' ? res(info ? 200 : 404, info || {}) : null) });
+    const pid = `p-rr${n += 1}`;                    // the shared app remembers a run's home: each case asks for its own
+    const ctx = await bootApp({ fetchHandler: (url) => (url === `/api/shape/pipelines/${pid}/slice` ? res(info ? 200 : 404, info || {}) : null) });
     ctx.wsBox.ws.dispatch('open', {});
     ctx.dispatch({ type: 'hello', runs: [{ ...reqRun({ id: 'proto-1', kind: 'prototype', prototype: { moment: 'offered',
-      offer: { primary: 'build', menu: 'skip', review: false }, requirements: [{ id: 'R-ux-1', text: 'The editor shows a preview' }] } }), pipelineId: 'p-rr' }] });
+      offer: { primary: 'build', menu: 'skip', review: false }, requirements: [{ id: 'R-ux-1', text: 'The editor shows a preview' }] } }), pipelineId: pid }] });
     ctx.go('chat/new/run/run-rr');
     await ctx.settle(14);
     const screen = ctx.window.document.querySelector('[data-chat-panel] .crp-host > .rd');

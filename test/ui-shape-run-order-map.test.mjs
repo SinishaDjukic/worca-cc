@@ -260,6 +260,12 @@ test('holding: a held run (not started yet) keeps its incoming link', async () =
   assert.deepEqual(pairs(runOrderLayout(slices).links), [[1, 2]]);
 });
 
+test('holding: a run whose turn was missed while the run before it stopped keeps its incoming link', async () => {
+  const { runOrderLayout } = await load();
+  const slices = slicesOf([[1, []], [2, [1]]], { states: { 1: { state: 'stopped' }, 2: { state: 'missed' } } });
+  assert.deepEqual(pairs(runOrderLayout(slices).links), [[1, 2]]);
+});
+
 test('holding: a stop held until another run finishes keeps its incoming link', async () => {
   const { runOrderLayout } = await load();
   assert.ok(has(runOrderLayout(sixteenSlices('held')), 3, 4), 'run 4 is held after run 3, which is running');

@@ -70,6 +70,8 @@
    the title sits as far under it as the run page's (the glance's 28px top padding, 20px on a phone; the page gap is 22px). */
 .gpage > .gpage-bar.rd-bar{width:auto;margin:-28px -32px 6px;}
 @media (max-width:640px){.gpage{padding:16px 16px var(--ask-dock-clearance);}.gpage > .gpage-bar.rd-bar{margin:-16px -16px -2px;}}
+/* "Mark and ship" lands the Ship card below the sticky bar (57px) with air. */
+.gpage [data-ship-card]{scroll-margin-top:69px;}
 .gpage-spacer{flex:1;}
 .gpage-actions{display:inline-flex;gap:6px;}
 .gpage-ship{margin:8px 0 0;font-size:13px;color:var(--ink-2);}

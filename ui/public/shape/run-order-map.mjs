@@ -21,7 +21,8 @@ const { COL_W, ROW_H, PAD, DOT, LABEL_PX, DIGIT_W, LANE_IN, PULL } = RUN_ORDER_G
 const HALF = DOT / 2;
 /** The kept ring's outer radius: the run number's bottom stands this far above the dot's centre. */
 const RING_R = 11;
-const NOT_STARTED = new Set(['planned', 'held']);
+/** `missed`: a run whose turn passed while the run before it was stopped; it still waits for that run. */
+const NOT_STARTED = new Set(['planned', 'held', 'missed']);
 /** The chained append kinds: one that builds on nothing stands after the last run before it (a follow-up is not chained). */
 const AFTER_LAST_KINDS = new Set(['change', 'extra']);
 /** A slice state → the run model state its feature page row's dot starts from; any other state is `waiting`. */
