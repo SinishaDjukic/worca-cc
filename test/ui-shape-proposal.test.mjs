@@ -353,7 +353,11 @@ test('card and run agree for every size', async () => {
 // ── Shaper small runs B2: the Start step's body (renderCareStart) ──
 import { renderCareStart } from '../ui/public/shape/proposal.mjs';
 import { questionFocusTarget } from '../ui/public/shape/step-card.mjs';
-import { careGivesUp, careGivesUpSentence } from '../src/shared/shape/feature-record.mjs';
+import { careGivesUp, careGivesUpSentence, careFactsOf, worcaCarePick } from '../src/shared/shape/feature-record.mjs';
+import { careEstimates } from '../src/core/shape/estimate.mjs';
+import { RUN_REQUIREMENTS_MAX } from '../src/shared/shape/slices.mjs';
+// A namespace read, so a missing new export (careRunCount) fails only its own tests.
+import * as SLICES from '../src/shared/shape/slices.mjs';
 
 const careEst = (costUsd) => ({ costUsd, minutes: 10, perRun: costUsd });
 const CARE_PQ = (over = {}) => ({ id: 'care-1', kind: 'care', care: {
@@ -365,8 +369,8 @@ const CARE_PQ = (over = {}) => ({ id: 'care-1', kind: 'care', care: {
     balanced: { enough: false, features: 1, line: 'Balanced: not enough history yet' }, thorough: { enough: false, features: 0, line: 'Thorough: not enough history yet' } },
   names: { everyday: 'Sonnet', strong: 'Opus', second: 'GPT' }, modelsLine: null, ...over } });
 /** The body inside a `.qpanel` in a fresh document, as the run card hosts it. */
-function careBody(pq = CARE_PQ(), deps = {}) {
-  const d = doc();
+function careBody(pq = CARE_PQ(), deps = {}, { flags } = {}) {
+  const d = flagDoc(flags);
   const panel = d.createElement('div'); panel.className = 'qpanel';
   d.body.appendChild(panel);
   const posted = [];
@@ -761,4 +765,121 @@ test('flag on, a small card: a sent role changes nothing (chips, no picker, no l
   assert.equal(ui.el.querySelector('.rd-kv'), null);
   assert.equal(ui.blocked(), false);
   assert.equal('lead' in ui.body().shape, false);
+});
+
+// ── Ask screens slice 9 (R-po-5, R-ux-6): under shaperSmallRuns the Start card's Size row adds the number of runs at
+// Worca's pick, the one place the screens show that number; the pick reason then leaves the requirement count to it.
+const FLAG = { flags: 'shaperSmallRuns' };
+/** The Start ask for `requirements` at Worca's pick `position`. */
+const pickPQ = (position, requirements, { size = 'large', reason = `Worca picks ${position}`, subsystems = [] } = {}) => CARE_PQ({
+  size, facts: { touches: [], requirements, subsystems, screens: false, size }, pick: { position, reason } });
+/** The Start ask as the real facts and the real pick build it for a prompt of a Shaper size. */
+const realPQ = (prompt, size) => {
+  const facts = careFactsOf({ prompt, size });
+  return CARE_PQ({ size: facts.size, facts, pick: worcaCarePick(facts) });
+};
+const sizeText = (body) => body.row('size').querySelector('.rd-kv-v').textContent;
+const reasonText = (body) => body.row('care').querySelector('.cap').textContent;
+/** The runs careEstimates multiplies by at a position: with a per-run figure of 1 minute, the minutes are the runs. */
+const estimateRuns = (requirements, position) => careEstimates({ requirements, perRun: { costUsd: 1, minutes: 1 } })[position].minutes;
+
+test('slice 9 renderCareStart: flag on, the Size row adds the run count at Worca\'s pick', () => {
+  for (const [position, requirements, size, want, runs] of [
+    ['thorough', 16, 'large', 'Large · about 16 requirements · about 8 runs', 8],
+    ['thorough', 20, 'large', 'Large · about 20 requirements · about 10 runs', 10],
+    ['balanced', 16, 'large', 'Large · about 16 requirements · about 6 runs', 6],
+    ['thorough', 3, 'small', 'Small · about 3 requirements · about 2 runs', 2],
+  ]) {
+    const pq = pickPQ(position, requirements, { size });
+    const sent = structuredClone(pq);
+    const calls = [];
+    globalThis.fetch = async (url) => { calls.push(url); throw new Error(`unexpected ${url}`); };
+    const body = careBody(pq, {}, FLAG);
+    assert.equal(sizeText(body), want, `${requirements} at ${position}`);
+    assert.equal(runs, Math.ceil(requirements / RUN_REQUIREMENTS_MAX[position]), 'ceil over the per-run cap');
+    assert.equal(runs, estimateRuns(requirements, position), 'the number careEstimates computes at the pick');
+    assert.equal(SLICES.careRunCount(requirements, position), runs, 'the one shared formula');
+    assert.deepEqual(calls, [], 'the card asks for nothing');
+    assert.deepEqual(pq, sent, 'the ask body is not changed');
+  }
+});
+
+test('slice 9 R-po-5 example: a Large Start card reads its 16 requirements and the runs of Worca\'s own pick', () => {
+  for (const [prompt, position, want] of [
+    ['Add card payments to checkout', 'thorough', 'Large · about 16 requirements · about 8 runs'],
+    ['Export the list as a file', 'balanced', 'Large · about 16 requirements · about 6 runs'],
+  ]) {
+    const pq = realPQ(prompt, 'large');
+    assert.equal(pq.care.pick.position, position, 'fixture: Worca\'s pick');
+    const body = careBody(pq, {}, FLAG);
+    assert.equal(sizeText(body), want, position);
+    assert.ok(want.endsWith(`about ${estimateRuns(pq.care.facts.requirements, position)} runs`), 'as careEstimates counts');
+  }
+});
+
+test('slice 9 renderCareStart: one run reads "· one run"; no size or no count adds nothing', () => {
+  for (const position of ['lean', 'balanced']) {
+    const body = careBody(pickPQ(position, 3, { size: 'small' }), {}, FLAG);
+    assert.equal(sizeText(body), 'Small · about 3 requirements · one run', position);
+  }
+  const unknown = careBody(CARE_PQ({ size: null }), {}, FLAG);
+  assert.equal(sizeText(unknown), 'Size not known yet');
+  for (const requirements of [undefined, null, 0]) {
+    const body = careBody(pickPQ('balanced', requirements), {}, FLAG);
+    assert.doesNotMatch(sizeText(body), /\bruns?\b/, `no count (${requirements}): no runs part`);
+  }
+});
+
+test('slice 9 renderCareStart: the reason drops the requirement count, so it shows once', () => {
+  for (const [facts, original, flagOnReason] of [
+    [{ requirements: 16, subsystems: [] },
+      'Worca picks Balanced: it touches nothing sensitive, about 16 requirements',
+      'Worca picks Balanced: it touches nothing sensitive'],
+    [{ requirements: 3, subsystems: ['server'] },
+      'Worca picks Lean: about 3 requirements in one part (the server), no screen',
+      'Worca picks Lean: in one part (the server), no screen'],
+    [{ requirements: 3, subsystems: [] },
+      'Worca picks Lean: about 3 requirements, nothing sensitive, no screen',
+      'Worca picks Lean: nothing sensitive, no screen'],
+  ]) {
+    const size = facts.requirements === 16 ? 'large' : 'small';
+    const pick = worcaCarePick({ touches: [], screens: false, size, ...facts });
+    assert.equal(pick.reason, original, 'fixture: the reason Worca really writes');
+    const pq = CARE_PQ({ size, facts: { touches: [], screens: false, size, ...facts }, pick });
+    const on = careBody(pq, {}, FLAG);
+    assert.equal(reasonText(on), flagOnReason);
+    const count = new RegExp(`about ${facts.requirements} requirements`, 'g');
+    assert.equal((on.panel.textContent.match(count) || []).length, 1, `${original}: "about N requirements" shows once`);
+    assert.equal(pq.care.pick.reason, original, 'the recorded reason is not changed');
+    assert.equal(reasonText(careBody(pq)), original, 'flag off: the reason as today');
+  }
+});
+
+test('slice 9 renderCareStart: the run count stays at Worca\'s pick and shows once', () => {
+  const body = careBody(CARE_PQ(), {}, FLAG);
+  const want = 'Large · about 16 requirements · about 8 runs';
+  // Value by value: joined as one string, the next row's label would swallow the word boundary after "runs".
+  const factCounts = () => [...body.panel.querySelectorAll('.care-start > .rd-kv .rd-kv-v')]
+    .flatMap((v) => v.textContent.match(/about \d+ runs\b|· one run\b/g) || []);
+  assert.equal(sizeText(body), want);
+  assert.deepEqual(factCounts(), ['about 8 runs']);
+  for (const [i, name] of [[0, 'Lean'], [1, 'Balanced'], [2, 'Thorough']]) {
+    click(seg(body.panel)[i]);
+    assert.equal(seg(body.panel)[i].getAttribute('aria-pressed'), 'true', `${name} selected`);
+    assert.equal(sizeText(body), want, `${name} selected: the Size row is unchanged`);
+    assert.deepEqual(factCounts(), ['about 8 runs'], `${name} selected: one run count`);
+  }
+});
+
+test('slice 9 renderCareStart: flag off, the Size row is today\'s and names no run', () => {
+  for (const [position, requirements, size, want] of [
+    ['thorough', 16, 'large', 'Large · about 16 requirements'],
+    ['balanced', 3, 'small', 'Small · about 3 requirements'],
+    ['lean', 3, 'small', 'Small · about 3 requirements'],
+    ['balanced', null, null, 'Size not known yet'],
+  ]) {
+    const body = careBody(pickPQ(position, requirements, { size }));
+    assert.equal(sizeText(body), want, `${position} ${size}`);
+    assert.doesNotMatch(sizeText(body), /\bruns?\b/);
+  }
 });

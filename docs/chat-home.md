@@ -84,10 +84,11 @@ back. Workflows has its own chat and no button.
   takes this chat to the Chat page, and **Hide chat** closes the column. Open or hidden is
   remembered across pages and reloads. A dot on the **Ask worca** button means a new reply: the
   button opens that chat, as the Chat row does.
-- **Guide.** The docked composer follows the same rule as Chat's: with the Shaper pin set and Guide on, its Guide
-  line checks the prompt 2 seconds after you stop typing and shows the same result and size words, such as
-  "Clear enough · Small: one run". Write it out, Stop and Undo work the same there. With no Shaper pin it asks
-  nothing.
+- **Guide.** The docked composer follows the same rule as Chat's: its lead row carries the same role picker
+  ("Your role") and Guide switch, and with the Shaper pin set and Guide on, its Guide line checks the prompt 2 seconds
+  after you stop typing and shows the same result and size words: "Large: several runs", "Medium: a few runs" or
+  "Clear enough · Small: one run". Add on a gap row, Write it out, Stop and Undo work the same there. With no Shaper
+  pin it asks nothing.
 
 ## Scope from a pasted link
 

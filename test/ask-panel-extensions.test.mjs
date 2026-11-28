@@ -390,6 +390,7 @@ async function composer(t, { lead = null, flag = true, picker = true, guide = pi
   const checks = [];       // the bodies of the check requests
   let holding = false;
   let failing = null;      // the error code the check refuses with
+  let checkReply = CHECK_REPLY;   // the body the next check answers (replyWith)
   let roles = null;
   const writes = [];       // { body, signal } of the write requests
   let holdingWrites = false;
@@ -412,7 +413,8 @@ async function composer(t, { lead = null, flag = true, picker = true, guide = pi
           const status = failing === 'GUIDE_NO_MODEL' ? 503 : 502;
           return { ok: false, status, json: async () => ({ error: { code: failing } }) };
         }
-        return { ok: true, status: 200, json: async () => CHECK_REPLY };
+        const body = checkReply;
+        return { ok: true, status: 200, json: async () => body };
       }
       if (url === '/api/shape/guide/write') {
         const body = JSON.parse(init.body);
@@ -463,6 +465,7 @@ async function composer(t, { lead = null, flag = true, picker = true, guide = pi
   const wait = async (ms = 2000) => { timers.advance(ms); await settle(); };
   const holdChecks = () => { holding = true; };
   const failChecks = (code) => { failing = code; };
+  const replyWith = (body) => { checkReply = body; };
   const line = () => ctx.doc.querySelector('.ask-guide');
   /** Click Send on the composer exactly as it stands: no input event first (that would close an open Add field). */
   const sendAsIs = async () => {
@@ -495,7 +498,7 @@ async function composer(t, { lead = null, flag = true, picker = true, guide = pi
     b.click();
     await settle();
   };
-  return { ...ctx, rec, requests, prefsPuts, intent, lead: lead0, send, sendAsIs, openAdd, settle, type, wait, checks, holdChecks, failChecks, line, writes, holdWrites, releaseWrite, press };
+  return { ...ctx, rec, requests, prefsPuts, intent, lead: lead0, send, sendAsIs, openAdd, settle, type, wait, checks, holdChecks, failChecks, replyWith, line, writes, holdWrites, releaseWrite, press };
 }
 
 for (const [row, saved, want] of [
@@ -854,3 +857,50 @@ for (const where of ['main', 'docked']) {
     assert.equal(c.rec.messageBodies, undefined, 'nothing is sent');
   });
 }
+
+// Ask screens slice 9 (R-ux-6): the composer says the size in words only. The number of runs is on the Start card.
+/** "small runs", and a number of runs in digits or words. "Small: one run" is a size phrase and stays allowed. */
+const RUN_NUMBERS = [/small runs/i, /\b\d+\s+runs?\b/i, /about \w+ runs?\b/i, /\b(two|three|four|five|six|seven|eight|nine|ten)\s+runs\b/i];
+/** No "small runs" and no number of runs in the composer's text (whole, and node by node), in any title, aria label,
+ *  placeholder, styled tip or description in the panel, or in what the panel last announced. */
+function noRunNumber(c, state) {
+  const composerEl = c.doc.querySelector('.ask-composer');
+  const walker = c.doc.createTreeWalker(composerEl, c.window.NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode.nodeValue);
+  const attrs = ['title', 'aria-label', 'placeholder', 'data-tip']
+    .flatMap((a) => [...c.panel.root.querySelectorAll(`[${a}]`)].map((el) => el.getAttribute(a)));
+  const described = [...c.panel.root.querySelectorAll('[aria-describedby]')]
+    .flatMap((el) => el.getAttribute('aria-describedby').split(/\s+/).map((id) => c.doc.getElementById(id)?.textContent ?? ''));
+  const said = c.doc.querySelector('.sr-only[aria-live="polite"]')?.textContent ?? '';
+  const found = [composerEl.textContent, nodes.join(' '), ...attrs, ...described, said]
+    .filter((t) => RUN_NUMBERS.some((re) => re.test(t)));
+  assert.deepEqual(found, [], state);
+}
+
+test('R-ux-6 docked: the docked composer holds no "small runs" and no number of runs', async (t) => {
+  const c = await composer(t, { lead: 'product' });
+  await dock(c);
+  assert.match(c.line().textContent, /^New: Guide checks/);
+  noRunNumber(c, 'offer');
+  c.type('Export runs as CSV');
+  await c.wait();
+  assert.equal(foldText(c), GAPS);
+  noRunNumber(c, 'a result with gaps');
+  await c.openAdd();
+  noRunNumber(c, 'the rows opened, an Add field open');
+  for (const [size, words] of [
+    ['small', 'Clear enough · Small: one run'], ['medium', 'Prompt 5/5 · Medium: a few runs'], ['large', 'Prompt 5/5 · Large: several runs'],
+  ]) {
+    c.replyWith({ ...CHECK_REPLY, size, checks: CHECK_REPLY.checks.map((x) => ({ ...x, covered: true, question: '' })) });
+    c.type(`Export runs as CSV, the ${size} one`);   // typing closes an open Add field and asks for a new check
+    await c.wait();
+    assert.equal(c.line().textContent, words, size);
+    noRunNumber(c, `no gap, ${size}`);
+  }
+  c.failChecks('GUIDE_MODEL_FAILED');
+  c.type(SHAPER_TEXT);
+  await c.wait();
+  failurePainted('Guide is not answering right now.', 'Try again')(c);
+  noRunNumber(c, 'a failure');
+});

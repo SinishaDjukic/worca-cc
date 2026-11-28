@@ -3352,3 +3352,69 @@ test('the stylesheet has the spacer, the middle words that never shrink and the 
   holds(base, '.ask-guide-mid', ['flex:none', 'white-space:pre']);
   holds(base, '.ask-guide > .ask-guide-do', ['flex:none']);
 });
+
+// ── Ask screens slice 9 (R-ux-6): the composer says the size in words only. The number of runs is on the Start card. ──
+/** "small runs", and a number of runs in digits or words. "Small: one run" is a size phrase and stays allowed. */
+const RUN_NUMBERS = [/small runs/i, /\b\d+\s+runs?\b/i, /about \w+ runs?\b/i, /\b(two|three|four|five|six|seven|eight|nine|ten)\s+runs\b/i];
+/** What the composer shows or says now: the box's text (whole, and node by node, so a button right after a word hides
+ *  nothing), every title, aria label, placeholder, styled tip and description in the page, and what was announced. */
+function composerStrings(s) {
+  const box = s.doc.querySelector('.ask-composer-box');
+  const walker = s.doc.createTreeWalker(box, s.win.NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode.nodeValue);
+  const attrs = ['title', 'aria-label', 'placeholder', 'data-tip']
+    .flatMap((a) => [...s.doc.querySelectorAll(`[${a}]`)].map((el) => el.getAttribute(a)));
+  const described = [...s.doc.querySelectorAll('[aria-describedby]')]
+    .flatMap((el) => el.getAttribute('aria-describedby').split(/\s+/).map((id) => s.doc.getElementById(id)?.textContent ?? ''));
+  return [box.textContent, nodes.join(' '), ...attrs, ...described, ...s.said];
+}
+function noRunNumber(s, state) {
+  const found = composerStrings(s).filter((t) => RUN_NUMBERS.some((re) => re.test(t)));
+  assert.deepEqual(found, [], state);
+}
+
+test('R-ux-6: in every line state the composer\'s text, titles, aria labels and announcements hold no "small runs" and no number of runs', async () => {
+  // The first-time offer, checking, a result with gaps, its rows, an open Add field.
+  const s = setup();
+  await s.shaper();
+  assert.equal(s.text(), OFFER);
+  noRunNumber(s, 'offer');
+  s.type(PROMPT);
+  await s.wait();
+  assert.equal(s.text(), CHECKING);
+  noRunNumber(s, 'checking');
+  await s.reply(0, product());
+  assert.equal(s.fold()?.textContent, GAPS);
+  noRunNumber(s, 'a result with gaps');
+  s.fold().click();
+  await settle();
+  assertRows(s, true, 'rows');
+  noRunNumber(s, 'the rows opened');
+  await openAdd(s, 'who');
+  noRunNumber(s, 'an Add field open');
+
+  // No gap open, in each size: the size in words only.
+  for (const [size, words] of [
+    ['small', SIZE_SMALL], ['medium', 'Prompt 5/5 · Medium: a few runs'], ['large', 'Prompt 5/5 · Large: several runs'],
+  ]) {
+    const done = await withResult(product({ covered: GUIDE_CHECK_IDS, size }));
+    assert.equal(done.line().textContent, words, size);
+    noRunNumber(done, `no gap, ${size}`);
+  }
+
+  // Both failures.
+  for (const [code, words] of [['GUIDE_NO_MODEL', NO_MODEL], ['GUIDE_MODEL_FAILED', FAIL]]) {
+    const failed = await withFailure(code);
+    assert.equal(failed.text(), words, code);
+    noRunNumber(failed, code);
+  }
+
+  // Writing it out, then written out with Undo.
+  const w = await midWrite(PROMPT, product());
+  assert.equal(w.text(), WRITING);
+  noRunNumber(w, 'writing it out');
+  await land(w, 0, written(PROMPT, w.writes[0].body.gaps, { register: 'plain' }));
+  assert.equal(w.doBtn()?.textContent, 'Undo');
+  noRunNumber(w, 'written out');
+});

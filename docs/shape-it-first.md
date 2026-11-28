@@ -711,6 +711,10 @@ your choice ("Worca recommended …"). Care is fixed after Start: pausing and re
 feature is finished, the line adds the outcome (requirements met, gaps found at the end, changes after ship). Without a
 finished outcome, no figures are shown.
 
+Start's Size row reads, for example, `Large · about 16 requirements · about 8 runs`: the run count at Worca's pick
+(`· one run` for one), which stays put while you try another position. It is the one place a number of runs is shown, so
+the pick's reason leaves the requirement count to it, and the composer says the size in words only.
+
 ### Owned and confirmed requirements
 
 Each requirement is owned by exactly one run, or confirmed by a person in a named role: Product, Engineering, Design,

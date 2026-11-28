@@ -807,7 +807,9 @@ what they get, what starts it, its limits and how you know it worked. For each c
 covered or one open question, plus a size of small, medium or large. A prompt over 8000 characters
 is not sent, and with the Guide switch off nothing is sent. Write it out asks the same model for one short line per
 open gap and nothing else; it never returns the prompt, so the written text is your prompt unchanged plus one
-"(suggested)" line per filled gap.
+"(suggested)" line per filled gap. The check's wording follows the role picked in the composer's role picker, the
+composer shows the size as "Large: several runs", "Medium: a few runs" or "Small: one run", and Add on a gap row puts
+your own answer in with no model call.
 
 The *Requirements interview* helper (the Requirements page's product briefs, code looks and interview
 rounds) runs on Claude only and is set per user. Unlike Memory defragment, it takes an effort without a

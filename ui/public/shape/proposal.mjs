@@ -15,6 +15,7 @@ import { buildFacts, factRow, setFactText, syncFacts } from '../run-page-head.mj
 import { fold, buildCheckFold } from './check-row.mjs';
 import { splitIntentLead } from '../chat/intent.mjs';
 import { stepHead, stepSender, errLine, ownButton } from './step-card.mjs';
+import { careRunCount } from '../../../src/shared/shape/slices.mjs';
 import { CARE_LABELS, CARE_POSITIONS, CARE_TABLE, careCell, careGivesUp, careGivesUpSentence } from '../../../src/shared/shape/feature-record.mjs';
 
 /** The facts line: `Large task · ≈ $31 · ~84 min` (the shaped choice's estimate), or `no estimate yet`. */
@@ -265,7 +266,9 @@ let careSeq = 0;
 /**
  * The Start step (B2): the size, the Care dial preselected on Worca's pick with its reason, what the selected position
  * does, the estimates, what it gives up below the pick (one sentence, the full list in a fold), the History per
- * position, the models a person set, the "What … does" fold and one "Start requirements". `deps` = the step card's (`title`, `chip`, `submit`) plus `onPick`.
+ * position, the models a person set, the "What … does" fold and one "Start requirements". With shaperSmallRuns the Size
+ * row adds the runs at Worca's pick (`careRunCount`) and the reason drops its "about N requirements" clause.
+ * `deps` = the step card's (`title`, `chip`, `submit`) plus `onPick`.
  * @returns {{el: HTMLElement, render: (panel: HTMLElement) => void, collect: () => object, setErrors: (errors: object[]) => void}}
  */
 export function renderCareStart(doc, pq, deps = {}) {
@@ -284,14 +287,20 @@ export function renderCareStart(doc, pq, deps = {}) {
   careKey.id = `care-k-${++careSeq}`;
 
   const facts = start.facts || {};
+  // shaperSmallRuns (ask screens slice 9): the Size row is the one place with a number of runs, at Worca's pick, so the
+  // reason leaves the requirement count to it. Set once: the count does not follow the selection.
+  const smallRuns = flagOn('shaperSmallRuns', doc);
+  const runs = smallRuns ? careRunCount(facts.requirements, pick) : null;
+  const runsPart = runs === null ? '' : runs === 1 ? ' · one run' : ` · about ${runs} runs`;
   value('size').textContent = start.size
-    ? `${start.size[0].toUpperCase()}${start.size.slice(1)} · about ${facts.requirements} requirements` : 'Size not known yet';
+    ? `${start.size[0].toUpperCase()}${start.size.slice(1)} · about ${facts.requirements} requirements${runsPart}` : 'Size not known yet';
+  const reason = start.pick && start.pick.reason ? start.pick.reason : '';
 
   const err = errLine(doc);
   const seg = segmented({ doc, readonly: false }, CARE_POSITIONS.map((p) => ({ value: p, label: CARE_LABELS[p] })), pick,
     (p) => { sel = p; paint(); if (deps.onPick) deps.onPick(p); }, { idBase: `${careKey.id}-seg`, labelledBy: careKey.id });
   const pickBtn = seg.children[CARE_POSITIONS.indexOf(pick)];
-  value('care').append(stackOf(doc, [seg, capOf(doc, start.pick && start.pick.reason ? start.pick.reason : ''), err]));
+  value('care').append(stackOf(doc, [seg, capOf(doc, smallRuns ? reason.replace(/, about \d+ requirements\b|\babout \d+ requirements(?:, | )/, '') : reason), err]));
 
   const foldBtn = doc.createElement('button');
   foldBtn.type = 'button';
