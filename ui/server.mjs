@@ -475,7 +475,7 @@ import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, ca
   rechainWaiting, replanRest, setApproveEach, recordShapePlan, listShapePlans, chainFeature,
   sliceOfPipeline, slicePrPreamble, featureShipSuggestion, recordSliceDraft, recordShip, clearShip, featureShipInput,
   liveSliceFrom, liveSliceResuming, shaperCard, featureThread, addFeatureNote, appendFeatureRun, liveRoundOf, acceptanceRefusal, featureHoldsTicket, chatShipCardOffered, stackedPrBase, shipOrder, sliceNeedsPr, isSlicePreambleLine } from '../src/core/shape/features.mjs';
-import { smallRunsChainGate, sliceFireStart, sliceCombineGate, oneShipCheck, shipHeadRow, shipHeadBase, recordSettledFigures, recordShipCommit, shipCover, shipStopped, SHIPPING, featureShipping, roundWhileShipping, oneShipRaced, createHeldStops, featureOfAnyPipeline, holdAfterSetupClash, resumeTakeInVerdict } from '../src/core/shape/chain.mjs';
+import { smallRunsChainGate, sliceFireStart, sliceCombineGate, oneShipCheck, shipHeadRow, shipHeadBase, recordSettledFigures, recordShipCommit, shipCover, shipStopped, SHIPPING, featureShipping, roundWhileShipping, oneShipRaced, createHeldStops, featureOfAnyPipeline, holdAfterSetupClash, resumeTakeInVerdict, whereToAnswerOf } from '../src/core/shape/chain.mjs';
 import { roundsOf, roundOrigin, nextRound, setRoundOutcome } from '../src/core/shape/rounds.mjs';
 import { changesCard, applyChanges, applyRoute, landingFacts, landingFactsOfFeature, shapeToolCheck, threadWork, shapeThreadFacts, createRequirementChanges } from '../src/core/shape/changes.mjs';
 import { defaultShapeToolDeps } from '../src/core/ask/shape-tool-deps.mjs';
@@ -4572,7 +4572,7 @@ const chatContext = {
   incrementMuted: (k) => chatCtx().incrementMuted(k),
 };
 
-const chatActions = {
+const chatActions = { whereToAnswer: whereToAnswerOf(runs),   // slice 18 (D7): where a gap stop is answered, read at send time
   listRuns: () => summarizeRuns(),
   // Waiting + missed tickets, soonest first, with the time in this server's zone.
   listScheduled: () => listTickets().map((t) => ({
@@ -4863,7 +4863,7 @@ const channelHost = createChannelHost({
 });
 
 const chatNotifier = createNotifier({
-  channelHost,
+  channelHost, whereToAnswer: chatActions.whereToAnswer,
   getPrefs: chatPrefs,
   chatContext,
   logger: (level, msg) => console.error(`[worca-ui] chat ${level}: ${msg}`),

@@ -354,6 +354,27 @@ test('renderQuestion: a 2-gap Verifier stop lists R-po-1 and R-po-2, says both r
   for (const id of ['R-po-1', 'R-po-2']) assert.ok(html.includes(id), id);
 });
 
+// Slice 18 (R-arch-4): a feature with no chat has no card; the reply line names its feature page.
+const CARD_REPLY = 'Reply: `/retry *2951` — add a fix run for every gap · to ship with a gap (a reason is needed) or change a requirement, answer on the feature card';
+const PAGE_REPLY = 'Reply: `/retry *2951` — add a fix run for every gap · to ship with a gap (a reason is needed) or change a requirement, answer on the feature page in the Worca UI';
+const gapFor = (meta) => renderQuestion(meta, { id: 'verify-1', kind: 'gate', issues: [], stop: verifyStop({ gaps: GAP_PAIR }) });
+
+test('s18 (R-arch-4): with hasChat false the gap message says to answer on the feature page in the Worca UI, never the card', () => {
+  const msg = gapFor({ ...META, hasChat: false });
+  assert.equal(isValidMessage(msg), true);
+  const text = msg.body[0].value;
+  const lines = text.split('\n').map((l) => l.trim());
+  assert.ok(lines.includes(PAGE_REPLY), text);
+  assert.doesNotMatch(text, /feature card/);
+  assert.ok(lines.includes('• R-po-1: the export skips archived runs'), 'the listed gaps do not change');
+});
+
+test('s18 (R-arch-4): with hasChat true, or none, the gap message is byte for byte the card message', () => {
+  const today = gapFor(META);
+  assert.ok(today.body[0].value.split('\n').map((l) => l.trim()).includes(CARD_REPLY), today.body[0].value);
+  for (const meta of [{ ...META, hasChat: true }, { ...META, hasChat: undefined }]) assert.deepEqual(gapFor(meta), today);
+});
+
 test('renderQuestion: a gap Away answered is listed as decided by Away mode', () => {
   const text = gapText(verifyStop({ gaps: [GAP_PAIR[1]], decided: [{ id: 'R-po-1', answer: 'fix' }] }));
   assert.ok(text.split('\n').map((l) => l.trim()).includes('• R-po-1 → fix · decided by Away mode'), text);

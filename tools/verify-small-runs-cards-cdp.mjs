@@ -2149,6 +2149,79 @@ async function gapAwayPhase() {
   await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
 }
 
+// ---- Shaper slice 18 (D10, D11): a failed Verifier round or an open confirmation outranks In review. Two marked
+// features, 5 runs done, each run in an open pull request: one whose round-2 Verifier run failed with one gap (its Runs
+// group row reads "Verifier round 2 failed · 1 gap"), one waiting for Design's confirmation of R-ux-2 (its page head
+// reads "Needs your confirmation: R-ux-2"); neither reads In review. Light and dark at 1280px:
+// runs-group-in-review-failed-round-…, feature-head-in-review-confirm-… (-light.png, -dark.png).
+async function inReviewPhase() {
+  try { await addProject({ name: 'Proof', path: proj }); } catch { /* already onboarded */ }
+  const DONE5 = ['done', 'done', 'done', 'done', 'done'];
+  const withPrs = (x) => [1, 2, 3, 4, 5].forEach((k) => getDb().prepare("UPDATE pipelines SET pr_url = ?, pr_number = ?, pr_state = 'OPEN' WHERE id = ?")
+    .run(`https://github.com/proof/repo/pull/${60 + k}`, 60 + k, x.pid(k)));
+  // The failed round: as the Verifier rows phase seeds it.
+  const failed = seedFeature('ix', 'Reviewed then failed', DONE5, { withOutline: soOutline, titles: SO_TITLES, chat: false });
+  const vpid = 'c5ixv00002';
+  pipeline(vpid, 'error', 'Verifier · Reviewed then failed · round 2');
+  getDb().prepare(`INSERT INTO scheduled_runs (id, status, pipeline_id, request, run_at, created_at, updated_at, title)
+    VALUES (?, 'fired', ?, ?, ?, ?, ?, 'Verifier · Reviewed then failed · round 2')`).run(`t-${vpid}`, vpid,
+    JSON.stringify({ workflowId: 'wf_shape_verify', shape: { verify: { featureId: failed.f.id, round: 2 } } }), now, now, now);
+  setVerify(failed.f, vCheck(failed, vpid, 'gaps', { round: 2, head: { index: 5, pipelineId: failed.pid(5) }, result: { held: [], gaps: [GAP] } }));
+  withPrs(failed);
+  // The open confirmation: as the confirm-in-place phase seeds it (a clean check of run 5's head, R-ux-2 waiting).
+  const held = seedFeature('iy', 'Reviewed and waiting', DONE5, { withOutline: CI_OUTLINE, titles: SO_TITLES, requirementKinds: CI_KINDS, chat: false });
+  for (let k = 1; k <= 5; k++) {
+    execFileSync('git', ['branch', '-f', `feat/iy-${k}`], { cwd: proj });
+    getDb().prepare('UPDATE pipelines SET branch = ?, updated_at = ? WHERE id = ?')
+      .run(JSON.stringify({ source: k === 1 ? 'main' : `feat/iy-${k - 1}`, feature: `feat/iy-${k}` }), new Date(Date.parse(now) + k * 60_000).toISOString(), held.pid(k));
+  }
+  const headSha = execFileSync('git', ['rev-parse', 'feat/iy-5'], { cwd: proj, encoding: 'utf8' }).trim();
+  pipeline('c5iyv0001', 'done', 'Verifier');
+  setVerify(held.f, vCheck(held, 'c5iyv0001', 'clean', { head: { index: 5, pipelineId: held.pid(5) }, headSha,
+    result: { held: [...SO_AGREED.map((a) => a.id), 'R-ux-2'], gaps: [] } }));
+  withPrs(held);
+  const FAILED_LINE = 'Verifier round 2 failed · 1 gap';
+  const capture = async (name, sel) => {
+    await ev(`(() => { for (const b of document.querySelectorAll('button[aria-label="Dismiss"]')) if (b.offsetParent) b.click();
+      const n = document.querySelector(${JSON.stringify(sel)}); if (n) n.scrollIntoView({ block: 'center' }); return 0; })()`);
+    await sleep(400);
+    const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+    const file = path.join(SHOTS, name);
+    await writeFile(file, Buffer.from(data, 'base64'));
+    results.shots.push(file);
+  };
+  const GROUP = `.runs-item[data-row-key="chain:${failed.f.id}"]`;
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  for (const theme of THEMES) {
+    await ev("(() => { try { localStorage.removeItem('worca-cc.runs.last'); } catch {} return 0; })()");
+    await open(`${base}/?in-review-runs-${theme}#runs`);
+    await skipWelcome(); await setTheme(theme);
+    if (await waitFor(`!!document.querySelector(${JSON.stringify(`${GROUP} > a.runs-row > .runs-row-sub`)})`, `the failed-round group row (${theme})`)) {
+      await sleep(400);
+      const r = await ev(`(() => { const g = document.querySelector(${JSON.stringify(GROUP)}); const a = g.querySelector(':scope > a.runs-row');
+        return { line: a.dataset.line, sub: a.querySelector('.runs-row-sub').textContent, needs: !!g.closest('.runs-sec[data-section="needs"]') }; })()`);
+      results.lists.push({ list: 'in review, failed round', theme, ...r });
+      check(r.line === FAILED_LINE && r.sub.startsWith(FAILED_LINE) && !/In review/.test(r.sub) && r.needs,
+        `in review, failed round, ${theme}: the group row reads "${FAILED_LINE}" under Needs you, not In review (${JSON.stringify(r)})`);
+      await capture(`runs-group-in-review-failed-round-${theme}.png`, GROUP);
+    }
+    await open(`${base}/?in-review-head-${theme}#feature/${encodeURIComponent(held.f.id)}/runs`);
+    await skipWelcome(); await setTheme(theme);
+    const HEAD = '#group-detail .gpage-card .run-status-head';
+    if (await waitFor(`!!document.querySelector('#group-detail .gpage-card .run-status-link')`, `the confirmation's head link (${theme})`)) {
+      await sleep(400);
+      const h = await ev(`(() => { const n = document.querySelector(${JSON.stringify(HEAD)}); const d = n && n.querySelector('.status-dot');
+        return { text: n ? n.innerText : '', dot: d ? d.className : '' }; })()`);
+      results.lists.push({ list: 'in review, confirmation', theme, ...h });
+      check(h.text.includes('Needs your confirmation: R-ux-2') && !/In review/.test(h.text) && /\bis-amber\b/.test(h.dot),
+        `in review, confirmation, ${theme}: the page head reads "Needs your confirmation: R-ux-2" in the needs-you tone, not In review (${JSON.stringify(h)})`);
+      await capture(`feature-head-in-review-confirm-${theme}.png`, HEAD);
+    }
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
+if (process.env.IN_REVIEW_ONLY === '1') { await inReviewPhase(); await finish(); }
 if (process.env.D2_ONLY === '1') { await d2Phase(); await finish(); }
 if (process.env.GAP_AWAY_ONLY === '1') { await gapAwayPhase(); await finish(); }
 if (process.env.D3_ONLY === '1') { await d3Phase(); await finish(); }

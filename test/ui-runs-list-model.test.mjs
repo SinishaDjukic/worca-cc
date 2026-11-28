@@ -1582,3 +1582,55 @@ test('s11 css: the check row\'s ground is --field, with the shield in --ink-3', 
   assert.ok(rules.some((r) => /\.srows\.runs-members[^{]*\.runs-item\.is-check/.test(r) && r.includes('var(--field)')), rules.join('\n'));
   assert.ok(rules.some((r) => r.includes('var(--ink-3)')), rules.join('\n'));
 });
+
+// ── Slice 18 (D10, D11): a failed round or an open confirmation outranks In review on the Runs row and the badge ─────
+const S18_IDS = ['sr1', 'sr2', 'sr3'];
+/** A marked feature whose 3 done runs are all in one open pull request. */
+const inReview = (extra = {}) => smallFeature({ cost: { usd: 3, byPipeline: { sr1: 1, sr2: 1, sr3: 1, v1: 0.5 } },
+  members: S18_IDS.map((id, i) => ({ position: i + 1, title: `Slice ${i + 1}`, pipelineId: id, kind: 'hist', run: { status: 'done', pr: REVIEW(9) } })),
+  ...extra });
+const s18History = S18_IDS.map((id) => histIt(id, { run: { status: 'done' }, pr: null }));
+/** The group's row, its Needs you membership, its drawn status line, and what the Runs badge counts. */
+const s18Draw = (g) => {
+  const model = buildRunsModel({ history: s18History, groups: [g], now: NOW });
+  const host = doc.createElement('div');
+  host.append(...renderRunsList(doc, model));
+  return { row: groupRow(g, { now: NOW }), needs: model.sections.find((s) => s.id === 'needs')?.rows.map((r) => r.groupId) || [],
+    sub: host.querySelector(`.runs-item[data-row-key="chain:${g.id}"] > a.runs-row > .runs-row-sub`)?.textContent || '',
+    badge: countNeedsYou({ history: s18History, groups: [g] }) };
+};
+
+test('s18: an In review feature with an open confirmation sits in Needs you and its line starts with the confirmation', () => {
+  for (const [name, extra] of [['a PR per run', {}], ['the group\'s One PR', { pr: REVIEW(9) }]]) {
+    const d = s18Draw(inReview({ hold: CONFIRM_HOLD, ...extra }));
+    assert.equal(d.row.model.state, 'in-review', name);
+    assert.deepEqual(d.needs, ['feat_small'], name);
+    assert.ok(d.sub.startsWith(CONFIRM_HOLD), `${name}: ${d.sub}`);
+    assert.equal(d.badge, 1, `${name}: counted once, as its row`);
+  }
+});
+
+test('s18: an In review feature with a failed newest round sits in Needs you, its line starts with the round, and the badge counts it', () => {
+  for (const [name, extra] of [['a PR per run', {}], ['the group\'s One PR', { pr: REVIEW(9) }]]) {
+    const d = s18Draw(inReview({ checks: [V_CHECK({ state: 'failed' })], ...extra }));
+    assert.ok(d.sub.startsWith('Verifier round 2 failed'), `${name}: ${d.sub}`);
+    assert.equal(d.row.model.state, 'failed', name);
+    assert.deepEqual(d.needs, ['feat_small'], name);
+    assert.equal(d.badge, 1, `${name}: counted once, as its row`);
+  }
+  const two = [inReview({ checks: [V_CHECK({ state: 'failed' })] }), inReview({ id: 'feat_held', hold: CONFIRM_HOLD, cost: undefined,
+    members: ['h1', 'h2'].map((id, i) => ({ position: i + 1, title: id, pipelineId: id, kind: 'hist', run: { status: 'done', pr: REVIEW(12) } })) })];
+  // The second feature's runs are listed too: a group stands where its first listed member sits.
+  const history = [...s18History, ...['h1', 'h2'].map((id) => histIt(id, { run: { status: 'done' }, pr: null }))];
+  const needs = buildRunsModel({ history, groups: two, now: NOW }).sections.find((s) => s.id === 'needs');
+  assert.deepEqual([needs?.count, countNeedsYou({ history, groups: two })], [2, 2]);
+});
+
+// The control: the checkpoint's row and badge for a notes hold (the badge counts it, the row reads In review).
+test('s18 control: an In review feature with only a notes hold keeps its row and its badge count', () => {
+  const d = s18Draw(inReview({ hold: "Acknowledge the Verifier's note to ship" }));
+  assert.deepEqual([d.row.model.state, d.row.model.line, d.row.needs], ['in-review', 'In review · 1 PR', false]);
+  assert.deepEqual(d.needs, []);
+  assert.ok(d.sub.startsWith('In review · 1 PR'), d.sub);
+  assert.equal(d.badge, 1);
+});

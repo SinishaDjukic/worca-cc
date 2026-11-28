@@ -23,7 +23,9 @@ import { ACTION_DONE } from './receipts.mjs';
 import { gapRetryAnswer, GAP_REPLY_WORDS } from '../../shared/shape/verifier.mjs';
 
 /** Slice 10 (D14): `/approve` on the Verifier's gap stop. Shipping with a gap needs a reason, which no chat verb carries. */
-export const GAP_APPROVE_REFUSAL = `the Verifier found gaps, and shipping with a gap needs a reason. Answer it on the feature card, or \`/retry\` to ${GAP_REPLY_WORDS.retry}.`;
+/** Slice 18 (D3): the refusal names the feature page when no chat follows the feature (`false`), else the card. */
+export const gapApproveRefusal = (hasChat) => `the Verifier found gaps, and shipping with a gap needs a reason. Answer it on the ${hasChat === false ? 'feature page in the Worca UI' : 'feature card'}, or \`/retry\` to ${GAP_REPLY_WORDS.retry}.`;
+export const GAP_APPROVE_REFUSAL = gapApproveRefusal(undefined);
 /** The answer path's refusals a chat `/retry` on a gap stop can meet (a stale or re-raised stop): replied as a warning. */
 const GAP_ANSWER_REFUSALS = new Set(['INVALID_ANSWER', 'STOP_HELD', 'STOP_ANSWERED']);
 
@@ -162,7 +164,8 @@ export function lastPathSegment(p) {
  *          answer(runId, id, payload), stop(runId), pause(runId),
  *          stopPaused(pipelineId) -> {ok:true}|{ok:false, error},
  *          resume(pipelineId), history({limit}), listProjects(),
- *          listScheduled?() -> [{id, title, runAt, status, projectDir, workspaceName?}] (optional)
+ *          listScheduled?() -> [{id, title, runAt, status, projectDir, workspaceName?}] (optional),
+ *          whereToAnswer?(runId) -> {hasChat:boolean}|null (optional; slice 18: where a gap stop is answered)
  */
 export function createCommandRouter({ actions, chatContext, logger = () => {}, onRefused = () => {}, now = Date.now }) {
   const lastHintAt = new Map();   // "plugin/channelId:chatId" -> ms
@@ -649,7 +652,11 @@ export function createCommandRouter({ actions, chatContext, logger = () => {}, o
     // Slice 10 (D14): the Verifier's gap stop. /retry answers `fix` for every gap the stop holds for the person, through
     // the same answer path (and validator) as the app; /approve would ship with a gap, which needs a reason: refused.
     if (pq.stop?.form === 'gaps' && !givingUp) {
-      if (verb === 'approve') return reply(`\`${ref}\`: ${GAP_APPROVE_REFUSAL}`, 'warning');
+      if (verb === 'approve') {
+        // Slice 18 (D5): whether a chat follows the run's feature, read now; a throw or no lookup keeps the card words.
+        const placeOf = (runId) => { try { return actions.whereToAnswer?.(runId) ?? null; } catch { return null; } };
+        return reply(`\`${ref}\`: ${gapApproveRefusal(placeOf(t.run.runId)?.hasChat)}`, 'warning');
+      }
       const payload = gapRetryAnswer(pq.stop);
       try {
         await actions.answer(t.run.runId, pq.id, payload, actor);

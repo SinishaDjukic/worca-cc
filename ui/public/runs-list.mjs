@@ -534,6 +534,8 @@ export function listLine(row, { section = '', time = '' } = {}) {
     // The short form only where the section already says the state; a paused or waiting group keeps its word.
     if ((section === 'needs' && (m.state === 'needs-you' || m.state === 'failed'))
       || (section === 'running' && (m.state === 'working' || m.state === 'starting'))) return and(p, stage) || m.word;
+    // Slice 18 (D11): an open confirmation holds an In review feature; its own PR would otherwise leave only the time.
+    if (m.state === 'in-review' && m.hold) return and(m.line, time);
     switch (m.state) {
       case 'starting': case 'working': case 'needs-you': case 'paused': return and(m.word, p, stage);
       case 'waiting': return and('Waiting', p, ((m.current && m.current.line) || '').replace(/^Waiting(?: · )?/, ''));

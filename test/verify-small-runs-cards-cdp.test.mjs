@@ -445,3 +445,23 @@ test('the LABS_WORDS_ONLY phase: the Labs entry says small runs only in its titl
   assert.ok(body.indexOf('check(') < body.indexOf('capture('), 'asserted before the first screenshot');
   assert.match(s, /[`'/]app-labs-words-(\$\{theme\}|light|dark)\.png/, 'the screenshots');
 });
+
+// Slice 18 (D10, D11): a failed round and an open confirmation over In review, light and dark.
+test('s18: the in-review outranking proof shoots the Runs group row and the page head, asserted, in both themes at 1280px', () => {
+  const s = src();
+  const names = ['runs-group-in-review-failed-round', 'feature-head-in-review-confirm'];
+  for (const name of names) assert.match(s, new RegExp(`[\`'/]${name}-(\\$\\{theme\\}|light|dark)\\.png`), `${name} screenshots`);
+  // The phase function(s) that name the screenshots, each reached by its own one-phase gate.
+  const phases = [...s.matchAll(/\nasync function (\w+Phase)\(/g)]
+    .map((m) => ({ fn: m[1], body: s.slice(m.index + 1, s.indexOf('\n}\n', m.index + 1)) }))
+    .filter((p) => names.some((name) => p.body.includes(name)));
+  assert.ok(phases.length, 'a phase function holds the two cases');
+  for (const p of phases) {
+    assert.match(s, new RegExp(`process\\.env\\.\\w+_ONLY === '1'\\) \\{ await ${p.fn}\\(\\); await finish\\(\\); \\}`), `${p.fn}: its _ONLY=1 gate`);
+    assert.match(p.body, /1280/, `${p.fn}: at 1280px`);
+    assert.match(p.body, /THEMES|'dark'/, `${p.fn}: both themes`);
+    assert.match(p.body, /check\(/, `${p.fn}: what it shoots is asserted`);
+  }
+  const body = phases.map((p) => p.body).join('\n');
+  for (const needle of ['Verifier round 2 failed · 1 gap', 'Needs your confirmation: R-ux-2']) assert.ok(body.includes(needle), needle);
+});

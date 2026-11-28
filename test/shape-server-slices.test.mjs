@@ -32,6 +32,8 @@ import { withEnv as withEnvVars } from './helpers/with-env.mjs';
 import { NO_ADO, REMOTES_V, okRun, failRun, argOf, ghCalls, git, stubShip, shipKit } from './helpers/ship-world.mjs';
 import { world, SIXTEEN_RUN_STATES } from './helpers/shape-sixteen-runs.mjs';
 import { planStop, heldRefusal } from '../src/shared/shape/run-stops.mjs';
+// A namespace read, so a missing new export (featureAnswerPlace, whereToAnswerOf) fails only its own tests.
+import * as CHAIN from '../src/core/shape/chain.mjs';
 
 useTempHome(after, 'worca-shape-server-slices-');
 
@@ -208,6 +210,58 @@ test('s7 R-arch-4: a feature started without a chat has no chat card', async () 
   await withEnvVars({ WORCA_FLAGS: undefined }, async () => {
     for (const f of [chatless, chatted]) for (const v of await both(f.id, f.pid)) assert.equal('hasChat' in v, false, 'flag off');
   });
+});
+
+// Slice 18 (R-arch-4, D4, D7): the chat texts read, when they are sent, whether a chat follows the run's feature.
+const smallMarker = (pid) => getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run('{"smallRuns":true}', pid);
+const smallOn = (fn) => withEnvVars({ WORCA_FLAGS: 'shaperSmallRuns' }, fn);
+const markedFeature = (over) => { const f = mk(1, 'done', over); smallMarker(f.pid); return f; };
+const chatOn = (pid, tag) => askLinkRun(createThread({ title: tag }).id, { runId: `run-${tag}`, pipelineId: pid, cardId: `card_${tag}` });
+
+test('s18 (R-arch-4): featureAnswerPlace answers as the feature view\'s hasChat, and null for unmarked, unknown and flag off', async () => {
+  assert.equal(typeof CHAIN.featureAnswerPlace, 'function', 'chain.mjs exports featureAnswerPlace');
+  const chatless = markedFeature();
+  const chatted = markedFeature();
+  chatOn(chatted.pid, 's18_chat');
+  const plain = mk(1, 'done');                       // no marker
+  await smallOn(async () => {
+    assert.deepEqual(CHAIN.featureAnswerPlace(chatless.pid), { featureId: chatless.id, hasChat: false });
+    assert.deepEqual(CHAIN.featureAnswerPlace(chatted.pid), { featureId: chatted.id, hasChat: true });
+    for (const f of [chatless, chatted]) assert.equal(CHAIN.featureAnswerPlace(f.pid).hasChat, (await view(f.id)).hasChat, f.id);
+    assert.equal(CHAIN.featureAnswerPlace(plain.pid), null, 'unmarked');
+    assert.equal(CHAIN.featureAnswerPlace('no-such'), null, 'unknown pipeline');
+  });
+  await withEnvVars({ WORCA_FLAGS: undefined }, async () => {
+    for (const f of [chatless, chatted]) assert.equal(CHAIN.featureAnswerPlace(f.pid), null, 'flag off');
+  });
+});
+
+test('s18 (R-arch-4): featureAnswerPlace of a re-planned feature\'s run answers for the newest feature, and finds the first chat', async () => {
+  assert.equal(typeof CHAIN.featureAnswerPlace, 'function', 'chain.mjs exports featureAnswerPlace');
+  const first = markedFeature();
+  chatOn(first.pid, 's18_replan');
+  const next = markedFeature({ replaces: first.id });
+  await smallOn(async () => assert.deepEqual(CHAIN.featureAnswerPlace(first.pid), { featureId: next.id, hasChat: true }));
+});
+
+test('s18 (R-arch-4): whereToAnswerOf maps a live run id to its pipeline, falls back to the id, and returns null on a throw', async () => {
+  assert.equal(typeof CHAIN.whereToAnswerOf, 'function', 'chain.mjs exports whereToAnswerOf');
+  const chatless = markedFeature();
+  await smallOn(async () => {
+    const where = CHAIN.whereToAnswerOf(new Map([['run-1', { pipelineId: chatless.pid }]]));
+    assert.equal(where('run-1')?.hasChat, false, 'the run\'s pipeline');
+    assert.equal(CHAIN.whereToAnswerOf(new Map())(chatless.pid)?.hasChat, false, 'an unknown run id is read as a pipeline id');
+    assert.equal(where('run-unknown'), null);
+    assert.equal(CHAIN.whereToAnswerOf({ get: () => { throw new Error('boom'); } })('run-1'), null, 'a throw is null');
+  });
+});
+
+test('s18 (R-arch-4): the server builds whereToAnswerOf once from its runs and hands it to the notifier and the chat actions', () => {
+  const src = readServerSource(undefined, { routes: false });
+  assert.equal(src.split('whereToAnswerOf(runs)').length - 1, 1, 'built once, from the runs Map');
+  const block = (from, to) => { const at = src.indexOf(from); assert.ok(at >= 0, from); return src.slice(at, src.indexOf(to, at)); };
+  assert.match(block('const chatNotifier = createNotifier({', '\n});'), /\bwhereToAnswer\b/, 'createNotifier');
+  assert.match(block('const chatActions = {', '\n};'), /\bwhereToAnswer\b/, 'chatActions');
 });
 
 test('GET feature: a settled entry is ignored (the pipelines row decides), a paused or plan-asking one is shown (F26)', async () => {

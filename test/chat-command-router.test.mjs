@@ -8,7 +8,9 @@ import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
 import { createChatContext } from '../src/core/chat/chat-context.mjs';
-import { createCommandRouter } from '../src/core/chat/command-router.mjs';
+import { createCommandRouter, GAP_APPROVE_REFUSAL } from '../src/core/chat/command-router.mjs';
+// A namespace read, so a missing new export (gapApproveRefusal) fails only the test that needs it.
+import * as ROUTER from '../src/core/chat/command-router.mjs';
 import { ACTION_DONE } from '../src/core/chat/receipts.mjs';
 import { verifyStop, verifyGateAnswer } from '../src/shared/shape/verifier.mjs';
 import { checkRows } from './helpers/rows.mjs';
@@ -280,10 +282,11 @@ test('/answer: ordinal validation and clarify payload mapping', async () => {
 const GAP_PQ = () => ({ id: 'stop-1', kind: 'gate', stop: verifyStop({ gaps: [
   { id: 'R-po-2', why: 'the list wraps', kind: 'judgement' }, { id: 'R-po-3', why: 'a new screen', kind: 'scope' }],
   decided: [{ id: 'R-po-1', answer: 'fix' }] }) });
-const gapRouter = (answer = async () => {}) => {
+const gapRouter = (answer = async () => {}, { whereToAnswer } = {}) => {
   const answered = [];
   const pq = GAP_PQ();
-  const f = makeRouter({ pendingQuestion: () => pq, answer: async (...args) => { answered.push(args); return answer(...args); }, listRuns: liveOne });
+  const f = makeRouter({ pendingQuestion: () => pq, answer: async (...args) => { answered.push(args); return answer(...args); }, listRuns: liveOne,
+    ...(whereToAnswer ? { whereToAnswer } : {}) });
   return { f, pq, answered };
 };
 
@@ -313,6 +316,45 @@ test('gap stop: /approve sends nothing and says shipping with a gap needs a reas
   assert.match(text(out), /feature card/);
   assert.match(text(out), /\/retry/);
   assert.match(text(out), /a fix run for every gap/);
+});
+
+// Slice 18 (R-arch-4, D3, D5): a feature with no chat has no card, so the refusal names its feature page.
+const CARD_REFUSAL = 'the Verifier found gaps, and shipping with a gap needs a reason. Answer it on the feature card, or `/retry` to add a fix run for every gap.';
+const PAGE_REFUSAL = 'the Verifier found gaps, and shipping with a gap needs a reason. Answer it on the feature page in the Worca UI, or `/retry` to add a fix run for every gap.';
+
+test('s18 (R-arch-4): /approve on the gap stop of a chat-less feature names the feature page, never the card, and sends nothing', async () => {
+  const asked = [];
+  const { f, answered } = gapRouter(undefined, { whereToAnswer: (runId) => { asked.push(runId); return { hasChat: false }; } });
+  const out = await handle(f, '/approve');
+  assert.deepEqual(answered, []);
+  assert.equal(out.severity, 'warning');
+  assert.equal(text(out), `\`*ab12\`: ${PAGE_REFUSAL}`);
+  assert.doesNotMatch(text(out), /feature card/);
+  assert.deepEqual(asked, ['r-ab12'], 'asked once, for the run the command names');
+});
+
+test('s18 (R-arch-4): gapApproveRefusal says the page only for hasChat false, and GAP_APPROVE_REFUSAL keeps its words', () => {
+  assert.equal(GAP_APPROVE_REFUSAL, CARD_REFUSAL, 'the checkpoint literal');
+  assert.equal(typeof ROUTER.gapApproveRefusal, 'function', 'command-router.mjs exports gapApproveRefusal');
+  assert.equal(ROUTER.gapApproveRefusal(false), PAGE_REFUSAL);
+  for (const other of [true, undefined, null, 'no']) assert.equal(ROUTER.gapApproveRefusal(other), CARD_REFUSAL, `hasChat ${JSON.stringify(other)}`);
+});
+
+test('s18 (R-arch-4): with a chat, an unknown place, a throwing lookup or no lookup, /approve replies as before', async () => {
+  await checkRows([
+    { name: 'a chat follows the feature', lookup: () => ({ hasChat: true }) },
+    { name: 'the run cannot be placed', lookup: () => null },
+    { name: 'the lookup throws', lookup: () => { throw new Error('db gone'); } },
+    { name: 'no lookup', lookup: undefined },
+  ].map(({ name, lookup }) => ({ name, run: async () => {
+    let asked = 0;
+    const { f, answered } = gapRouter(undefined, lookup ? { whereToAnswer: (id) => { asked += 1; return lookup(id); } } : {});
+    const out = await handle(f, '/approve');
+    assert.deepEqual(answered, []);
+    assert.equal(out.severity, 'warning');
+    assert.equal(text(out), `\`*ab12\`: ${CARD_REFUSAL}`);
+    assert.equal(asked, lookup ? 1 : 0, 'the injected lookup is the one consulted');
+  } })));
 });
 
 test('gap stop: /retry against a stop that moved on replies a warning with the reason, not Command failed', async () => {

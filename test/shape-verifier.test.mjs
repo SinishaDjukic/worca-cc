@@ -340,6 +340,26 @@ test('s10 the word tables: the four kinds, a chip and a reason per held kind, wh
   assert.match(String(V.GAP_REPLY_WORDS.elsewhere), /reason.*requirement.*feature card/);
 });
 
+// Slice 18 (R-arch-4, D1, D2): a feature with no chat has no card, so its words name the feature page.
+test('s18 (R-arch-4): GAP_REPLY_WORDS.page names the feature page, never the card; retry and elsewhere keep their words', () => {
+  assert.equal(V.GAP_REPLY_WORDS.page,
+    'to ship with a gap (a reason is needed) or change a requirement, answer on the feature page in the Worca UI');
+  assert.doesNotMatch(V.GAP_REPLY_WORDS.page, /feature card/);
+  assert.ok(Object.isFrozen(V.GAP_REPLY_WORDS));
+  // R-arch-7: the checkpoint bytes.
+  assert.equal(V.GAP_REPLY_WORDS.retry, 'add a fix run for every gap');
+  assert.equal(V.GAP_REPLY_WORDS.elsewhere, 'to ship with a gap (a reason is needed) or change a requirement, answer on the feature card');
+});
+
+test('s18 (R-arch-4): gapAnswerWords gives the page words only for hasChat false; any other value keeps the card words', () => {
+  assert.equal(typeof V.gapAnswerWords, 'function', 'verifier.mjs exports gapAnswerWords');
+  assert.equal(V.gapAnswerWords(false), V.GAP_REPLY_WORDS.page);
+  assert.match(String(V.gapAnswerWords(false)), /feature page/);
+  for (const other of [true, undefined, null, 'no', 0, '']) {
+    assert.equal(V.gapAnswerWords(other), V.GAP_REPLY_WORDS.elsewhere, `hasChat ${JSON.stringify(other)}`);
+  }
+});
+
 test('s10 awayGapSplit: a plain gap goes to Away as fix, a judgement call is held', () => {
   assert.equal(typeof V.awayGapSplit, 'function', 'verifier.mjs exports awayGapSplit');
   const split = V.awayGapSplit([gapOf('R-po-1'), gapOf('R-po-2', 'judgement')]);

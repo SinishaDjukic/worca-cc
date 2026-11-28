@@ -1256,3 +1256,29 @@ test('S12: the last listed line leaves with focus inside: the focus lands in .gp
   const runs = p.q('.gpage-runs');
   assert.ok(runs.contains(p.doc.activeElement), `focus is on ${p.doc.activeElement.tagName}.${p.doc.activeElement.className}`);
 });
+
+// ── Slice 18 (D10): the page head of a feature whose runs all have open PRs says the failed round or the confirmation ─────
+test('s18 group page: with every run in an open PR the head reads the failed round, or the confirmation, not In review', () => {
+  const pr = { url: 'https://github.com/o/r/pull/9', number: 9, state: 'OPEN', mergeable: 'MERGEABLE' };
+  const head = (more) => {
+    const built = groupRow({ id: 'feat_1', groupKind: 'feature', title: 'Run tags', smallRuns: true,
+      cost: { usd: 4.5, byPipeline: { p1: 2, p2: 2, v1: 0.5 } },
+      members: [1, 2].map((i) => ({ position: i, title: `Slice ${i}`, pipelineId: `p${i}`, kind: 'hist', href: `#history/k/p${i}`,
+        run: { status: 'done', pr } })), ...more }, { now: NOW });
+    const doc = trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
+    const root = buildGroupPage(doc);
+    paintGroupPage(root, { row: built, project: 'acme', tab: 'runs', overview: true, requirements: true, shortState: () => 'done' }, NOOP);
+    return root.querySelector('.gpage-card .run-status');
+  };
+  assert.match(head({}).textContent, /In review/, 'the control: with neither it reads In review');
+  const failed = head({ checks: [{ kind: 'check', round: 2, state: 'failed', gaps: 1, pipelineId: 'v1', runId: '', href: '#history/k/v1', cost: 0.5 }] });
+  assert.equal(failed.querySelector('.run-status-detail')?.textContent, 'Verifier round 2 failed · 1 gap', failed.textContent);
+  assert.equal(failed.dataset.state, 'failed');
+  assert.doesNotMatch(failed.textContent, /In review/);
+  const hold = 'Needs your confirmation: R-ux-2';
+  const held = head({ hold });
+  const link = held.querySelector('a.run-status-link');
+  assert.equal(link?.textContent, hold, held.textContent);
+  assert.equal(link.getAttribute('href'), '#feature/feat_1/requirements/ship');
+  assert.doesNotMatch(held.textContent, /In review/);
+});

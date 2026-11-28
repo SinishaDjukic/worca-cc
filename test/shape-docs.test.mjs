@@ -579,3 +579,17 @@ test('s16: Show order and the guide\'s Run order map say the lane runs in the ga
     assert.doesNotMatch(part, /lane midway under its upper row/i, `${where}: the old lane rule is gone`);
   }
 });
+
+// Slice 18 (D12): where a chat-less feature's gaps are answered, and what outranks In review.
+test('s18 (R-arch-4): the guide says a feature with no chat is answered on its feature page in the Worca UI', () => {
+  assert.deepEqual(missing(smallPart('Runs stop, change and the Verifier'), [
+    'A feature started without a chat has no feature card', 'answer on its feature page in the Worca UI',
+  ]), []);
+});
+
+test('s18: the guide and the design system say a failed Verifier round or an open confirmation outranks In review', () => {
+  const guide = flat(DOCS['shape-it-first.md'].text());
+  assert.deepEqual(missing(guide, [/failed Verifier round or an open confirmation outranks In review/i]), [], 'shape-it-first.md');
+  const design = flat(read('design-system.md'));
+  assert.deepEqual(missing(design, [/failed Verifier round or an open confirmation outranks In review/i]), [], 'design-system.md');
+});

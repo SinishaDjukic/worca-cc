@@ -27,6 +27,14 @@ import { featureFigures } from '../src/core/shape/measure.mjs';
 import { verifyStop } from '../src/shared/shape/verifier.mjs';
 import { renderQuestion } from '../src/core/chat/renderers.mjs';
 import { oneCardModel } from '../ui/public/shape/feature-card.mjs';
+// A namespace read, so a missing new export (featureAnswerPlace, whereToAnswerOf) fails only its own tests.
+import * as CHAIN from '../src/core/shape/chain.mjs';
+import { createThread, linkRun as askLinkRun } from '../src/core/ask/store.mjs';
+import { createNotifier } from '../src/core/chat/notifier.mjs';
+import { createCommandRouter } from '../src/core/chat/command-router.mjs';
+import { createChatContext } from '../src/core/chat/chat-context.mjs';
+import { writePluginConfig } from '../src/core/plugin-config.mjs';
+import { EventEmitter } from 'node:events';
 
 useTempHome(after, 'worca-verifier-');
 const flags = process.env.WORCA_FLAGS;
@@ -384,6 +392,57 @@ test('a Verifier frame broadcasts its feature: featureOfAnyPipeline finds it by 
   assert.equal(featureOfAnyPipeline(pid).featureId, w.f.id);
   assert.equal(featureOfAnyPipeline(w.pids[2]).featureId, w.f.id);
   assert.equal(featureOfAnyPipeline('nope'), null);
+});
+
+// Slice 18 (R-arch-4): the Verifier run asks the gap stop, so its pipeline must place the feature too.
+test('s18 (R-arch-4): featureAnswerPlace of the Verifier run\'s pipeline reads its feature, with a chat only once one follows it', () => {
+  assert.equal(typeof CHAIN.featureAnswerPlace, 'function', 'chain.mjs exports featureAnswerPlace');
+  const w = world();
+  w.settle(w.pids[3]);
+  const pid = w.fire(w.checks()[0].ticketId, 'running');
+  assert.deepEqual(CHAIN.featureAnswerPlace(pid), { featureId: w.f.id, hasChat: false });
+  askLinkRun(createThread({ title: 'sign-up' }).id, { runId: 'run-s18-verifier', pipelineId: w.pids[0], cardId: 'card_s18v' });
+  assert.deepEqual(CHAIN.featureAnswerPlace(pid), { featureId: w.f.id, hasChat: true });
+});
+
+// The requirement's example: a feature started with no chat; every pointer leads to its feature page.
+test('s18 R-arch-4 example: a feature with no chat gets a gap message and an /approve refusal that lead to the feature page', async () => {
+  assert.equal(typeof CHAIN.whereToAnswerOf, 'function', 'chain.mjs exports whereToAnswerOf');
+  const w = world();
+  w.settle(w.pids[3]);
+  const pid = w.fire(w.checks()[0].ticketId, 'running');
+  assert.equal(w.view().hasChat, false, 'started with no chat: no card');
+  const runId = 'run-s18-5a1d';
+  const whereToAnswer = CHAIN.whereToAnswerOf(new Map([[runId, { pipelineId: pid }]]));
+  const question = { id: 'verify-1', kind: 'gate', issues: [], stop: verifyStop({ gaps: [{ id: 'R-po-2', why: 'the email never sends' }] }) };
+
+  const schema = [{ key: 'notifyChatIds', type: 'text', label: 'Notify', secret: false, required: false }];
+  await writePluginConfig('tg-chat', schema, { notifyChatIds: '100' });
+  const sent = [];
+  const chatContext = createChatContext(join(runDirs, 's18-chat-context.json'));
+  const notifier = createNotifier({ chatContext, whereToAnswer, logger: () => {},
+    getPrefs: () => ({ notify: { question: true }, channels: {} }),
+    channelHost: { list: () => [{ plugin: 'tg-chat', channelId: 'main', platform: 'telegram', capabilities: { outbound: true }, configSchema: schema }],
+      sendMessage: async (args) => { sent.push(args); } } });
+  const orch = new EventEmitter();
+  orch.state = {};
+  notifier.attach(orch, { runId, entry: { title: 'Sign-up' } });
+  orch.emit('question', question);
+  await new Promise((r) => setTimeout(r, 25));
+
+  const answered = [];
+  const router = createCommandRouter({ chatContext, logger: () => {}, actions: { whereToAnswer,
+    listRuns: () => [{ runId, title: 'Sign-up', status: 'running' }], pendingQuestion: () => question,
+    answer: async (...args) => { answered.push(args); } } });
+  const reply = await router.handleIncoming({ plugin: 'tg-chat', channelId: 'main', platform: 'telegram', channelConfig: { allowedChatIds: '100' },
+    msg: { chatId: '100', userId: 'u1', text: '/approve', meta: { isGroup: false } } });
+
+  assert.equal(sent.length, 1);
+  assert.deepEqual(answered, []);
+  for (const [what, text] of [['gate message', sent[0].message.body[0].value], ['/approve reply', reply.body.map((s) => s.value).join('\n')]]) {
+    assert.match(text, /on the feature page in the Worca UI/, what);
+    assert.doesNotMatch(text, /feature card/, what);
+  }
 });
 
 test('a live round delays the check; a change after a clean check verifies again', async () => {

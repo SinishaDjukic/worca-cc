@@ -694,3 +694,76 @@ test('s11: flag off: no checks key, and the Verifier run stays a standalone row'
   assert.equal(d.alone(f.failed), 1);
   assert.equal(d.item.querySelector('.runs-item[data-level="check"]'), null);
 });
+
+// ── Slice 18 (D10): a failed Verifier round or an open confirmation outranks In review ───────────────────────────
+const OPEN = (number) => ({ url: `https://github.com/acme/web/pull/${number}`, number, state: 'OPEN', mergeable: 'MERGEABLE' });
+/** Three done runs, all in one open pull request. */
+const IN_REVIEW = Array.from({ length: 3 }, () => ({ status: 'done', endReached: true, pr: OPEN(9) }));
+const reviewed = (extra = {}, kind = 'feature') => groupModel({ kind, title: 'F', members: IN_REVIEW, ...extra }, { now: NOW });
+const newest = (state, gaps = null) => ({ round: 2, state, gaps });
+const WAITING = 'Needs your confirmation: R-ux-2';
+
+test('s18 groupModel: a failed newest round takes an In review feature, with each run\'s own PR or the group\'s One PR', () => {
+  assert.deepEqual([reviewed().state, reviewed().line], ['in-review', 'In review · 1 PR'], 'the control');
+  for (const [name, extra] of [
+    ['a PR per run', { members: [1, 2, 3].map((n) => ({ status: 'done', endReached: true, pr: OPEN(n) })) }],
+    ['one shared PR', {}],
+    ['the group\'s One PR', { pr: OPEN(9) }],
+    ['over a confirmation hold', { hold: WAITING }],
+  ]) {
+    const m = reviewed({ checks: [newest('failed', 1)], ...extra });
+    assert.deepEqual([m.state, m.line, m.word, m.dot, m.symbol], ['failed', 'Verifier round 2 failed · 1 gap', 'Failed', 'red', 'alert'], name);
+    assert.deepEqual(m.actions, [], name);
+    assert.equal('hold' in m, false, name);
+    assert.deepEqual(m.check, { round: 2, state: 'failed', gaps: 1 }, name);
+  }
+});
+
+test('s18 groupModel: an open confirmation is the In review feature\'s line, needs you, and keeps Open PR', () => {
+  for (const [name, extra] of [
+    ['no round', {}],
+    ['a passed round', { checks: [newest('passed', 0)] }],
+    ['the group\'s One PR', { pr: OPEN(9) }],
+  ]) {
+    const m = reviewed({ hold: WAITING, ...extra });
+    assert.deepEqual([m.state, m.line, m.hold], ['in-review', WAITING, WAITING], name);
+    assert.deepEqual([m.word, m.dot, m.symbol], ['Needs you', 'amber', null], name);
+    assert.deepEqual(m.actions, ['open-pr'], name);
+    assert.equal('check' in m, false, name);
+  }
+});
+
+test('s18 groupModel: other rounds, other holds and a chain keep the In review result', () => {
+  const base = reviewed();
+  for (const state of ['passed', 'gaps', 'asking', 'verifying', 'paused', 'stopped']) {
+    assert.deepEqual(reviewed({ checks: [newest(state, 1)] }), base, state);
+  }
+  assert.deepEqual(reviewed({ checks: [{ ...newest('failed', 1), round: 1 }, newest('passed', 0)] }), base, 'only the newest round counts');
+  for (const hold of ["Acknowledge the Verifier's note to ship", 'R-ops-1 is owned by no run and confirmed by no person']) {
+    assert.deepEqual(reviewed({ hold }), base, hold);
+  }
+  const chain = reviewed({}, 'chain');
+  for (const extra of [{ checks: [newest('failed', 1)] }, { hold: WAITING }]) assert.deepEqual(reviewed(extra, 'chain'), chain, 'a chain');
+});
+
+test('s18: a stored feature with every run in an open PR reads the failed round or the confirmation, and In review with the flag off', () => {
+  const shipped = (f) => {
+    for (const pid of f.ids) getDb().prepare('UPDATE pipelines SET pr_url = ?, pr_number = ?, pr_state = ? WHERE id = ?')
+      .run('https://github.com/acme/web/pull/31', 31, 'OPEN', pid);
+    return f;
+  };
+  const modelOf = (g) => groupModel({ kind: 'feature', title: g.title, members: g.members.map((x) => ({ status: x.status, pr: x.pr })),
+    ...(g.hold ? { hold: g.hold } : {}), ...(g.checks ? { checks: g.checks } : {}) }, { now: NOW });
+  const held = shipped(confirmFeature());
+  const failed = shipped(confirmFeature());
+  const round2 = verifierRound(failed, { round: 2, status: 'error' });
+  setChecks(failed.id, [storedCheck({ ...round2, state: 'failed', gaps: 1 })]);
+
+  assert.equal(modelOf(groupOf(true, held.id)).line, WAITING);
+  assert.equal(modelOf(groupOf(true, failed.id)).line, 'Verifier round 2 failed · 1 gap');
+  for (const f of [held, failed]) {
+    const g = groupOf(false, f.id);
+    assert.deepEqual(['hold' in g, 'checks' in g], [false, false], 'flag off');
+    assert.deepEqual([modelOf(g).state, modelOf(g).line], ['in-review', 'In review · 1 PR'], 'flag off');
+  }
+});

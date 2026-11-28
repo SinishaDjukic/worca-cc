@@ -11,7 +11,7 @@ import { SHIP_LOCK, prCreating, shipLocked } from './ship-lock.mjs';
 import { roundOrigin } from './rounds.mjs';
 import { LEGACY_PER_RUN_REASON, openPrReason } from '../../shared/shape/ship-ledger.mjs';
 import { sliceOfTicket, sliceGateState, featureBase, featureRootSource, featureOfPipeline, currentFeatureId, finishedSlices,
-  dependencyBranchesOf, setClashHold, clearClashHold } from './features.mjs';
+  dependencyBranchesOf, setClashHold, clearClashHold, featureThread } from './features.mjs';
 
 import { recordSettledFigures as recordFigures } from './measure.mjs';
 import { verifyAfterSettled, verifyCheckOfPipeline } from './verifier.mjs';
@@ -34,6 +34,28 @@ export function recordSettledFigures(state, deps = {}) {
 /** The feature a pipeline belongs to: a slice's (featureOfPipeline), else the Verifier run's (small runs C5). */
 export function featureOfAnyPipeline(pipelineId) {
   return featureOfPipeline(pipelineId) || verifyCheckOfPipeline(pipelineId);
+}
+
+/**
+ * Slice 18 (D4): where a gap stop of `pipelineId`'s feature is answered, read at send time: the newest feature of a
+ * Re-plan chain and whether a chat follows it (as the feature view's `hasChat`). Only for a marked feature with
+ * shaperSmallRuns on; otherwise null. Read-only. → {featureId, hasChat} | null
+ */
+export function featureAnswerPlace(pipelineId) {
+  if (!pipelineId || !shaperSmallRunsOn()) return null;
+  const at = featureOfAnyPipeline(pipelineId);
+  if (!at) return null;
+  const featureId = currentFeatureId(at.featureId);
+  if (!smallRunsOfFeature(featureId)) return null;
+  return { featureId, hasChat: featureThread(featureId) !== null };
+}
+
+/** Slice 18 (D7): the chat modules' `whereToAnswer(runId)`, over the server's live runs Map (run id → its pipeline id;
+ *  an unknown run id is read as a pipeline id). A throw is null, so the chat texts keep today's words. */
+export function whereToAnswerOf(runs) {
+  return (runId) => {
+    try { return featureAnswerPlace(runs.get(runId)?.pipelineId || runId); } catch { return null; }
+  };
 }
 
 /** The refusal of a round of `pipelineId` while its feature is shipping (the Ship lock), or null. */

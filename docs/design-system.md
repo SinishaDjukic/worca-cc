@@ -706,7 +706,8 @@ above them, never a boxed tab, and never a colour of a tab's own.
   A feature's Verifier round is a check row at the member level, after the runs (`.runs-item.is-check`): on the
   `--field` ground, the shield icon and its dot in the pick column (no checkbox, no ⋯), `Verifier · round 2` and its
   last word (`1 gap`, `checking`, `passed`). Its dot takes its mark from `RUN_MARK_DOTS` only. It is never selected
-  (Space does nothing on it) and it never says `Ready to ship`: the group row says it.
+  (Space does nothing on it) and it never says `Ready to ship`: the group row says it. A failed Verifier round or an
+  open confirmation outranks In review, also when every run has an open pull request.
 - Search is the top bar's "Search or ask" only. A list filter is chosen there ("Runs labelled hotfix", `label:hotfix`),
   not from a filter button in the list's header. The Marketplace's Browse search is one exception
   (Marketplace exceptions); the Models Catalogue's own "Search models" field, with its All, In use and Needs setup

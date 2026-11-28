@@ -70,7 +70,11 @@ export const ANSWERED_BY_WORDS = Object.freeze({ away: 'decided by Away mode', y
 export const GAP_REPLY_WORDS = Object.freeze({
   retry: 'add a fix run for every gap',
   elsewhere: 'to ship with a gap (a reason is needed) or change a requirement, answer on the feature card',
+  // Slice 18 (D1): a feature started without a chat has no feature card.
+  page: 'to ship with a gap (a reason is needed) or change a requirement, answer on the feature page in the Worca UI',
 });
+/** Slice 18 (D2): the page words only when no chat follows the feature (`false`); an unknown place keeps the card words. */
+export const gapAnswerWords = (hasChat) => (hasChat === false ? GAP_REPLY_WORDS.page : GAP_REPLY_WORDS.elsewhere);
 
 const missing = () => Object.assign(new TypeError('The Verifier wrote no result'), { code: 'VERIFY_RESULT_MISSING' });
 

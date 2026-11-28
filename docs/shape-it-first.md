@@ -726,7 +726,8 @@ its own PR when it finishes, before these blocks. Ship is blocked:
   "Waiting for you to confirm R-comp-4" (with the flag off it names the role, as before). With the flag on, once every
   run is done, the feature reads "Needs your confirmation: R-ux-2" in the needs-you tone (up to three ids, then
   "and 2 more") on its page head, its Runs list row and its Chat card, never "Ready to ship". The Runs list lists it
-  under Needs you, and the Runs badge counts it. On the page head the reason is a link to
+  under Needs you, and the Runs badge counts it. A failed Verifier round or an open confirmation outranks In review,
+  also when every run has an open pull request. On the page head the reason is a link to
   `#feature/ID/requirements/ship`: it opens Requirements, scrolls the Ship card to the top and focuses it, and the
   address then ends in `/requirements`. The disabled **Create N PRs** says the same in a tip drawn above it, never over
   the status line;
@@ -790,6 +791,7 @@ recorded before this shows its Verifier line only.
 
 From Telegram or Discord, the gate message lists each gap. `/retry` answers every gap it lists with a fix run. `/approve`
 is refused: shipping with a gap needs a reason, so that and changing a requirement are answered on the feature card.
+A feature started without a chat has no feature card, so both texts say to answer on its feature page in the Worca UI.
 
 ### The four places
 

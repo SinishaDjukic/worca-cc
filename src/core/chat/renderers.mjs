@@ -16,7 +16,7 @@ import { awayAnswersSummary } from '../../shared/away-mode/labels.mjs';
 import { usageLimitSwitches, engineLabel, engineReportsCost, runCostLabel } from '../../shared/engine-switch.mjs';
 import { readyEnginesCached } from '../engines/ready-cache.mjs';
 import { runHeadlineMs } from '../../shared/run-elapsed.mjs';
-import { GAP_KIND_WORDS, ANSWERED_BY_WORDS, GAP_REPLY_WORDS, gapKindOf } from '../../shared/shape/verifier.mjs';
+import { GAP_KIND_WORDS, ANSWERED_BY_WORDS, GAP_REPLY_WORDS, gapKindOf, gapAnswerWords } from '../../shared/shape/verifier.mjs';
 
 const md = (value) => ({ kind: 'markdown', value });
 
@@ -156,8 +156,9 @@ export function renderQuestion(meta, payload = {}) {
   const parts = head('❓', meta);
 
   // Shaper small runs slice 10 (D11): the Verifier's gap stop lists its gaps and says the one chat reply (/retry fixes
-  // every gap); shipping with a gap or changing a requirement needs text, so it is answered on the feature card. The
-  // Verifier's notes are never listed here.
+  // every gap); shipping with a gap or changing a requirement needs text, so it is answered on the feature card, or the
+  // feature page when no chat follows the feature (slice 18: `meta.hasChat === false`). The Verifier's notes are never
+  // listed here.
   if (payload.stop?.form === 'gaps') {
     const stop = payload.stop;
     const clip120 = (t) => { const x = String(t || '').trim(); return x.length > 120 ? `${x.slice(0, 120)}…` : x; };
@@ -171,7 +172,7 @@ export function renderQuestion(meta, payload = {}) {
       return `${g?.id}: ${clip120(g?.why)}${k === 'plain' ? '' : ` (${GAP_KIND_WORDS[k].chip})`}`;
     });
     capped(Array.isArray(stop.decided) ? stop.decided : [], (a) => `${a?.id} → fix · ${ANSWERED_BY_WORDS.away}`);
-    parts.push(`   Reply: \`/retry ${ref}\` — ${GAP_REPLY_WORDS.retry} · ${GAP_REPLY_WORDS.elsewhere}`);
+    parts.push(`   Reply: \`/retry ${ref}\` — ${GAP_REPLY_WORDS.retry} · ${gapAnswerWords(meta.hasChat)}`);
     return mdMsg(parts.join('\n'), 'warning');
   }
 
