@@ -383,6 +383,7 @@ import { activityCounts } from './activity-model.mjs';
 import { createChatHome, findFollowingThread } from './chat/home.mjs';
 import { installIntentAddon } from './chat/intent.mjs';
 import { installRolePicker } from './chat/role-picker.mjs';
+import { installGuideLine, refreshGuideLine } from './chat/guide-line.mjs';
 import { needsYouItems as chatNeedsYouItems } from './runs-list.mjs';
 import { createActivityMenu } from './activity-menu.mjs';
 import { createAwayScreensaver } from './away-screensaver.mjs';
@@ -20935,7 +20936,7 @@ function jobsData() {
   }
   return {
     settings: j.settings || {}, steps: j.config?.steps || [], catalog: j.config?.catalog || [], engines: j.engines, locks: addEngineLocks(),
-    flags: { requirements: flagOn('requirements'), design: flagOn('design'), smartRunNaming: flagOn('smartRunNaming'), commandSummaries: flagOn('commandSummaries') },
+    flags: { requirements: flagOn('requirements'), design: flagOn('design'), smartRunNaming: flagOn('smartRunNaming'), commandSummaries: flagOn('commandSummaries'), shaperSmallRuns: flagOn('shaperSmallRuns') },
     testable,
   };
 }
@@ -21091,6 +21092,7 @@ async function saveJobs(btn) {
   syncRunEngine(j.settings);
   reportStatus(el.modelsJobsMsg, 'form-msg', 'Saved.', 'ok');
   renderJobsTab();
+  refreshGuideLine();   // the composer's Guide tooltip names the model just picked
 }
 
 /** The tab's clicks (one delegate on #jobs-root): the harness tiles, Default for new runs, the role tiles and row
@@ -36977,6 +36979,7 @@ function smallRunsOf(f) { return !!(f && f.ship && f.ship.smallRuns); }
 function stackedOnlyOf(f) { return smallRunsOf(f) && !flagOn('shaperSmallRuns'); }
 // A Labs toggle on an open feature page: the ship line follows at once.
 onFlagChange('shaperSmallRuns', () => {
+  repaintJobs();   // Models › Jobs › Helper jobs lists Guide only while the flag is on
   if (GROUP_PAGE.route !== 'feature' || !GROUP_PAGE.feature) return;
   const so = stackedOnlyOf(GROUP_PAGE.feature);
   if (so !== GROUP_PAGE.stackedOnly) { GROUP_PAGE.stackedOnly = so; scheduleGroupPagePaint(); }
@@ -44653,6 +44656,7 @@ const chatHomeTimers = {
 };
 const chatIntent = installIntentAddon({ onSend: () => { chatHome?.armFlip(); } });
 const chatRole = installRolePicker({ intent: chatIntent });
+installGuideLine({ intent: chatIntent });
 const chatRoleRow = mountRoleSetting(document.getElementById('chatRoleHost'), chatRole, { doc: document });
 
 // ── Chat home (worca Chat P6) ──────────────────────────────────────────────────────────────────────────────

@@ -25,12 +25,14 @@ const NAME_NONE = 'Your role';
 const TITLE = 'Who is asking: Worca words its questions for you. Remembered; change it in Settings › Chat.';
 const LAST_TIME = 'you, last time';
 
-/** Does the picker sit on a later line of the lead row than the pin (the row wraps)? */
-function layoutWraps(leadEl, pickerEl) {
+/** Does the row wrap: does the Guide switch (guide-line.mjs) when present, else the picker, sit on a later line of the
+ *  lead row than the pin? Another trailing child (the direction chip) never decides the fold. */
+export function layoutWraps(leadEl, pickerEl) {
   const pin = leadEl.querySelector(':scope > .chat-intent');
   if (!pin) return false;
+  const last = leadEl.querySelector(':scope > .ask-guide-sw') || pickerEl;
   const a = pin.getBoundingClientRect();
-  const b = pickerEl.getBoundingClientRect();
+  const b = last.getBoundingClientRect();
   return b.top > a.top + a.height / 2;
 }
 

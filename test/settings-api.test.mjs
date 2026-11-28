@@ -321,6 +321,7 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
       namingModel: null,
       secondOpinionModel: null,
       commandSummaryModel: null,
+      guideModel: null,
       workspaceScan: null,
       schedule: {},
       nightMode: {}, nightModeToggle: 'auto',

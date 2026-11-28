@@ -609,3 +609,16 @@ test('ask screens s2 (R-po-6): Requirements first describes the flag-on card and
   const asking = flat((small.split('\n**Who is asking.**')[1] || '').split('\n### ')[0]);
   assert.ok(asking.includes('(#requirements-first)'), 'the Who is asking paragraph points at the card');
 });
+
+// Shaper ask screens, slice 3: the Guide job on Models, and the Guide switch and line in the composer.
+test('ask screens s3 (R-arch-3): docs/models.md names the Guide job with its flag, under Helper jobs\' wording', () => {
+  const blocks = read('models.md').split(/\n\n+/);
+  assert.ok(blocks.some((b) => /\bGuide\b/.test(b) && b.includes('shaperSmallRuns')), 'a paragraph names Guide and shaperSmallRuns together');
+  assert.match(read('models.md'), /^\|[^\n]*Helper jobs › Guide\b[^\n]*\|/m, 'a Guide row in the models table');
+});
+
+test('ask screens s3: the design system\'s Composer bar part describes the Guide switch and the one Guide line', () => {
+  const bar = flat((read('design-system.md').split('\n### Composer bar\n')[1] || '').split(/\n##+ /)[0]);
+  assert.deepEqual(missing(bar, ['Guide', '.ask-guide', '.ask-guide-t', 'Sending works as it is.',
+    'New: Guide checks your idea for gaps before you send. Switch it off any time.', /ellipsis/i, /never wraps/i, /32px/, /40px/, /coarse/i]), []);
+});

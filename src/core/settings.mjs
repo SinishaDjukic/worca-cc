@@ -1384,6 +1384,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'agentGenModel',                           // the agent wizard's Generate: model + effort (Claude, user-level)
   'namingModel',                             // Smart run naming's model + effort (Models › Jobs › Helper jobs, Claude, user-level)
   'commandSummaryModel',                     // Command summaries' model + effort (Models › Jobs › Helper jobs, Claude, user-level)
+  'guideModel',                              // Guide's model + effort (Models › Jobs › Helper jobs, Claude, user-level; shaperSmallRuns)
   'secondOpinionModel',                      // Second-opinion reviewer's model + effort (Models › Jobs › Helper jobs, Claude, user-level)
   'workspaceScan',                           // Settings › Runs › Workspaces: the scan's models
   'schedule',                                // scheduled-run defaults { graceMin, ifMissed, maxFailures }
@@ -2201,6 +2202,46 @@ export async function setCommandSummaryModel(input, { models = null } = {}) {
   else settings.commandSummaryModel = pair.effort ? pair : { model: pair.model };
   await persistSettings(settings);
   return { commandSummaryModel: commandSummaryModel() };
+}
+
+// ── Guide model (Models › Jobs › Helper jobs › Guide, flag shaperSmallRuns) ───
+// `guideModel`: the { model, effort } pair of the composer's quick check of a Shaper prompt (guide-model.mjs).
+// User-level and Claude-only like commandSummaryModel. Unset = the cheapest ready Claude model at its lowest effort
+// (naming.mjs#resolveNamingModel).
+const warnedGuideModel = new Set();
+
+/** The STORED pair: `{ model, effort }`, both null when unset. Sync and never throws (namingModel's rules). */
+export function guideModel() {
+  if (homeGuarded()) return { model: null, effort: null };
+  const v = readSettings().guideModel;
+  if (v === undefined || v === null) return { model: null, effort: null };
+  const warnOnce = (what, tail) => {
+    const id = JSON.stringify(what);
+    if (warnedGuideModel.has(id)) return;
+    warnedGuideModel.add(id);
+    console.warn(`[worca] invalid guideModel ${id} — ${tail}`);
+  };
+  const m = isObj(v) ? v.model : undefined;
+  if (typeof m !== 'string' || !m.trim() || m.length > DEFRAG_MODEL_MAX_LEN) {
+    warnOnce(v, 'Guide uses the cheapest ready Claude model');
+    return { model: null, effort: null };
+  }
+  const effort = typeof v.effort === 'string' && EFFORTS.includes(v.effort) ? v.effort : null;
+  if (v.effort !== undefined && v.effort !== null && effort === null) warnOnce(v, 'Guide uses the model\'s default effort');
+  return { model: m.trim(), effort };
+}
+
+export function assertGuideModelInput(input, models = null) {
+  return assertModelPairInput('guideModel', input, models);
+}
+
+export async function setGuideModel(input, { models = null } = {}) {
+  const pair = assertGuideModelInput(input, models);
+  const settings = readSettings();
+  if (pair === null) delete settings.guideModel;
+  else settings.guideModel = pair.effort ? pair : { model: pair.model };
+  await persistSettings(settings);
+  return { guideModel: guideModel() };
 }
 
 // ── Second-opinion reviewer (Models › Jobs › Helper jobs › Second-opinion reviewer) ───
@@ -3894,6 +3935,46 @@ export async function setAnswererProfileFor(person, { lead } = {}, { smallRuns =
   settings.answererProfiles = map;
   await persistSettings(settings);
   return answererProfileFor(person, { smallRuns });
+}
+
+// Guide prefs (Shaper ask screens, flag shaperSmallRuns): in the person's answerer record, stored only away from their
+// defaults — `guideOn` only when false, `guideOfferSeen` and `guideRowsOpen` only when true.
+const GUIDE_PREF_KEYS = Object.freeze({ on: 'guideOn', offerSeen: 'guideOfferSeen', rowsOpen: 'guideRowsOpen' });
+
+/** The person's Guide prefs, `{ on, offerSeen, rowsOpen }` (the defaults when never set). Never throws. */
+export function guidePrefsFor(person) {
+  if (homeGuarded()) return { on: true, offerSeen: false, rowsOpen: false };
+  const record = answererMap(readSettings())[pinsPersonKey(person)];
+  const r = record && typeof record === 'object' && !Array.isArray(record) ? record : {};
+  return { on: r.guideOn !== false, offerSeen: r.guideOfferSeen === true, rowsOpen: r.guideRowsOpen === true };
+}
+
+/** A prefs patch: an object of one or more of on, offerSeen, rowsOpen, each a boolean. Throws { code: 'BAD_GUIDE_PREFS' }. */
+export function assertGuidePrefsInput(patch) {
+  const bad = () => Object.assign(new Error('Guide preferences take on, offerSeen and rowsOpen, each true or false'), { code: 'BAD_GUIDE_PREFS' });
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw bad();
+  const keys = Object.keys(patch);
+  if (!keys.length) throw bad();
+  for (const k of keys) if (!Object.hasOwn(GUIDE_PREF_KEYS, k) || typeof patch[k] !== 'boolean') throw bad();
+  return Object.fromEntries(keys.map((k) => [k, patch[k]]));
+}
+
+/** Merge a prefs patch into the person's record, keeping the lead and every other key. A refusal writes nothing. */
+export async function setGuidePrefsFor(person, patch) {
+  const next = assertGuidePrefsInput(patch);
+  const settings = readSettings();
+  const map = answererMap(settings);
+  const key = pinsPersonKey(person);
+  const record = map[key] && typeof map[key] === 'object' && !Array.isArray(map[key]) ? { ...map[key] } : {};
+  for (const [k, v] of Object.entries(next)) {
+    const field = GUIDE_PREF_KEYS[k];
+    const atDefault = k === 'on' ? v === true : v === false;
+    if (atDefault) delete record[field]; else record[field] = v;
+  }
+  map[key] = record;
+  settings.answererProfiles = map;
+  await persistSettings(settings);
+  return guidePrefsFor(person);
 }
 
 /** Local tag dimensions (Settings › Tags): used when the run target's team policy sets none. Never throws. */

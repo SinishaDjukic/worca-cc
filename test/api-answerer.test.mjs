@@ -193,3 +193,14 @@ test('flag on, only an explicit null clears: a body with no lead is still 400 BA
   }
   assert.equal(settingsBytes(), before);
 }));
+
+// Shaper ask screens, slice 3: the Guide prefs share the person's record; a role write never drops them.
+test('R-arch-11: a role write and a clear keep guideOn and guideOfferSeen; GET /api/answerer still answers the lead only', () => withFlags('shaperSmallRuns', async () => {
+  seedProfiles({ '': { lead: 'qa', guideOn: false, guideOfferSeen: true } });
+  assert.equal((await put({ lead: 'compliance' })).status, 200);
+  assert.deepEqual(records()[''], { lead: 'compliance', guideOn: false, guideOfferSeen: true });
+  assert.deepEqual(await get(), { lead: 'compliance' });
+  assert.equal((await put({ lead: null })).status, 200);
+  assert.deepEqual(records()[''], { guideOn: false, guideOfferSeen: true });
+  assert.deepEqual(await get(), { lead: null });
+}));

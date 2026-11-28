@@ -345,7 +345,9 @@ test('New chat hands the add-ons the empty chat at once (update(null)), before a
 // every /api/answerer request, from the panel's fetch or the page's, is recorded.
 const SHAPER_TEXT = 'Uploads fail on large files';
 
-async function composer(t, { lead = null, flag = true, picker = true, pin = 'shape' } = {}) {
+const GUIDE_READ = Object.freeze({ model: { id: 'claude-haiku-5-5', label: 'Haiku 5.5' }, on: true, offerSeen: false, rowsOpen: false });
+// The Guide switch and line (ui/public/chat/guide-line.mjs) are registered after the picker; their requests are recorded.
+async function composer(t, { lead = null, flag = true, picker = true, guide = picker, pin = 'shape' } = {}) {
   _resetChatExtensions();
   _resetAnswerer();
   const rec = {};
@@ -360,6 +362,14 @@ async function composer(t, { lead = null, flag = true, picker = true, pin = 'sha
   if (picker) {
     const { installRolePicker } = await import('../ui/public/chat/role-picker.mjs');
     installRolePicker({ intent, flagOn: () => flag, onFlagChange: () => () => {} });
+  }
+  if (guide) {
+    const { installGuideLine, loadGuide, saveGuidePrefs } = await import('../ui/public/chat/guide-line.mjs');
+    const record = async (url, init) => {
+      requests.push(`${init?.method || 'GET'} ${url}`);
+      return { ok: true, status: 200, json: async () => ({ ...GUIDE_READ }) };
+    };
+    installGuideLine({ intent, flagOn: () => flag, onFlagChange: () => () => {}, load: () => loadGuide(record), save: (patch) => saveGuidePrefs(patch, record) });
   }
   const panelApi = api(rec);
   const ctx = makePanel({
@@ -422,11 +432,55 @@ test('R-arch-1: with the flag off, even with the Shaper pin, the lead row, the r
   const walk = async (picker) => {
     const c = await composer(t, { lead: 'qa', flag: false, picker });
     const leadHtml = await c.send(SHAPER_TEXT);
-    return { leadHtml, requests: c.requests, text: c.rec.messageBodies.at(-1).text, pickers: c.doc.querySelectorAll('.ask-asker-pick').length };
+    return { leadHtml, requests: c.requests, text: c.rec.messageBodies.at(-1).text, pickers: c.doc.querySelectorAll('.ask-asker-pick').length,
+      guide: c.doc.querySelectorAll('.ask-guide, .ask-guide-sw').length };
   };
   const without = await walk(false);
   const withPicker = await walk(true);
   assert.deepEqual(withPicker, without);
   assert.equal(withPicker.pickers, 0);
   assert.equal(withPicker.text, `${INTENT_LEADS.shape}\n\n${SHAPER_TEXT}`);
+});
+
+const barHtml = (c) => c.doc.querySelector('.ask-composer-row[data-bar="compact"]').outerHTML;
+/** The side column takes the one chat page, as app.js moves it. */
+async function dock(c) {
+  const host = c.doc.createElement('div');
+  c.doc.body.appendChild(host);
+  host.appendChild(c.panel.root);
+  c.panel.setHost('dock');
+  await c.settle();
+}
+const guideReads = (c) => c.requests.filter((r) => r === 'GET /api/shape/guide').length;
+
+test('R-ux-1: flag on with the Shaper pin, main and docked: pin, picker, switch and one line, the bar unchanged, one Guide read', async (t) => {
+  const barWithout = barHtml(await composer(t, { guide: false }));
+  const c = await composer(t, {});
+  const check = (where) => {
+    assert.equal(c.intent.current(), 'shape', where);
+    const kids = [...c.lead.children];
+    assert.equal(kids.length, 3, `${where}: pin, picker, switch`);
+    assert.ok(kids[0].matches('.chat-intent') && kids[1].matches('.ask-asker-pick') && kids[2].matches('.ask-guide-sw'), `${where}: in that order`);
+    const lines = c.doc.querySelectorAll('.ask-guide');
+    assert.equal(lines.length, 1, `${where}: one line`);
+    assert.ok(lines[0].previousElementSibling.matches('.ask-composer-msg'), `${where}: after the field and its message`);
+    assert.ok(lines[0].nextElementSibling.matches('.ask-composer-row[data-bar="compact"]'), `${where}: right before the bar`);
+    assert.equal(guideReads(c), 1, `${where}: one read`);
+  };
+  check('main');
+  assert.equal(barHtml(c), barWithout, 'the bar is as without the slice');
+  await dock(c);
+  check('docked');
+  await c.send(SHAPER_TEXT);
+  assert.equal(c.rec.messageBodies.length, 1, 'Guide never holds a send');
+  assert.equal(c.rec.messageBodies[0].text, `${INTENT_LEADS.shape}\n\n${SHAPER_TEXT}`);
+  assert.deepEqual(c.requests.filter((r) => r.includes('/guide/')), ['PUT /api/shape/guide/prefs'], 'only the offer-seen save');
+});
+
+test('R-arch-1: with the flag off the docked composer with the Shaper pin has no switch, no line and no Guide request', async (t) => {
+  const c = await composer(t, { flag: false });
+  await dock(c);
+  await c.send(SHAPER_TEXT);
+  assert.equal(c.doc.querySelector('.ask-guide, .ask-guide-sw'), null);
+  assert.deepEqual(c.requests.filter((r) => /guide/i.test(r)), []);
 });

@@ -25,7 +25,7 @@ const { addProject } = await import('../src/core/projects.mjs');
 const { getDb, _resetForTests } = await import('../src/core/db.mjs');
 const { projectKey } = await import('../src/core/store.mjs');
 const { HELPER_JOBS, DESIGN_JOBS } = await import('../src/shared/model-jobs.mjs');
-const { roleOfJob } = await import('../src/shared/model-roles.mjs');
+const { roleOfJob, jobSlot, SLOT_ROLES } = await import('../src/shared/model-roles.mjs');
 const { JOB_LABELS, DESIGN_ROW_LABELS, utilityId } = await import('../ui/public/engine-settings-view.mjs');
 
 after(() => {
@@ -60,6 +60,22 @@ test('model-jobs: the helper and Design job tables match the Settings rows they 
   }
   assert.deepEqual(HELPER_JOBS.codex.map((j) => j.key), ['title', 'classifier', 'overview', 'prDescription', 'memoryDefrag', 'workspaceScan', 'secondOpinion']);
   assert.deepEqual(DESIGN_JOBS.map((j) => [j.key, j.label]), Object.entries(DESIGN_ROW_LABELS));
+});
+
+test('R-arch-7: the Guide helper job: Claude only, the quick role, shown with shaperSmallRuns, stored under guideModel', () => {
+  const job = HELPER_JOBS.claude.find((j) => j.key === 'guide');
+  assert.ok(job, 'HELPER_JOBS.claude has "guide"');
+  assert.deepEqual({ ...job }, { key: 'guide', label: 'Guide', settingId: 'models.claude.utility.guide', role: 'quick', flag: 'shaperSmallRuns' });
+  assert.equal(jobSlot('claude', 'guide'), 'guideModel');
+  assert.equal(SLOT_ROLES.guideModel, 'quick');
+  assert.equal(HELPER_JOBS.codex.some((j) => j.key === 'guide'), false);
+});
+
+test('modelUses / clearModelUses: the Guide pick is a use named "Guide", and a clear removes it', async () => {
+  writeSettings({ guideModel: { model: 'm7', effort: 'high' } });
+  assert.deepEqual((modelUses({ projects: false }).m7 || []).map((u) => [u.kind, u.engine, u.key, u.label]), [['helper', 'claude', 'guide', 'Guide']]);
+  assert.equal(await clearModelUses('m7'), 1);
+  assert.equal('guideModel' in readBack(), false);
 });
 
 test('modelUses: every user-level job naming a model, keyed by the lower-cased id, with its label', () => {

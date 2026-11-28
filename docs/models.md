@@ -450,6 +450,7 @@ their factory default applies to role reviews only:
 | Models › Jobs › Steps › Requirements Review | role reviews of the requirements (Shaper with requirements first) | Sonnet 5.5 · medium |
 | Models › Jobs › Helper jobs › Second-opinion reviewer | the one role a role review names as its second opinion (Shaper's Product reviewer) | Opus 5.5 · medium |
 | Models › Jobs › Helper jobs › Memory defragment | the Memory defragment run | Sonnet 5 |
+| Models › Jobs › Helper jobs › Guide | the quick check of a Shaper prompt in the chat composer (`shaperSmallRuns`) | the cheapest ready Claude model |
 | Settings › Runs › Workspaces | the workspace scan | your Everyday tasks role (else Sonnet 5 · medium), project agents `sonnet` · medium |
 
 The factory default comes after your role: a node pick, a project pick, your
@@ -794,6 +795,12 @@ free model touching only the pipeline steps. Command summaries' redaction is bes
 (token shapes and `Bearer` values, not a `--password foo` flag), and the Summarise commands
 switch in Settings › Chat turns the job off. A changed Command summaries model applies to new
 commands within a minute, while lines already written stay until a restart.
+
+*Guide* is the quick check of a Shaper prompt in the chat composer, listed under Helper jobs only
+while the shaperSmallRuns flag is on (`shaperSmallRuns`). It takes a model and an effort, on the
+Claude Code tile only (`guideModel`, user-level); unset, it runs on the cheapest ready Claude model
+at its lowest effort. Change it at Models › Jobs › Helper jobs › Guide: the composer's Guide switch
+names the model in its tooltip and follows a save without a reload.
 
 The *Requirements interview* helper (the Requirements page's product briefs, code looks and interview
 rounds) runs on Claude only and is set per user. Unlike Memory defragment, it takes an effort without a

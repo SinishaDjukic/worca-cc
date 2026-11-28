@@ -507,6 +507,13 @@ opacity 0.
 The lead row above the field holds the intent pin; with the Shaper pinned (and the `shaperSmallRuns` flag on) the role picker sits
 right after it: a `btn btn-sm btn-quiet` with the role's 14px icon, its name and a 12px `chevron-down`, opening the
 app menu. When the lead row would wrap, it folds to its icon and arrow (`.is-folded`); its name stays in `aria-label` and `title`.
+After the role picker sits the Guide switch (the app's switch, `.ask-guide-sw`, labelled "Guide"; its tooltip names the
+Guide model). The picker folds whenever the switch would sit on a second line, so pin, picker and switch share one line.
+Between the field and the bar sits one Guide line (`.ask-guide`, its words in `.ask-guide-t`): 32px plus its 1px
+`--line` divider (40px plus the divider on a coarse pointer), `--fs-meta` in `--ink-2`. It never wraps; its words end
+in an ellipsis. Its title reads "Sending works as it is." The first time, while the prompt is empty, it reads "New: Guide
+checks your idea for gaps before you send. Switch it off any time."; otherwise it is empty and keeps its height. With
+Guide switched off there is no line at all.
 #### Lock tip
 A locked small-runs **Create N PRs** says why in `.rd-tip` (`role="tooltip"`, named by the button's
 `aria-describedby`), never a native `title`, which opens over the status line. It has the Composer bar tip's look

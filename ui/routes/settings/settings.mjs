@@ -4,7 +4,7 @@ import { resolveAgentGenModel } from '../../../src/core/agent-gen.mjs';
 import { AUTO_MODEL_ENV, resolveAutoModel } from '../../../src/core/auto/model.mjs';
 import { brokerEnabled, brokerInfo, personSlots } from '../../../src/core/broker-client.mjs';
 import { modelSlot } from '../../../src/core/broker-routing.mjs';
-import { listModels, modelCostConfig } from '../../../src/core/config.mjs';
+import { enginesOfModel, listModels, modelCostConfig } from '../../../src/core/config.mjs';
 import { factoryModelsPayload } from '../../../src/core/factory-models.mjs';
 import { allFlags, flagEnabled } from '../../../src/core/flags.mjs';
 import { refreshSecretsStatus } from './secrets.mjs';
@@ -24,8 +24,10 @@ import { syncPluginSlots } from '../../../src/core/plugin-broker-slots.mjs';
 import { resolvePrDescriptionModel } from '../../../src/core/pr-description.mjs';
 import { listProjects, normalizeProjectPath } from '../../../src/core/projects.mjs';
 import { DEFAULT_INTERVIEW_EFFORT, requirementsModel } from '../../../src/core/requirements/interview.mjs';
-import { settingsErrorReply } from '../../../src/core/settings-errors.mjs';
-import { actionsSettings, agentGenModel as storedAgentGenModel, askEngineSetting, askMaxBudgetUsd, askMaxTurns, askModelsSetting, askWeb, chatLinksInPanel, autoGeneratePrDescription, autoTestWorkers, autoWorkflowModel as storedAutoWorkflowModel, chatPrefs, commandSummaryModel as storedCommandSummaryModel, costLimitResetPeriod, debugSpawnEnabled as storedDebugSpawnEnabled, defaultProjectsRoot, designModelsSetting, defaultRoot, dockerSandboxSettingRaw, e2bIntSettingRaw, effectiveDebugSpawn, execEnvSetting, getWorcaRoot, hideBuiltinEngines, hideBuiltinModels, humanRateUsdPerHour, keepAwakeEnabled, memoryCaps, memoryDefragModel, modelRolesSetting, namingModel as storedNamingModel, networkWaitSettings, nightModeSettings, nightModeToggle, nightModeToggleFor, pipelineCostLimitUsd, prDescriptionModel as storedPrDescriptionModel, rawProjectsRoot, requirementsInterviewSetting, resumeAfterUsageLimit, runEngineSetting, runLimits, scheduleDefaults, screensaverSettings, secondOpinionModelSetting, smartNaming, stepModelsSetting, syncDefaults, theme as storedTheme, titleModel as storedTitleModel, totalCostLimitUsd, updateCheckEnabled, userEnforceTags, userTagDimensions, utilityModelsSetting, workspaceScanModels } from '../../../src/core/settings.mjs';
+import { asSettingsField, settingsErrorReply } from '../../../src/core/settings-errors.mjs';
+import { resolveGuideModel } from '../../../src/core/guide-model.mjs';
+import { engineLabel } from '../../../src/shared/engine-switch.mjs';
+import { actionsSettings, agentGenModel as storedAgentGenModel, askEngineSetting, askMaxBudgetUsd, askMaxTurns, askModelsSetting, askWeb, chatLinksInPanel, autoGeneratePrDescription, autoTestWorkers, autoWorkflowModel as storedAutoWorkflowModel, chatPrefs, commandSummaryModel as storedCommandSummaryModel, assertGuideModelInput, guideModel as storedGuideModel, setGuideModel, costLimitResetPeriod, debugSpawnEnabled as storedDebugSpawnEnabled, defaultProjectsRoot, designModelsSetting, defaultRoot, dockerSandboxSettingRaw, e2bIntSettingRaw, effectiveDebugSpawn, execEnvSetting, getWorcaRoot, hideBuiltinEngines, hideBuiltinModels, humanRateUsdPerHour, keepAwakeEnabled, memoryCaps, memoryDefragModel, modelRolesSetting, namingModel as storedNamingModel, networkWaitSettings, nightModeSettings, nightModeToggle, nightModeToggleFor, pipelineCostLimitUsd, prDescriptionModel as storedPrDescriptionModel, rawProjectsRoot, requirementsInterviewSetting, resumeAfterUsageLimit, runEngineSetting, runLimits, scheduleDefaults, screensaverSettings, secondOpinionModelSetting, smartNaming, stepModelsSetting, syncDefaults, theme as storedTheme, titleModel as storedTitleModel, totalCostLimitUsd, updateCheckEnabled, userEnforceTags, userTagDimensions, utilityModelsSetting, workspaceScanModels } from '../../../src/core/settings.mjs';
 import { describeTitleModel } from '../../../src/core/title.mjs';
 import process from 'node:process';
 import { whereWorcaRuns } from '../../../src/core/security-posture.mjs';
@@ -217,6 +219,24 @@ async function commandSummaryModelState() {
   return { commandSummaryModel: stored, commandSummaryModelEffective: resolveNamingModel(withRole(stored, 'claude', 'commandSummaryModel', { floor: false }), await listModels(''), modelCostConfig) };
 }
 
+/** Models › Jobs › Helper jobs › Guide (flag shaperSmallRuns): the stored pair + what a check will run on; {} while off. */
+async function guideModelState() {
+  if (!flagEnabled('shaperSmallRuns')) return {};
+  return { guideModel: storedGuideModel(), guideModelEffective: resolveGuideModel(await listModels(''), modelCostConfig) };
+}
+
+/** POST /api/settings' guideModel check, before any write: a Claude-only slot (the helper jobs' refusal), then the pair. */
+async function assertGuideModelBody(value) {
+  const models = await listModels('');
+  asSettingsField('guideModel', () => {
+    const id = value && typeof value === 'object' ? String(value.model ?? '').trim() : '';
+    const harnesses = id ? enginesOfModel(id) : null;   // null: no catalog knows the id, the pair check decides
+    if (harnesses && !harnesses.includes('claude')) throw new Error(`guideModel: "${id}" runs on ${harnesses.map(engineLabel).join(' or ')}. This setting picks a model Claude Code can run`);
+    assertGuideModelInput(value, models);
+  });
+  return models;
+}
+
 app.get('/api/credentials', async (req, res) => {
   if (!brokerEnabled()) return res.json({ enabled: false });
   try {
@@ -244,7 +264,7 @@ app.get('/api/credentials', async (req, res) => {
 
 app.get('/api/settings', async (req, res) => {
   const person = awayPersonOf(req);   // B4: a signed-in person sees their own Away switch
-  res.json({ ...settingsState(), ...(person ? { nightModeToggle: nightModeToggleFor(person), nightModePerPerson: person } : {}), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), ...(await namingModelState()), ...(await commandSummaryModelState()), ...(await requirementsInterviewState()), chat: chatPrefs(), app: APP_INFO });
+  res.json({ ...settingsState(), ...(person ? { nightModeToggle: nightModeToggleFor(person), nightModePerPerson: person } : {}), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), ...(await namingModelState()), ...(await commandSummaryModelState()), ...(await guideModelState()), ...(await requirementsInterviewState()), chat: chatPrefs(), app: APP_INFO });
 });
 
 app.post('/api/settings', async (req, res) => {
@@ -258,9 +278,12 @@ app.post('/api/settings', async (req, res) => {
   if (!(await requireFsAllowed(req, res, [has('root') ? normalizeProjectPath(body.root) : null,
     has('projectsRoot') ? normalizeProjectPath(body.projectsRoot) : null]))) return;
   try {
+    // Guide's model (flag shaperSmallRuns; ignored while off): checked before any write, written after the rest.
+    const guideModels = has('guideModel') && flagEnabled('shaperSmallRuns') ? await assertGuideModelBody(body.guideModel) : null;
     const { actionsWarnings } = await applySettingsPatch(body, { person: awayPersonOf(req) });
+    if (guideModels) await asSettingsField('guideModel', () => setGuideModel(body.guideModel, { models: guideModels }));
     refreshSecretsStatus(); // a save may have turned the secretVault flag on; fire and forget
-    res.json({ ...settingsState(), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), ...(await namingModelState()), ...(await commandSummaryModelState()), ...(await requirementsInterviewState()), chat: chatPrefs(),
+    res.json({ ...settingsState(), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), ...(await namingModelState()), ...(await commandSummaryModelState()), ...(await guideModelState()), ...(await requirementsInterviewState()), chat: chatPrefs(),
       ...(actionsWarnings ? { actionsWarnings } : {}) });
   } catch (err) {
     // 400 with the user's words and, when known, the body path of the bad field (#555).
