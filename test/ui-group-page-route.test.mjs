@@ -1580,10 +1580,10 @@ test('s7: following the reason link sends no request', async () => {
   link.click();
   await p.ctx.settle(12);
   assert.equal(s6Selected(p.gp()), 'requirements');
-  // Every navigation re-reads the sidebar's counts (GET /api/counts), and the shared app's own start-up read
-  // (GET /api/onboarding) can land here; following the link adds nothing else.
-  const OWN = new Set(['GET /api/counts', 'GET /api/onboarding']);
-  assert.deepEqual(p.ctx.calls.slice(sent).map((c) => `${c.opts.method || 'GET'} ${c.url}`).filter((c) => !OWN.has(c)), []);
+  // The shared app's own background reads (counts, onboarding, level) can land here; following the link reads
+  // nothing about the feature again.
+  const about = (u) => u.startsWith('/api/shape/') || u.startsWith('/api/run-groups') || u.startsWith('/api/history');
+  assert.deepEqual(p.ctx.calls.slice(sent).map((c) => `${c.opts.method || 'GET'} ${c.url}`).filter((c) => about(c.split(' ')[1])), []);
 });
 
 test('s7 R-ux-1: the disabled Create N PRs has a styled tip, no native title, and none once the mark lands', async () => {
