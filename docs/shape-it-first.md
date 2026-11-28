@@ -644,6 +644,17 @@ announced once to a screen reader, as in "Prompt 2 of 5, 3 gaps"; the same resul
 draft text to the Guide model set in Settings › Models before you press Send; switch Guide off to keep drafts local
 until Send.
 
+**Guide rows.** The fold opens onto the five checks. They are shut by default and no result opens or shuts them; once
+you open them, your next prompts show them open, and that choice is kept for you alone. An open gap has a hollow mark,
+its label, the model's question only where it adds to the label, and an Add button; a covered point has a tick and its
+label. Add opens one field under its row. Your answer joins the end of the prompt on its own line, after the question
+the row shows without its question mark ("Who receives the emails: customers who reset a password or sign up"), or
+after the label when the row shows none: "Who is it for: people on the team". Your own words stay as they are, and the
+point counts as covered at once. Enter moves on to the next open gap's field, or back to the prompt when none is left;
+Escape closes the field and returns to the prompt. A check result that lands while a field is open waits until it
+closes. A draft closed without Add (Escape, typing in the prompt, shutting the rows, Send) is dropped. Add is not
+announced: the moved focus and the fold's new words are its only confirmation. Send works as it is with a field open.
+
 ### The card's steps
 
 The feature has one card, and its step heads read as the card shows them:

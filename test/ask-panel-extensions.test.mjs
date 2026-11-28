@@ -368,11 +368,12 @@ function manualTimers() {
     },
   };
 }
-async function composer(t, { lead = null, flag = true, picker = true, guide = picker, pin = 'shape', guideOn = true, model = GUIDE_READ.model } = {}) {
+async function composer(t, { lead = null, flag = true, picker = true, guide = picker, pin = 'shape', guideOn = true, model = GUIDE_READ.model, rowsOpen = false } = {}) {
   _resetChatExtensions();
   _resetAnswerer();
   const rec = {};
   const requests = [];
+  const prefsPuts = [];    // the bodies of PUT /api/shape/guide/prefs
   const realFetch = globalThis.fetch;
   globalThis.fetch = async (url, init) => {
     requests.push(`${init?.method || 'GET'} ${url}`);
@@ -393,6 +394,7 @@ async function composer(t, { lead = null, flag = true, picker = true, guide = pi
     const { installGuideLine, loadGuide, saveGuidePrefs, checkGuide } = await import('../ui/public/chat/guide-line.mjs');
     const record = async (url, init) => {
       requests.push(`${init?.method || 'GET'} ${url}`);
+      if (url === '/api/shape/guide/prefs') prefsPuts.push(JSON.parse(init.body));
       if (url === '/api/shape/guide/check') {
         checks.push(JSON.parse(init.body));
         if (holding) {
@@ -404,7 +406,7 @@ async function composer(t, { lead = null, flag = true, picker = true, guide = pi
         }
         return { ok: true, status: 200, json: async () => CHECK_REPLY };
       }
-      return { ok: true, status: 200, json: async () => ({ ...GUIDE_READ, model, on: guideOn }) };
+      return { ok: true, status: 200, json: async () => ({ ...GUIDE_READ, model, on: guideOn, rowsOpen }) };
     };
     installGuideLine({
       intent, flagOn: () => flag, onFlagChange: () => () => {}, load: () => loadGuide(record), save: (patch) => saveGuidePrefs(patch, record),
@@ -446,7 +448,28 @@ async function composer(t, { lead = null, flag = true, picker = true, guide = pi
   const holdChecks = () => { holding = true; };
   const failChecks = (code) => { failing = code; };
   const line = () => ctx.doc.querySelector('.ask-guide');
-  return { ...ctx, rec, requests, intent, lead: lead0, send, settle, type, wait, checks, holdChecks, failChecks, line };
+  /** Click Send on the composer exactly as it stands: no input event first (that would close an open Add field). */
+  const sendAsIs = async () => {
+    assert.equal(ctx.doc.querySelector('.ask-send').disabled, false, 'Send is enabled');
+    ctx.doc.querySelector('.ask-send').click();
+    await settle();
+  };
+  /** Open the Guide rows with the fold (when shut), then activate the first gap's Add. */
+  const openAdd = async () => {
+    const fold = ctx.doc.querySelector('.ask-guide .ask-guide-fold');
+    assert.ok(fold, 'the result fold');
+    if (fold.getAttribute('aria-expanded') !== 'true') fold.click();
+    await settle();
+    const add = ctx.doc.querySelector('.ask-guide-rows button[aria-label^="Add: "]');
+    assert.ok(add, 'a gap row\'s Add');
+    add.focus();
+    add.click();
+    await settle();
+    const input = ctx.doc.querySelector('.ask-guide-ans input');
+    assert.ok(input, 'the Add field');
+    return input;
+  };
+  return { ...ctx, rec, requests, prefsPuts, intent, lead: lead0, send, sendAsIs, openAdd, settle, type, wait, checks, holdChecks, failChecks, line };
 }
 
 for (const [row, saved, want] of [
@@ -625,13 +648,22 @@ for (const [row, arrange, painted, opts = {}] of [
   ['failure', failedCheck('GUIDE_MODEL_FAILED'), failurePainted('Guide is not answering right now.', 'Try again')],
   // R-ux-4's example: with the Guide model unset, the line offers "Open Models" and Send still works.
   ['no model', failedCheck('GUIDE_NO_MODEL'), failurePainted('Guide has no model to run on.', 'Open Models'), { model: null }],
+  // Slice 7: an open Add field. `sendAsIs` clicks Send with no input event, so the field is still open at the click.
+  ['add open', async (c) => { c.type(SHAPER_TEXT); await c.wait(); await c.openAdd(); },
+    (c) => { assert.equal(foldText(c), GAPS); assert.ok(c.doc.querySelector('.ask-guide-ans input'), 'the Add field is open'); },
+    { sendAsIs: true }],
 ]) {
   test(`the Send table, ${row}: Send stays on, one message goes out with the person's words, and no check follows`, async (t) => {
-    const c = await composer(t, opts);
+    const { sendAsIs = false, ...composerOpts } = opts;
+    const c = await composer(t, composerOpts);
     await arrange(c);
     painted(c);
     const before = c.checks.length;
-    await c.send(SHAPER_TEXT);         // asserts Send is enabled
+    if (sendAsIs) {
+      assert.ok(c.doc.querySelector('.ask-guide-ans input'), 'open right before the click');
+      await c.sendAsIs();              // asserts Send is enabled
+    } else await c.send(SHAPER_TEXT);  // asserts Send is enabled
+    assert.equal(c.doc.querySelector('.ask-guide-ans'), null, 'no Add field after the send');
     assert.equal(c.rec.messageBodies?.length, 1, 'exactly one message');
     assert.equal(c.rec.messageBodies[0].text, `${INTENT_LEADS.shape}\n\n${SHAPER_TEXT}`);
     assert.equal(c.doc.querySelector('.ask-user-bubble').textContent, SHAPER_TEXT);
@@ -640,3 +672,73 @@ for (const [row, arrange, painted, opts = {}] of [
     assert.doesNotMatch(c.line()?.textContent ?? '', /Prompt|checking|not answering|no model/i, 'nothing of the sent prompt stays on the line');
   });
 }
+
+// Slice 7: the check rows and Add in the real panel, main and docked.
+const pressInField = (c, input, key) => {
+  const e = new c.window.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+  input.dispatchEvent(e);
+  return e;
+};
+
+for (const where of ['main', 'docked']) {
+  test(`R-po-3, the ${where} chat: Enter in an Add field adds "<question>: <answer>" and sends nothing; Send then carries it`, async (t) => {
+    const c = await composer(t, {});
+    if (where === 'docked') await dock(c);
+    c.type(SHAPER_TEXT);
+    await c.wait();
+    const input = await c.openAdd();
+    input.value = 'people on the team';
+    input.dispatchEvent(new c.window.Event('input', { bubbles: true }));
+    pressInField(c, input, 'Enter');
+    await c.settle();
+    const prompt = c.doc.querySelector('.ask-input');
+    assert.equal(prompt.value, `${SHAPER_TEXT}\nq: people on the team`);
+    assert.equal(c.rec.messageBodies, undefined, 'Enter in an Add field never sends');
+    assert.equal(foldText(c), 'Prompt 3/5 · 2 gaps');
+    assert.equal(c.doc.activeElement, c.doc.querySelector('.ask-guide-ans input'), 'on to the next gap\'s field');
+    await c.sendAsIs();
+    assert.equal(c.rec.messageBodies?.length, 1, 'exactly one message');
+    assert.equal(c.rec.messageBodies[0].text, `${INTENT_LEADS.shape}\n\n${SHAPER_TEXT}\nq: people on the team`);
+    assert.equal(c.doc.querySelector('.ask-guide-ans, .ask-guide-rows'), null, 'nothing of the sent prompt stays');
+  });
+}
+
+test('R-qa-3, the docked chat: Escape in an Add field closes only the field and focuses the prompt; the dock stays open', async (t) => {
+  const c = await composer(t, {});
+  await dock(c);
+  c.type(SHAPER_TEXT);
+  await c.wait();
+  const input = await c.openAdd();
+  assert.equal(c.doc.activeElement, input);
+  let outer = 0;
+  c.doc.addEventListener('keydown', (e) => { if (e.key === 'Escape') outer += 1; });   // the page's own Escape handlers
+  const e = pressInField(c, input, 'Escape');
+  await c.settle();
+  assert.equal(c.doc.querySelector('.ask-guide-ans'), null);
+  assert.equal(c.doc.activeElement, c.doc.querySelector('.ask-input'));
+  assert.equal(e.defaultPrevented, true);
+  assert.equal(outer, 0, 'the Escape goes no further');
+  assert.equal(c.panel.isOpen(), true, 'the dock is still open');
+  assert.equal(c.doc.querySelector('.ask-guide-rows')?.hidden, false, 'the rows stay open');
+});
+
+test('R-ux-5: a click on the fold PUTs rowsOpen:true, and a new composer whose read answers it shows its first result open', async (t) => {
+  const rowsPuts = (c) => c.prefsPuts.filter((p) => 'rowsOpen' in p);
+  const c = await composer(t, {});
+  c.type(SHAPER_TEXT);
+  await c.wait();
+  const rows = () => c.doc.querySelector('.ask-guide-rows');
+  assert.equal(rows()?.hidden, true, 'shut on arrival');
+  assert.equal(c.line().nextElementSibling, rows(), 'right under the line');
+  assert.ok(rows().nextElementSibling.matches('.ask-composer-row[data-bar="compact"]'), 'right before the bar');
+  c.doc.querySelector('.ask-guide .ask-guide-fold').click();
+  await c.settle();
+  assert.equal(rows().hidden, false);
+  assert.deepEqual(rowsPuts(c), [{ rowsOpen: true }]);
+  const next = await composer(t, { rowsOpen: true });
+  next.type(SHAPER_TEXT);
+  await next.wait();
+  assert.equal(next.doc.querySelector('.ask-guide-rows')?.hidden, false, 'arrives open');
+  assert.equal(next.doc.querySelector('.ask-guide .ask-guide-fold').getAttribute('aria-expanded'), 'true');
+  assert.deepEqual(rowsPuts(next), [], 'arriving saves nothing');
+});

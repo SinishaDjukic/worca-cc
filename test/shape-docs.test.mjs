@@ -679,3 +679,21 @@ test('slice 6: Guide checks names both failure lines and their actions, and the 
   assert.deepEqual(missing(bar, ['Guide is not answering right now.', 'Guide has no model to run on.', '.btn.btn-sm.btn-quiet']), []);
   assert.doesNotMatch(bar, HOME_PATH);
 });
+
+// Shaper ask screens, slice 7: the check rows under the fold, and Add.
+test('slice 7: a Guide rows paragraph, right after Guide checks, says the rows are shut, what Add writes, and the keys', () => {
+  const small = section(read('shape-it-first.md'), 'Small runs (`shaperSmallRuns`)');
+  const paragraphs = small.split(/\n\s*\n/).map((p) => p.trim());
+  const checks = paragraphs.findIndex((p) => p.startsWith('**Guide checks.**'));
+  const text = flat(paragraphs[checks + 1] || '');
+  assert.ok(text.startsWith('**Guide rows.**'), 'a "**Guide rows.**" paragraph after **Guide checks.**');
+  assert.deepEqual(missing(text, ['Who is it for: people on the team', /question mark/i, /shut/, /Escape/, /dropped/]), []);
+  assert.doesNotMatch(text, /small runs/i);
+  assert.doesNotMatch(text, HOME_PATH);
+});
+
+test('slice 7: the design system\'s Composer bar part describes the Guide rows pattern', () => {
+  const bar = designPart('Composer bar');
+  assert.deepEqual(missing(bar, ['.ask-guide-rows', '.ask-guide-ans', '--ink-2', 'Add: who is it for']), []);
+  assert.doesNotMatch(bar, HOME_PATH);
+});

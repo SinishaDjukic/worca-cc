@@ -123,12 +123,14 @@ test('R-qa-9 / R-arch-5: the on, offerSeen and rowsOpen writes keep the role, an
   assert.equal((await putPrefs({ offerSeen: true })).status, 200);
   assert.deepEqual(record(), { lead: 'compliance', note: 'kept', guideOn: false, guideOfferSeen: true });
   assert.equal((await putPrefs({ rowsOpen: true })).status, 200);
-  assert.equal(record().lead, 'compliance');
+  const kept = { note: 'kept', guideOn: false, guideOfferSeen: true, guideRowsOpen: true };
+  assert.deepEqual(record(), { lead: 'compliance', ...kept }, 'the rowsOpen write keeps the role, on and offerSeen');
 
   assert.equal((await putLead('ux')).status, 200);   // the lead key of "Design"
   assert.deepEqual(prefsOf(await guide()), { on: false, offerSeen: true, rowsOpen: true });
-  assert.equal(record().lead, 'ux');
+  assert.deepEqual(record(), { lead: 'ux', ...kept }, 'the role write keeps rowsOpen');
   assert.equal((await putLead(null)).status, 200);
+  assert.deepEqual(record(), kept, 'the role clear keeps rowsOpen');
   assert.deepEqual(prefsOf(await guide()), { on: false, offerSeen: true, rowsOpen: true });
   assert.deepEqual(await (await fetch(`${base}/api/answerer`)).json(), { lead: null }, 'the profile route answers the lead only');
 }));
@@ -151,8 +153,8 @@ test('per person: a write for one signed-in name leaves another at the defaults'
   process.env.WORCA_IDENTITY_HEADER = 'x-test-user';
   process.env.WORCA_IDENTITY_TRUSTED_PROXIES = '127.0.0.1,::1';
   try {
-    assert.equal((await putPrefs({ on: false, offerSeen: true }, { 'x-test-user': 'Ada@example.com' })).status, 200);
-    assert.deepEqual(prefsOf(await guide({ 'x-test-user': 'ada@example.com' })), { on: false, offerSeen: true, rowsOpen: false });
+    assert.equal((await putPrefs({ on: false, offerSeen: true, rowsOpen: true }, { 'x-test-user': 'Ada@example.com' })).status, 200);
+    assert.deepEqual(prefsOf(await guide({ 'x-test-user': 'ada@example.com' })), { on: false, offerSeen: true, rowsOpen: true });
     assert.deepEqual(prefsOf(await guide({ 'x-test-user': 'bob@example.com' })), DEFAULTS);
   } finally { delete process.env.WORCA_IDENTITY_HEADER; delete process.env.WORCA_IDENTITY_TRUSTED_PROXIES; }
   assert.deepEqual(prefsOf(await guide()), DEFAULTS, 'the local record is untouched');

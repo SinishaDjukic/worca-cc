@@ -22,7 +22,9 @@ import {
 import * as guide from '../ui/public/chat/guide-line.mjs';
 import { createIntentAddon, INTENTS } from '../ui/public/chat/intent.mjs';
 import { icon } from '../ui/public/icons.mjs';
-import { GUIDE_CHECK_IDS, GUIDE_CHECK_LABELS, GUIDE_PROMPT_MAX, GUIDE_SIZES } from '../src/shared/prompt-check/assessment.mjs';
+import {
+  GUIDE_CHECK_IDS, GUIDE_CHECK_LABELS, GUIDE_DEFAULT_QUESTIONS, GUIDE_PROMPT_MAX, GUIDE_SIZES,
+} from '../src/shared/prompt-check/assessment.mjs';
 // A namespace read, so a missing new export (layoutWraps) fails only its own test.
 import * as rolePicker from '../ui/public/chat/role-picker.mjs';
 import { composerAddons, _resetChatExtensions } from '../ui/public/chat/extensions.mjs';
@@ -1302,8 +1304,11 @@ test('R-po-2 example: "Export runs as CSV" reads "Prompt 2/5 · 3 gaps" on a rea
   assert.equal(b.getAttribute('aria-expanded'), 'true');
   b.click();
   assert.equal(b.getAttribute('aria-expanded'), 'false');
-  assert.equal(s.doc.querySelector('.ask-guide-rows'), null, 'no rows yet');
-  assert.ok(s.line().nextElementSibling.matches('.ask-composer-row[data-bar="compact"]'), 'the line stays right before the bar');
+  const rows = s.doc.querySelector('.ask-guide-rows');
+  assert.ok(rows, 'the rows region');
+  assert.equal(rows.hidden, true, 'shut again');
+  assert.equal(s.line().nextElementSibling, rows, 'the rows sit right under the line');
+  assert.ok(rows.nextElementSibling.matches('.ask-composer-row[data-bar="compact"]'), 'and right before the bar');
 });
 
 test('the fold is the app\'s one fold() with the app\'s icon set', () => {
@@ -1877,4 +1882,822 @@ test('app.js installs Guide once, after the role picker and before the panel, an
   assert.ok(calls[0].index > app.indexOf('installRolePicker({ intent: chatIntent })'), 'after the role picker');
   assert.ok(calls[0].index < app.indexOf('askPanel = createAskPanel('), 'before createAskPanel');
   assert.match(app, /\brefreshGuideLine\(\)/);
+});
+
+// ── slice 7: the check rows and Add ──
+// The result fold opens onto the five checks, shut by default and opened only by the person (remembered per person). An
+// open gap has the hollow mark and its Add. Add writes "<question>: <answer>" into the prompt, with the question the row
+// shows, without its closing question mark; a row that shows only its label (no question, or a default one) writes the
+// label. The row is covered at once. While an Add field is open, results are held.
+const XSS = '<img src=x onerror=alert(1)>';
+const TEAM = 'people on the team';
+const SIZE_SMALL = 'Clear enough · Small: one run';
+const THREE_OF_FIVE = 'Prompt 3/5 · 2 gaps';
+/** The model's own questions. `done` has none of its own, so the route fills in the default one. */
+const MODEL_QUESTIONS = Object.freeze({
+  who: 'Who receives the emails?', what: 'What lands in their inbox?', trigger: 'A reset, a sign-up, a schedule?',
+  limits: 'How many emails a day at most?',
+});
+
+/** The check route's body for a plain-register lead (Product): by default "What starts it" and "Limits" are covered. */
+function product({ covered = ['trigger', 'limits'], questions = {}, size = 'large' } = {}) {
+  const checks = GUIDE_CHECK_IDS.map((id) => {
+    const met = covered.includes(id);
+    const asked = Object.hasOwn(questions, id) ? questions[id] : MODEL_QUESTIONS[id] ?? GUIDE_DEFAULT_QUESTIONS.plain[id];
+    return { id, label: GUIDE_CHECK_LABELS.plain[id], covered: met, question: met ? '' : asked };
+  });
+  return { register: 'plain', size, checks, model: { id: 'claude-haiku-5-5', label: 'Haiku 5.5' } };
+}
+
+const rowsEl = (s) => s.doc.querySelector('.ask-guide-rows');
+const rowOf = (s, id) => rowsEl(s)?.querySelector(`[data-check="${id}"]`) ?? null;
+const markOf = (row) => row.querySelector(':scope > .plan-check-mark');
+const detailOf = (row) => row.querySelector('.plan-check-detail');
+const addBtn = (s, id) => rowOf(s, id)?.querySelector(':scope > button.btn-quiet') ?? null;
+const field = (s) => s.doc.querySelector('.ask-guide-ans input');
+const fieldCheck = (s) => field(s)?.closest('[data-check]')?.dataset.check ?? null;
+const fields = (s) => s.doc.querySelectorAll('.ask-guide-ans').length;
+const rowsSaves = (s) => s.calls.save.filter((p) => 'rowsOpen' in p);
+
+/** The rows are there, in the state `open`, and the fold says so. */
+function assertRows(s, open, why = '') {
+  assert.ok(rowsEl(s), `${why}: the rows region`);
+  assert.equal(rowsEl(s).hidden, !open, `${why}: ${open ? 'open' : 'shut'}`);
+  assert.equal(s.fold()?.getAttribute('aria-expanded'), String(open), `${why}: aria-expanded`);
+}
+
+/** A result on the line with its rows opened by a click on the fold. */
+async function withRows(body = product(), opts = {}) {
+  const s = await withResult(body, opts);
+  s.fold().click();
+  await settle();
+  assertRows(s, true, 'after a click on the fold');
+  return s;
+}
+
+/** The person activates a gap row's Add; returns the field that opens. */
+async function openAdd(s, id) {
+  const b = addBtn(s, id);
+  assert.ok(b, `the Add on "${id}"`);
+  b.focus();
+  b.click();
+  await settle();
+  assert.ok(field(s), `a field after Add on "${id}"`);
+  return field(s);
+}
+
+/** The person types in the open Add field. */
+function typeAnswer(s, value) {
+  const input = field(s);
+  assert.ok(input, 'an open Add field');
+  input.value = value;
+  input.dispatchEvent(new s.win.Event('input', { bubbles: true }));
+}
+
+/** A key in the open Add field; returns the event. */
+function pressIn(s, init) {
+  const e = new s.win.KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init });
+  assert.ok(field(s), 'an open Add field');
+  field(s).dispatchEvent(e);
+  return e;
+}
+
+/** Type an answer into the open field and press Enter. */
+async function answerWith(s, value) {
+  typeAnswer(s, value);
+  pressIn(s, { key: 'Enter' });
+  await settle();
+}
+
+const escape = async (s) => { const e = pressIn(s, { key: 'Escape' }); await settle(); return e; };
+
+/** Count the calls of the composer's ctx.focus (which focuses the prompt field). */
+function focusSpy(s) {
+  let n = 0;
+  const real = s.ctx.focus;
+  s.ctx.focus = () => { n += 1; real(); };
+  return () => n;
+}
+
+/** An open Add field on "Who is it for" while the check of LONGER (call 1) is still out. */
+async function fieldOpenMidCheck(opts = {}) {
+  const s = await withRows(product(), opts);
+  s.type(LONGER);
+  await s.wait();
+  assert.equal(s.checks.length, 2, 'the re-check is out');
+  await openAdd(s, 'who');
+  typeAnswer(s, 'people on');
+  return s;
+}
+
+// ── the pure helpers ──
+test('slice 7: the Add words, and each Add button\'s own name from its label', () => {
+  assert.equal(guide.ADD_TEXT, 'Add');
+  assert.equal(guide.ADD_PLACEHOLDER, 'Your answer');
+  assert.equal(guide.addName('Who is it for'), 'Add: who is it for');
+  assert.equal(guide.addName('Acceptance checks'), 'Add: acceptance checks');
+});
+
+test('shownQuestion: a question shows only where it adds: never a default of either register, never on a covered check', () => {
+  for (const id of GUIDE_CHECK_IDS) {
+    for (const register of ['plain', 'technical']) {
+      assert.equal(guide.shownQuestion({ id, covered: false, question: GUIDE_DEFAULT_QUESTIONS[register][id] }), '', `${register} ${id}`);
+    }
+    assert.equal(guide.shownQuestion({ id, covered: false, question: '' }), '', `${id}: no question`);
+    assert.equal(guide.shownQuestion({ id, covered: true, question: 'Who receives the emails?' }), '', `${id}: covered`);
+    assert.equal(guide.shownQuestion({ id, covered: false, question: 'Who receives the emails?' }), 'Who receives the emails?', id);
+  }
+});
+
+test('addLine: "<head>: <answer>", the answer trimmed and its whitespace runs collapsed to one space', () => {
+  assert.equal(guide.addLine('Who is it for', '  people  on the team '), 'Who is it for: people on the team');
+  assert.equal(guide.addLine('Limits', 'ten a day,\n\tnever at night'), 'Limits: ten a day, never at night');
+});
+
+test('appendAnswer: nothing in front of an empty prompt or after a line break, else one line break; the prompt is untouched', () => {
+  const line = 'Who is it for: people on the team';
+  assert.equal(guide.appendAnswer('', line), line);
+  assert.equal(guide.appendAnswer('Export runs\n', line), `Export runs\n${line}`);
+  assert.equal(guide.appendAnswer('Export runs', line), `Export runs\n${line}`);
+  assert.equal(guide.appendAnswer('Export runs  ', line), `Export runs  \n${line}`, 'trailing spaces are kept');
+});
+
+test('withAnswered: a copy with those checks covered and without a question; the input is never changed', () => {
+  const body = product();
+  const before = structuredClone(body);
+  const got = guide.withAnswered(body, new Set(['who']));
+  assert.deepEqual(body, before, 'the input is as it was');
+  assert.notEqual(got, body);
+  assert.deepEqual(got.checks.map((c) => [c.id, c.covered]),
+    [['who', true], ['what', false], ['trigger', true], ['limits', true], ['done', false]]);
+  assert.equal(got.checks[0].question, '');
+  assert.equal(got.checks[0].label, 'Who is it for');
+  assert.equal(got.checks[1].question, MODEL_QUESTIONS.what);
+  assert.equal(got.size, body.size);
+});
+
+// ── the rows under the fold: shut by default, opened only by the person ──
+test('R-ux-5: a result arrives with the rows shut, right under the line and outside it', async () => {
+  const s = await withResult(product());
+  assertRows(s, false, 'a new result');
+  const rows = rowsEl(s);
+  assert.ok(rows.matches('.ask-composer-box > div.ask-guide-rows.srows'));
+  assert.equal(s.line().nextElementSibling, rows, 'right after the line');
+  assert.ok(rows.nextElementSibling.matches('.ask-composer-row[data-bar="compact"]'), 'right before the bar');
+  assert.equal(s.line().contains(rows), false, 'never inside the line');
+  assert.equal(rows.children.length, 1);
+  assert.ok(rows.firstElementChild.matches('div.plan-checks'));
+  s.handle.update(null);
+  await settle();
+  assert.equal(s.doc.querySelectorAll('.ask-guide-rows').length, 1, 'a repaint adds no second region');
+  assert.equal(s.line().nextElementSibling, rowsEl(s));
+  assert.deepEqual(rowsSaves(s), [], 'a result saves nothing about the rows');
+});
+
+test('R-ux-5: a click on the fold shows the five rows and saves rowsOpen:true once; a second click shuts them and saves false', async () => {
+  const s = await withResult(product());
+  s.fold().click();
+  await settle();
+  assertRows(s, true, 'opened');
+  assert.deepEqual([...rowsEl(s).querySelectorAll('[data-check]')].map((r) => r.dataset.check), [...GUIDE_CHECK_IDS], 'in the checks\' order');
+  assert.deepEqual(rowsSaves(s), [{ rowsOpen: true }]);
+  assert.equal(s.ctl.prefs().rowsOpen, true);
+  s.handle.update(null);
+  await settle();
+  assert.deepEqual(rowsSaves(s), [{ rowsOpen: true }], 'a repaint saves nothing');
+  s.fold().click();
+  await settle();
+  assertRows(s, false, 'shut');
+  assert.deepEqual(rowsSaves(s), [{ rowsOpen: true }, { rowsOpen: false }]);
+  assert.equal(s.ctl.prefs().rowsOpen, false);
+});
+
+test('R-ux-5: no result opens or shuts the rows by itself: a re-check keeps the person\'s choice, open or shut', async () => {
+  const s = await withRows();
+  s.type(LONGER);
+  await s.wait();
+  assertRows(s, true, 'while re-checking');
+  await s.reply(1, product({ covered: [] }));
+  assertRows(s, true, 'a new result');
+  s.fold().click();
+  await settle();
+  s.type(PROMPT);
+  await s.wait();
+  await s.reply(2, product({ covered: ['who'] }));
+  assertRows(s, false, 'a new result');
+  assert.deepEqual(rowsSaves(s), [{ rowsOpen: true }, { rowsOpen: false }], 'only the two clicks saved');
+});
+
+test('R-ux-5: after a send, the next prompt\'s result arrives open', async () => {
+  const s = await withRows();
+  s.intentHandle.transformSend(s.input.value);
+  s.input.value = '';
+  s.handle.update(null);
+  await settle();
+  assert.equal(rowsEl(s), null, 'the send removes the rows');
+  s.type(LONGER);
+  await s.wait();
+  assert.equal(rowsEl(s), null, 'no rows while the first check is out');
+  await s.reply(1, product());
+  assertRows(s, true, 'the next prompt');
+});
+
+test('R-ux-5 example: a person opens the rows once; their next prompt arrives open, and for another person on the same host they arrive shut', async () => {
+  const profiles = { ada: { ...PREFS }, bob: { ...PREFS } };
+  const as = (who) => ({
+    load: () => Promise.resolve({ ...profiles[who] }),
+    save: (patch) => { Object.assign(profiles[who], patch); return Promise.resolve({ ...profiles[who] }); },
+  });
+  const first = await withResult(product(), as('ada'));
+  assertRows(first, false, 'the first time');
+  first.fold().click();
+  await settle();
+  assert.equal(profiles.ada.rowsOpen, true, 'the choice is saved');
+  first.handle.destroy();
+  const next = await withResult(product(), as('ada'));
+  assertRows(next, true, 'the same person\'s next prompt');
+  const other = await withResult(product(), as('bob'));
+  assertRows(other, false, 'another person');
+  assert.equal(profiles.bob.rowsOpen, false);
+});
+
+test('a fresh prefs read is the only other thing that opens the rows', async () => {
+  const s = await withResult(product());
+  assertRows(s, false, 'as loaded');
+  s.stored.rowsOpen = true;
+  s.ctl.refresh();
+  await settle();
+  assertRows(s, true, 'after the read');
+});
+
+test('a refused rowsOpen save keeps the rows open for this composer, with nothing said', async () => {
+  const s = await withRows(product(), { save: (patch) => ('rowsOpen' in patch ? Promise.reject(new Error('disk full')) : Promise.resolve({})) });
+  await settle();
+  assertRows(s, true, 'after the refusal');
+  s.type(LONGER);
+  await s.wait();
+  await s.reply(1, product({ covered: ['who'] }));
+  assertRows(s, true, 'the next result');
+  assert.doesNotMatch(s.doc.body.textContent, /disk full/);
+});
+
+for (const [name, leave] of [
+  ['"Clear enough"', async (s) => { s.type(LONGER); await s.wait(); await s.reply(1, answer(5, 'small')); }],
+  ['a failure', async (s) => { s.type(LONGER); await s.wait(); await s.refuse(1, 'GUIDE_MODEL_FAILED'); }],
+  ['a short prompt (the empty line)', async (s) => { s.type('Export'); await settle(); }],
+  ['Guide switched off', async (s) => { s.swInput().click(); await settle(); }],
+  ['the Shaper pin removed', async (s) => { s.intent.clear(); await settle(); }],
+  ['the flag turned off', async (s) => { s.setFlag(false); await settle(); }],
+  ['destroy()', async (s) => { s.handle.destroy(); }],
+]) {
+  test(`the rows exist only under a result fold: ${name} removes them and an open Add field`, async () => {
+    const s = await withRows();
+    await openAdd(s, 'who');
+    await leave(s);
+    assert.equal(rowsEl(s), null);
+    assert.equal(fields(s), 0);
+  });
+}
+
+// ── the rows: the hollow mark and Add for a gap, the tick and the label alone for a covered check ──
+test('R-ux-5: a gap row has the hollow mark named "open", its question only where it adds, and its own Add', async () => {
+  const s = await withRows();
+  for (const [id, label, question] of [
+    ['who', 'Who is it for', MODEL_QUESTIONS.who], ['what', 'What they get', MODEL_QUESTIONS.what], ['done', 'How you know it worked', null],
+  ]) {
+    const row = rowOf(s, id);
+    assert.equal(row.classList.contains('ok'), false, id);
+    const mark = markOf(row);
+    assert.ok(mark.matches('.plan-check-mark.is-wait'), `${id}: the waiting mark`);
+    assert.ok(mark.querySelector(':scope > .status-dot.is-grey-ring'), `${id}: the hollow ring`);
+    assert.equal(mark.querySelector('svg'), null, `${id}: no cross`);
+    assert.equal(mark.getAttribute('role'), 'img', id);
+    assert.equal(mark.getAttribute('aria-label'), 'open', id);
+    assert.equal(row.querySelector('.plan-check-text > .plan-check-label')?.textContent, label, id);
+    if (question) assert.equal(row.querySelector('.plan-check-text > .plan-check-detail')?.textContent, question, id);
+    else assert.equal(detailOf(row), null, `${id}: a default question only restates the label`);
+    const b = row.lastElementChild;
+    assert.ok(b.matches('button.btn.btn-sm.btn-quiet[type="button"]'), `${id}: the quiet small button`);
+    assert.equal(b.textContent, 'Add', id);
+    assert.equal(b.getAttribute('aria-label'), `Add: ${label.toLowerCase()}`, id);
+  }
+  assert.deepEqual([...rowsEl(s).querySelectorAll('button')].map((b) => b.getAttribute('aria-label')),
+    ['Add: who is it for', 'Add: what they get', 'Add: how you know it worked']);
+  assert.equal(fields(s), 0, 'no field until Add');
+});
+
+test('a covered row has the tick named "covered" and its label only', async () => {
+  const s = await withRows();
+  for (const [id, label] of [['trigger', 'What starts it'], ['limits', 'Limits']]) {
+    const row = rowOf(s, id);
+    assert.ok(row.classList.contains('ok'), id);
+    const mark = markOf(row);
+    assert.equal(mark.getAttribute('role'), 'img', id);
+    assert.equal(mark.getAttribute('aria-label'), 'covered', id);
+    assert.equal(mark.innerHTML, icon(s.doc, 'check', 12).outerHTML, `${id}: the app's tick`);
+    assert.equal(detailOf(row), null, id);
+    assert.equal(row.querySelector('button, input'), null, id);
+    assert.equal(row.textContent, label, id);
+  }
+});
+
+test('with no role the rows carry the technical labels, and each Add is named from its own', async () => {
+  const s = await withRows(answer(2));
+  assert.deepEqual([...rowsEl(s).querySelectorAll('.plan-check-label')].map((e) => e.textContent),
+    ['Who calls it', 'The behaviour', 'Trigger and scope', 'Constraints', 'Acceptance checks']);
+  assert.deepEqual([...rowsEl(s).querySelectorAll('button')].map((b) => b.getAttribute('aria-label')),
+    ['Add: trigger and scope', 'Add: constraints', 'Add: acceptance checks']);
+});
+
+test('a model question that is markup shows as those characters: in the row, the field\'s name and the prompt, with no element', async () => {
+  const s = await withRows(product({ questions: { who: XSS } }));
+  assert.equal(detailOf(rowOf(s, 'who')).textContent, XSS);
+  assert.equal(s.doc.querySelector('img'), null);
+  const input = await openAdd(s, 'who');
+  assert.equal(input.getAttribute('aria-label'), XSS);
+  assert.equal(s.doc.querySelector('img'), null);
+  await answerWith(s, TEAM);
+  assert.equal(s.input.value, `${PROMPT}\n${XSS}: ${TEAM}`, 'plain text in the field');
+  assert.equal(s.doc.querySelector('img'), null);
+});
+
+// ── Add ──
+test('Add opens one field in place of the row\'s button, focused, named by the question', async () => {
+  const s = await withRows();
+  const input = await openAdd(s, 'who');
+  assert.equal(s.doc.activeElement, input);
+  assert.ok(input.matches('.ask-guide-ans > input.input.input-sm[type="text"]'));
+  assert.equal(input.placeholder, 'Your answer');
+  assert.equal(input.getAttribute('aria-label'), MODEL_QUESTIONS.who);
+  assert.equal(input.value, '');
+  const row = rowOf(s, 'who');
+  assert.ok(row.lastElementChild.matches('span.ask-guide-ans'), 'the field ends the row');
+  assert.equal(row.querySelectorAll('button').length, 1, 'the quiet button is gone');
+  const b = row.querySelector('.ask-guide-ans > button');
+  assert.ok(b.matches('button.btn.btn-sm[type="button"]'));
+  assert.equal(b.classList.contains('btn-quiet'), false);
+  assert.equal(b.textContent, 'Add');
+  assert.equal(b.getAttribute('aria-label'), 'Add: who is it for');
+  assertRows(s, true, 'opening a field');
+});
+
+test('R-po-3 example: "people on the team" on "Who is it for" joins the prompt, the line reads 3/5, and the row is covered at once', async () => {
+  // The route's body when the model gave no question of its own: the row shows the label alone.
+  const s = await withRows(product({ questions: { who: GUIDE_DEFAULT_QUESTIONS.plain.who } }));
+  assert.equal(detailOf(rowOf(s, 'who')), null);
+  assert.equal(s.fold().textContent, GAPS);
+  let inputs = 0;
+  s.input.addEventListener('input', () => { inputs += 1; });
+  await openAdd(s, 'who');
+  assert.equal(inputs, 0, 'opening the field writes nothing');
+  await answerWith(s, TEAM);
+  assert.equal(s.input.value, `${PROMPT}\nWho is it for: people on the team`);
+  assert.equal(inputs, 1, 'one input event on the prompt field, so the composer refits and Send updates');
+  assert.equal(s.fold().textContent, THREE_OF_FIVE);
+  const row = rowOf(s, 'who');
+  assert.ok(row.classList.contains('ok'));
+  assert.equal(markOf(row).getAttribute('aria-label'), 'covered');
+  assert.equal(row.textContent, 'Who is it for', 'the label only');
+  assert.equal(row.querySelector('button, input'), null);
+  assert.equal(s.checks.length, 1, 'covered at once: no check was needed');
+  assert.deepEqual(s.spoken(), [SPOKEN], 'a local Add is not announced');
+  assertRows(s, true, 'after an Add');
+});
+
+for (const [name, question, head] of [
+  ['the question without its closing question mark (mock frame 9)', 'Who receives the emails?', 'Who receives the emails'],
+  ['only the closing question mark goes', 'Who? Which team?', 'Who? Which team'],
+  ['a question with no question mark is used as it is', 'Name the people who use it', 'Name the people who use it'],
+  ['a row with a default question shows only its label, so the label', GUIDE_DEFAULT_QUESTIONS.plain.who, 'Who is it for'],
+  ['the other register\'s default question is hidden too, so the label', GUIDE_DEFAULT_QUESTIONS.technical.who, 'Who is it for'],
+  ['a gap with no question uses the label', '', 'Who is it for'],
+]) {
+  test(`R-po-3, what Add writes: ${name}`, async () => {
+    const s = await withRows(product({ questions: { who: question } }));
+    await openAdd(s, 'who');
+    await answerWith(s, 'customers who reset a password or sign up');
+    assert.equal(s.input.value, `${PROMPT}\n${head}: customers who reset a password or sign up`);
+  });
+}
+
+test('the field\'s own Add button commits like Enter, with the answer trimmed to one line', async () => {
+  const s = await withRows();
+  await openAdd(s, 'who');
+  typeAnswer(s, '  people   on the team  ');
+  s.doc.querySelector('.ask-guide-ans > button').click();
+  await settle();
+  assert.equal(s.input.value, `${PROMPT}\nWho receives the emails: ${TEAM}`);
+  assert.equal(s.fold().textContent, THREE_OF_FIVE);
+});
+
+test('the person\'s words stay byte for byte in front of the added line, and a prompt ending in a line break gets no second one', async () => {
+  const typed = 'Export runs as CSV  \n\n- one file per project\n';
+  const s = setup();
+  await s.shaper();
+  s.type(typed);
+  await s.wait();
+  await s.reply(0, product());
+  s.fold().click();
+  await settle();
+  await openAdd(s, 'who');
+  await answerWith(s, TEAM);
+  assert.equal(s.input.value, `${typed}Who receives the emails: ${TEAM}`);
+});
+
+test('a blank answer does nothing: Enter and the button keep the field, its focus, the prompt and the line', async () => {
+  const s = await withRows();
+  const input = await openAdd(s, 'who');
+  let inputs = 0;
+  s.input.addEventListener('input', () => { inputs += 1; });
+  for (const blank of ['', '   ']) {
+    await answerWith(s, blank);
+    assert.equal(field(s), input, `"${blank}"`);
+    assert.equal(s.doc.activeElement, input);
+    s.doc.querySelector('.ask-guide-ans > button').click();
+    await settle();
+    assert.equal(field(s), input, `"${blank}" and the button`);
+  }
+  assert.equal(s.input.value, PROMPT);
+  assert.equal(inputs, 0);
+  assert.equal(s.fold().textContent, GAPS);
+});
+
+test('a row that shows no question still names its field: the default question, else the label', async () => {
+  const s = await withRows();
+  assert.equal((await openAdd(s, 'done')).getAttribute('aria-label'), GUIDE_DEFAULT_QUESTIONS.plain.done);
+  const bare = await withRows(product({ questions: { who: '' } }));
+  assert.equal((await openAdd(bare, 'who')).getAttribute('aria-label'), 'Who is it for');
+});
+
+test('one Add field at most: opening another closes the first and drops its draft', async () => {
+  const s = await withRows();
+  await openAdd(s, 'who');
+  typeAnswer(s, 'half a thought');
+  await openAdd(s, 'what');
+  assert.equal(fields(s), 1);
+  assert.equal(fieldCheck(s), 'what');
+  assert.ok(addBtn(s, 'who'), 'the first row has its Add back');
+  assert.equal((await openAdd(s, 'who')).value, '', 'the draft was dropped');
+  assert.equal(fields(s), 1);
+  assert.equal(s.input.value, PROMPT, 'nothing was added');
+});
+
+test('an Add is a change of the prompt: the next pause checks the new text, and the next result starts afresh', async () => {
+  const s = await withRows();
+  await openAdd(s, 'who');
+  await answerWith(s, TEAM);
+  await escape(s);
+  await s.wait();
+  assert.equal(s.checks.length, 2);
+  assert.equal(s.checks[1].body.prompt, `${PROMPT}\nWho receives the emails: ${TEAM}`);
+  assert.equal(s.fold().textContent, THREE_OF_FIVE, 'covered stays while re-checking');
+  await s.reply(1, product({ covered: ['trigger'] }));
+  assert.equal(s.fold().textContent, 'Prompt 1/5 · 4 gaps', 'the new result is shown as it is');
+  assert.equal(markOf(rowOf(s, 'who')).getAttribute('aria-label'), 'open');
+});
+
+// ── results are held while an Add field is open ──
+test('R-po-3: a result landing while an Add field is open moves nothing, and applies after the field closes', async () => {
+  const s = await withRows();
+  await openAdd(s, 'who');
+  await answerWith(s, TEAM);           // the field moves on to "What they get"
+  typeAnswer(s, 'a CSV file');
+  const input = field(s);
+  await s.wait();
+  assert.equal(s.checks.length, 2, 'checks keep firing while a field is open');
+  const rows = rowsEl(s).innerHTML;
+  await s.reply(1, product({ covered: [...GUIDE_CHECK_IDS] }));
+  assert.equal(s.fold().textContent, THREE_OF_FIVE, 'the line');
+  assert.equal(rowsEl(s).innerHTML, rows, 'the rows');
+  assert.equal(field(s), input, 'the same input element');
+  assert.equal(input.value, 'a CSV file', 'its draft');
+  assert.equal(s.doc.activeElement, input, 'the focus');
+  assert.equal(s.quiet(), null, 'no "checking…" left');
+  assert.deepEqual(s.spoken(), [SPOKEN], 'a held result is not spoken yet');
+  await escape(s);
+  assert.equal(s.fold().textContent, 'Prompt 5/5 · Large: several runs');
+  assert.deepEqual(s.spoken(), [SPOKEN, 'Prompt 5 of 5, Large: several runs'], 'spoken once, when applied');
+  assert.equal(fields(s), 0);
+});
+
+test('R-po-3 example: a result that landed while the person typed did not move their field, and Add still covers the point', async () => {
+  const s = await fieldOpenMidCheck();
+  const input = field(s);
+  await s.reply(1, product({ covered: [] }));
+  assert.equal(field(s), input);
+  assert.equal(input.value, 'people on');
+  assert.equal(s.doc.activeElement, input);
+  assert.equal(s.fold().textContent, GAPS);
+  await answerWith(s, TEAM);
+  assert.equal(s.input.value, `${LONGER}\nWho receives the emails: ${TEAM}`);
+  assert.equal(s.fold().textContent, THREE_OF_FIVE);
+});
+
+test('a result held while a field is open applies when Escape closes it without an Add', async () => {
+  const s = await fieldOpenMidCheck();
+  await s.reply(1, product({ covered: ['who', 'what', 'trigger', 'limits'] }));
+  assert.equal(s.fold().textContent, GAPS);
+  await escape(s);
+  assert.equal(s.fold().textContent, 'Prompt 4/5 · 1 gap');
+  assert.equal(markOf(rowOf(s, 'who')).getAttribute('aria-label'), 'covered');
+  assertRows(s, true, 'the held result');
+});
+
+test('a failure held while a field is open applies only after it closes', async () => {
+  const s = await fieldOpenMidCheck();
+  const input = field(s);
+  await s.refuse(1, 'GUIDE_MODEL_FAILED');
+  assert.equal(s.fold().textContent, GAPS, 'the result stays');
+  assert.equal(s.act(), null);
+  assert.equal(field(s), input);
+  await escape(s);
+  assert.equal(s.text(), FAIL);
+  assert.equal(rowsEl(s), null);
+});
+
+test('of two results held while a field is open, only the later one applies', async () => {
+  const s = await withRows();
+  await openAdd(s, 'who');
+  await answerWith(s, TEAM);
+  await s.wait();
+  await s.reply(1, product({ covered: ['who', 'what', 'trigger', 'limits'] }));
+  await answerWith(s, 'a CSV file');
+  await s.wait();
+  assert.equal(s.checks.length, 3);
+  await s.reply(2, product({ covered: [...GUIDE_CHECK_IDS], size: 'medium' }));
+  await escape(s);
+  assert.equal(s.fold().textContent, 'Prompt 5/5 · Medium: a few runs');
+  assert.deepEqual(s.spoken(), [SPOKEN, 'Prompt 5 of 5, Medium: a few runs']);
+});
+
+test('a held result for text the field no longer holds is dropped, and the new text is checked', async () => {
+  const s = await fieldOpenMidCheck();
+  await s.reply(1, product({ covered: [...GUIDE_CHECK_IDS] }));
+  const other = `${LONGER}, nightly`;
+  s.input.value = other;               // a recall, a code write: no input event
+  await escape(s);
+  assert.equal(s.fold()?.textContent, GAPS, 'the held result is not shown');
+  await s.wait();
+  assert.equal(s.checks.length, 3);
+  assert.equal(s.checks[2].body.prompt, other);
+});
+
+test('typing in the prompt closes the Add field and drops its draft', async () => {
+  const s = await withRows();
+  await openAdd(s, 'who');
+  typeAnswer(s, 'half a thought');
+  s.type(LONGER);
+  await settle();
+  assert.equal(fields(s), 0);
+  assert.equal(s.input.value, LONGER, 'the draft never reaches the prompt');
+  assert.equal((await openAdd(s, 'who')).value, '');
+});
+
+test('a result held while a field is open applies when the person shuts the fold, and focus stays on the fold', async () => {
+  const s = await fieldOpenMidCheck();
+  await s.reply(1, product({ covered: ['who', 'what', 'trigger', 'limits'] }));
+  const focused = focusSpy(s);
+  s.fold().focus();
+  s.fold().click();
+  await settle();
+  assert.equal(fields(s), 0);
+  assertRows(s, false, 'shut by the person');
+  assert.equal(s.fold().textContent, 'Prompt 4/5 · 1 gap');
+  assert.equal(s.doc.activeElement, s.fold());
+  assert.equal(focused(), 0);
+});
+
+test('a send closes the Add field and applies nothing of what was held', async () => {
+  const s = await fieldOpenMidCheck();
+  await s.reply(1, product({ covered: [...GUIDE_CHECK_IDS] }));
+  s.intentHandle.transformSend(s.input.value);
+  s.input.value = '';
+  s.handle.update(null);
+  await settle();
+  assert.equal(fields(s), 0);
+  assert.equal(rowsEl(s), null);
+  assert.equal(s.fold(), null);
+  assert.doesNotMatch(s.line().textContent, /Prompt|checking/i);
+  assert.deepEqual(s.spoken(), [SPOKEN]);
+});
+
+test('Guide switched off with a field open closes it; switched on again, no field and no held result come back', async () => {
+  const s = await fieldOpenMidCheck();
+  await s.reply(1, product({ covered: [...GUIDE_CHECK_IDS] }));
+  s.swInput().click();
+  await settle();
+  assert.equal(fields(s), 0);
+  assert.equal(rowsEl(s), null);
+  s.swInput().click();
+  await settle();
+  emptyLine(s, 'Guide on again');
+  assert.equal(fields(s), 0);
+  assert.equal(rowsEl(s), null);
+});
+
+test('an Add that pushes the prompt over the limit clears the result: no field, no rows, focus in the prompt', async () => {
+  const long = 'x'.repeat(GUIDE_PROMPT_MAX - 10);
+  const s = setup();
+  await s.shaper();
+  s.type(long);
+  await s.wait();
+  await s.reply(0, product());
+  s.fold().click();
+  await settle();
+  await openAdd(s, 'who');
+  const focused = focusSpy(s);
+  await answerWith(s, TEAM);
+  assert.equal(s.input.value, `${long}\nWho receives the emails: ${TEAM}`, 'the answer is kept');
+  assert.equal(fields(s), 0, 'no field opens on the cleared result');
+  assert.equal(rowsEl(s), null);
+  assert.ok(focused() >= 1, 'ctx.focus was called');
+  assert.equal(s.doc.activeElement, s.input);
+  await s.wait(3000);
+  assert.equal(s.checks.length, 1, 'over the limit is not sent');
+});
+
+// ── the keyboard path ──
+test('R-qa-3 example: Add on "Who is it for", type, Enter: the person is in the "What they get" field', async () => {
+  const s = await withRows();
+  await openAdd(s, 'who');
+  const focused = focusSpy(s);
+  await answerWith(s, TEAM);
+  assert.equal(fields(s), 1);
+  assert.equal(fieldCheck(s), 'what');
+  assert.equal(s.doc.activeElement, field(s));
+  assert.equal(field(s).value, '');
+  assert.equal(focused(), 0, 'the prompt does not take the focus on the way');
+});
+
+test('Enter moves to the next open gap past the covered rows, and from the last one back to the first still open', async () => {
+  const s = await withRows();
+  await openAdd(s, 'what');
+  await answerWith(s, 'a CSV file');
+  assert.equal(fieldCheck(s), 'done', '"What starts it" and "Limits" are covered');
+  await answerWith(s, 'the file opens');
+  assert.equal(fieldCheck(s), 'who', 'the earlier open gap');
+  assert.equal(s.doc.activeElement, field(s));
+});
+
+test('R-qa-3: with no gap left, Enter ends in the prompt field and the line says the size in words', async () => {
+  const s = await withRows(product({ size: 'small' }));
+  await openAdd(s, 'who');
+  await answerWith(s, TEAM);
+  await answerWith(s, 'a CSV file');
+  const focused = focusSpy(s);
+  await answerWith(s, 'the file opens');
+  assert.equal(fields(s), 0);
+  assert.equal(s.line().textContent, SIZE_SMALL);
+  assert.equal(rowsEl(s), null);
+  assert.ok(focused() >= 1, 'ctx.focus was called');
+  assert.equal(s.doc.activeElement, s.input);
+  assert.equal(s.input.value, [PROMPT, `Who receives the emails: ${TEAM}`, 'What lands in their inbox: a CSV file',
+    'How you know it worked: the file opens'].join('\n'), 'one added line per Add');
+});
+
+for (const [name, init] of [
+  ['Shift+Enter', { key: 'Enter', shiftKey: true }],
+  ['an Enter that ends an IME composition', { key: 'Enter', isComposing: true }],
+]) {
+  test(`${name} in an Add field adds nothing and keeps the field`, async () => {
+    const s = await withRows();
+    const input = await openAdd(s, 'who');
+    typeAnswer(s, TEAM);
+    pressIn(s, init);
+    await settle();
+    assert.equal(s.input.value, PROMPT);
+    assert.equal(field(s), input);
+    assert.equal(input.value, TEAM);
+    assert.equal(s.fold().textContent, GAPS);
+  });
+}
+
+test('R-qa-3: Escape closes the field back to the prompt, adds nothing, and reaches no outer handler', async () => {
+  const s = await withRows();
+  await openAdd(s, 'who');
+  typeAnswer(s, 'half a thought');
+  const focused = focusSpy(s);
+  let outer = 0;
+  s.doc.addEventListener('keydown', () => { outer += 1; });
+  const e = await escape(s);
+  assert.equal(fields(s), 0);
+  assert.ok(focused() >= 1, 'ctx.focus');
+  assert.equal(s.doc.activeElement, s.input);
+  assert.equal(e.defaultPrevented, true);
+  assert.equal(outer, 0, 'propagation stopped');
+  assert.equal(s.input.value, PROMPT);
+  assert.ok(addBtn(s, 'who'), 'the row has its Add back');
+  assertRows(s, true, 'Escape leaves the rows open');
+  assert.equal((await openAdd(s, 'who')).value, '', 'the draft was dropped');
+});
+
+test('a repaint leaves the open field alone: the same element, its draft and its focus', async () => {
+  const s = await withRows();
+  const input = await openAdd(s, 'who');
+  typeAnswer(s, 'half a thought');
+  s.handle.update(null);
+  s.input.dispatchEvent(new s.win.KeyboardEvent('keyup', { key: 'ArrowUp', bubbles: true }));
+  s.stored.rowsOpen = true;            // what the profile holds since the click on the fold
+  s.ctl.refresh();
+  await settle();
+  assert.equal(field(s), input);
+  assert.equal(input.value, 'half a thought');
+  assert.equal(s.doc.activeElement, input);
+});
+
+test('shutting the rows closes the Add field and keeps focus on the fold', async () => {
+  const s = await withRows();
+  await openAdd(s, 'who');
+  const focused = focusSpy(s);
+  s.fold().focus();
+  s.fold().click();
+  await settle();
+  assert.equal(fields(s), 0);
+  assertRows(s, false, 'shut');
+  assert.equal(s.doc.activeElement, s.fold());
+  assert.equal(focused(), 0);
+});
+
+/** A result on screen with the rows open, and a re-check (call 1) out. */
+async function rechecking() {
+  const s = await withRows();
+  s.type(LONGER);
+  await s.wait();
+  return s;
+}
+
+test('a new result under a focused Add keeps focus on the same check\'s Add', async () => {
+  const s = await rechecking();
+  addBtn(s, 'who').focus();
+  await s.reply(1, product({ covered: ['limits'] }));
+  assert.ok(addBtn(s, 'trigger'), 'the rows differ');
+  assert.equal(s.doc.activeElement, addBtn(s, 'who'));
+});
+
+test('a new result that covers the focused row moves focus to the next row\'s Add', async () => {
+  const s = await rechecking();
+  addBtn(s, 'who').focus();
+  await s.reply(1, product({ covered: ['who', 'trigger', 'limits'] }));
+  assert.equal(s.doc.activeElement, addBtn(s, 'what'));
+});
+
+for (const [name, target, body] of [
+  ['the focused fold leaves the line', (s) => s.fold(), { ok: true, check: product({ covered: [...GUIDE_CHECK_IDS], size: 'small' }) }],
+  ['a failure removes the focused row', (s) => addBtn(s, 'who'), { ok: false, code: 'GUIDE_MODEL_FAILED' }],
+]) {
+  test(`a repaint never leaves focus on the body: ${name}, so the prompt takes it`, async () => {
+    const s = await rechecking();
+    const focused = focusSpy(s);
+    target(s).focus();
+    s.checks[1].resolve(body);
+    await settle();
+    assert.equal(rowsEl(s), null);
+    assert.ok(focused() >= 1, 'ctx.focus');
+    assert.equal(s.doc.activeElement, s.input);
+  });
+}
+
+test('focus that was elsewhere is never moved by a repaint of the rows', async () => {
+  const s = await rechecking();
+  const other = s.doc.querySelector('#elsewhere');
+  other.focus();
+  const focused = focusSpy(s);
+  await s.reply(1, product({ covered: ['who'] }));
+  assert.equal(markOf(rowOf(s, 'who')).getAttribute('aria-label'), 'covered', 'the rows were repainted');
+  assert.equal(s.doc.activeElement, other);
+  assert.equal(focused(), 0);
+});
+
+test('with an Add field open Send stays on and the add-on has no say in a send', async () => {
+  const s = await withRows();
+  await openAdd(s, 'who');
+  assert.equal(s.doc.querySelector('.ask-send').disabled, false);
+  assert.equal(s.handle.beforeSend, undefined);
+  assert.equal(s.handle.transformSend, undefined);
+});
+
+// ── the rows' stylesheet ──
+test('the covered tick is --ink-2, and the rows and the Add field use tokens only', () => {
+  const { base, coarse } = cssParts();
+  holds(base, '.ask-guide-rows .plan-check-row.ok .plan-check-mark', ['color:var(--ink-2)']);
+  const rules = [...base, ...coarse].filter((r) => /\.ask-guide-(rows|ans)/.test(r.sel));
+  assert.ok(rules.some((r) => r.sel.includes('.ask-guide-ans')), 'the Add field has rules');
+  for (const r of rules) assert.doesNotMatch(r.body, /#[0-9a-f]{3,8}\b|\brgba?\(|\bhsla?\(/i, r.sel);
+});
+
+test('the rows and the Add field follow the mock\'s rules', () => {
+  const { base } = cssParts();
+  holds(base, '.ask-guide-rows', ['margin:0 6px', 'font-size:var(--fs-body)']);
+  holds(base, '.ask-guide-ans', ['display:flex', 'gap:8px', 'flex:1 0 100%', 'padding-left:calc(var(--row-mark) + var(--row-gap))']);
+  holds(base, '.ask-guide-ans > .input', ['flex:1 1 auto', 'min-width:0']);
+});
+
+test('a row with an open Add field wraps, so the field sits under its label', async () => {
+  const s = await withRows();
+  await openAdd(s, 'who');
+  const { base } = cssParts();
+  const matching = (el) => base.filter((r) => { try { return el.matches(r.sel); } catch { return false; } })
+    .flatMap((r) => r.body.split(';'));
+  assert.ok(matching(rowOf(s, 'who')).includes('flex-wrap:wrap'), 'the row wraps');
+  assert.ok(matching(rowOf(s, 'who').querySelector('.plan-check-text')).includes('flex-basis:12em'), 'its text keeps 12em');
 });

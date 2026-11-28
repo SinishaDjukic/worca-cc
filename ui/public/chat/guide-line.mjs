@@ -9,12 +9,16 @@
 // text that has since changed is dropped. The line reads "Checking your prompt…", then the result: a fold
 // "Prompt 2/5 · 3 gaps", or with no gap the size in words. A failed check says so calmly with one quiet action: "Try
 // again", or "Open Models" when Guide has no model. Each new result is spoken once through the composer's announce.
+// The rows: the fold opens onto the five checks (shut by default; the person's open choice is saved as rowsOpen). An
+// open gap has the hollow mark and an Add that opens one field; its answer joins the prompt as "<question>: <answer>"
+// (the question the row shows, without its closing question mark, else the label), and the point counts as covered at
+// once. While an Add field is open, results are held and applied when it closes.
 import { registerComposerAddon } from './extensions.mjs';
 import { makeSwitch } from '../switch.mjs';
 import { flagOn as liveFlagOn, onFlagChange as liveOnFlagChange } from '../flags.mjs';
-import { fold } from '../shape/check-row.mjs';
+import { buildCheckRows, fold } from '../shape/check-row.mjs';
 import { icon } from '../icons.mjs';
-import { GUIDE_CHECK_IDS, GUIDE_PROMPT_MAX, GUIDE_SIZES } from '../../../src/shared/prompt-check/assessment.mjs';
+import { GUIDE_CHECK_IDS, GUIDE_DEFAULT_QUESTIONS, GUIDE_PROMPT_MAX, GUIDE_SIZES } from '../../../src/shared/prompt-check/assessment.mjs';
 
 export const GUIDE_ADDON_ID = 'guide';
 export const LINE_TITLE = 'Sending works as it is.';
@@ -32,6 +36,8 @@ export const NO_MODEL_TEXT = 'Guide has no model to run on.';
 export const TRY_AGAIN = 'Try again';
 export const OPEN_MODELS = 'Open Models';
 export const MODELS_HREF = '#models/jobs/helpers';
+export const ADD_TEXT = 'Add';
+export const ADD_PLACEHOLDER = 'Your answer';
 
 const FLAG = 'shaperSmallRuns';
 
@@ -83,6 +89,85 @@ export function lineState({ on, offerSeen, offerGone, prompt, result, checking, 
   if (checking) return { kind: 'checking' };
   if (failure) return { kind: 'failure', failure };
   return lineText({ on, offerSeen, offerGone, prompt }) === OFFER_TEXT ? { kind: 'offer' } : { kind: 'empty' };
+}
+
+/** The name of a row's Add (and of its field's Add): "Add: who is it for". */
+export function addName(label) {
+  return `${ADD_TEXT}: ${String(label).toLowerCase()}`;
+}
+
+/** The question a gap row shows: '' for a covered check, and for a question that is empty or a default one of either
+ *  register (a default only restates its label). */
+export function shownQuestion(check) {
+  if (!check || check.covered === true) return '';
+  const q = typeof check.question === 'string' ? check.question : '';
+  if (!q || q === GUIDE_DEFAULT_QUESTIONS.plain[check.id] || q === GUIDE_DEFAULT_QUESTIONS.technical[check.id]) return '';
+  return q;
+}
+
+/** What Add writes: "<head>: <answer>", the answer trimmed and its whitespace runs collapsed to one space. */
+export function addLine(head, answer) {
+  return `${head}: ${String(answer).trim().replace(/\s+/g, ' ')}`;
+}
+
+/** The prompt with `line` appended: nothing in front of an empty prompt or after a line break, else one line break. */
+export function appendAnswer(value, line) {
+  if (value === '' || value.endsWith('\n')) return `${value}${line}`;
+  return `${value}\n${line}`;
+}
+
+/** A copy of a check body where every id in `ids` is covered, without a question. The input is never changed. */
+export function withAnswered(check, ids) {
+  return { ...check, checks: check.checks.map((c) => (c && ids.has(c.id) ? { ...c, covered: true, question: '' } : c)) };
+}
+
+/** The head Add writes for a gap: the question the row shows, without its closing question mark, else the label. */
+function addHead(c) {
+  const q = shownQuestion(c).trim().replace(/\?$/, '').trim();
+  return q || c.label;
+}
+
+/**
+ * The five rows of a check body, built by buildCheckRows. A gap: the hollow mark named "open", its shown question, and
+ * its quiet Add, or (for `open`) the Add field. A covered check: the tick named "covered" and its label.
+ * @param {{ open: string|null, onAdd(id: string): void, onCommit(id: string, answer: string): void, onCancel(): void }} opts
+ */
+export function guideRows(doc, check, { open = null, onAdd, onCommit, onCancel }) {
+  const items = check.checks.map((c) => {
+    const base = { label: c.label, textWrap: true, markRole: 'img', data: { check: c.id } };
+    if (c.covered === true) return { ...base, pass: true, ariaLabel: 'covered' };
+    const name = addName(c.label);
+    let action;
+    if (c.id === open) {
+      action = doc.createElement('span');
+      action.className = 'ask-guide-ans';
+      const input = doc.createElement('input');
+      input.type = 'text';
+      input.className = 'input input-sm';
+      input.placeholder = ADD_PLACEHOLDER;
+      input.setAttribute('aria-label', (typeof c.question === 'string' && c.question) || c.label);
+      const b = doc.createElement('button');
+      b.type = 'button';
+      b.className = 'btn btn-sm';
+      b.textContent = ADD_TEXT;
+      b.setAttribute('aria-label', name);
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); onCommit(c.id, input.value); }
+        else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onCancel(); }
+      });
+      b.addEventListener('click', () => onCommit(c.id, input.value));
+      action.append(input, b);
+    } else {
+      action = doc.createElement('button');
+      action.type = 'button';
+      action.className = 'btn btn-sm btn-quiet';
+      action.textContent = ADD_TEXT;
+      action.setAttribute('aria-label', name);
+      action.addEventListener('click', () => onAdd(c.id));
+    }
+    return { ...base, pass: false, mark: 'wait', ariaLabel: 'open', detail: shownQuestion(c) || undefined, action };
+  });
+  return buildCheckRows(doc, { items });
 }
 
 /** POST /api/shape/guide/check with `{ prompt, role }`. Never rejects: `{ ok: true, check }` or `{ ok: false, code }`
@@ -165,6 +250,11 @@ export function createGuideLine({
     let dropped = null;     // the trimmed text a superseded or aborted answer was for: the repaint does not ask for it again
     let failure = null;     // null | 'failed' | 'no-model': the shown failure
     let said = null;        // the result words last announced
+    const answered = new Set();   // check ids the person answered with Add, for the shown result
+    let addOpen = null;     // the check id whose Add field is open
+    let held = null;        // { req, out } of a landing held while an Add field is open
+    let selfWrite = false;  // Add is writing the prompt: its input event is not the person's typing
+    let rowsSig = null;     // what the rows were last built from: rebuilt only when it changes
 
     const sw = makeSwitch(doc, { label: 'Guide', rowClass: 'ask-guide-sw', inputClass: 'ask-guide-sw-input' });
     const line = doc.createElement('div');
@@ -187,9 +277,19 @@ export function createGuideLine({
     foldBtn.className = 'btn plan-fold ask-guide-fold';
     foldBtn.append(foldText, icon(doc, 'chevron-down', 12, 'ic ask-guide-chev'));
     const rows = doc.createElement('div');
-    rows.className = 'ask-guide-rows';
+    rows.className = 'ask-guide-rows srows';
     rows.hidden = true;
+    const checksEl = doc.createElement('div');
+    checksEl.className = 'plan-checks';
+    rows.append(checksEl);
     fold(foldBtn, rows);
+    // The person's open choice: kept for the mount and saved; a refused save keeps it here, like offerSeen.
+    foldBtn.addEventListener('click', () => {
+      prefs = { ...prefs, rowsOpen: !rows.hidden };
+      last = { ...prefs };
+      queue({ rowsOpen: prefs.rowsOpen }).catch(() => { /* kept for this mount */ });
+      if (!prefs.rowsOpen && addOpen !== null) closeField();
+    });
     const sumHead = doc.createElement('b');
     sumHead.className = 'ask-guide-head';
     const sumRest = doc.createElement('span');
@@ -218,8 +318,51 @@ export function createGuideLine({
       return p;
     };
 
+    const focusPrompt = () => { if (typeof ctx.focus === 'function') ctx.focus(); };
+    /** Where the focus is before a repaint: the fold, or a row (its check id), else null (elsewhere: never moved). */
+    function noteFocus() {
+      const a = doc.activeElement;
+      if (!a) return null;
+      if (a === foldBtn) return { fold: true };
+      if (rows.contains(a)) { const r = a.closest('[data-check]'); return { check: r ? r.dataset.check : null }; }
+      return null;
+    }
+    const controlOf = (row) => row.querySelector('.ask-guide-ans input') || row.querySelector(':scope > button');
+    /** After a repaint: the same check's control, the next row's, the fold, else the prompt. */
+    function restoreFocus(n) {
+      if (!n) return;
+      const a = doc.activeElement;
+      if (a && a !== doc.body && a.isConnected && !a.closest('[hidden]')) return;
+      if (rows.isConnected && !rows.hidden) {
+        const list = [...checksEl.querySelectorAll('[data-check]')];
+        const at = n.check ? list.findIndex((r) => r.dataset.check === n.check) : -1;
+        for (const r of at < 0 ? [] : list.slice(at)) { const c = controlOf(r); if (c) { c.focus(); return; } }
+      }
+      if (foldBtn.parentNode === line && line.isConnected) { foldBtn.focus(); return; }
+      focusPrompt();
+    }
+    function removeRows() {
+      if (rows.parentNode) rows.remove();
+      addOpen = null;
+      held = null;
+    }
+    /** The rows under a fold result: rebuilt only when the result, the answered ids or the open field change. */
+    function paintRows(shownCheck) {
+      const sig = `${[...answered].sort().join(',')}|${addOpen ?? ''}`;
+      if (!rowsSig || rowsSig.check !== result.check || rowsSig.key !== sig) {
+        rowsSig = { check: result.check, key: sig };
+        checksEl.replaceChildren(...guideRows(doc, shownCheck, { open: addOpen, onAdd: openField, onCommit: commit, onCancel: cancelField }));
+      }
+      rows.hidden = !prefs.rowsOpen;
+      foldBtn.setAttribute('aria-expanded', String(prefs.rowsOpen));
+    }
     function paintLine() {
       if (!shown) return;
+      const had = noteFocus();
+      paintLineNow();
+      restoreFocus(had);
+    }
+    function paintLineNow() {
       // A shown result for text the field no longer holds (a recall, a code write: no input event) is checked again.
       // Not for text whose answer was just superseded or aborted: only a real input asks for that again.
       if (result && field && pending === null && inflight === null) {
@@ -227,16 +370,24 @@ export function createGuideLine({
         if (now !== result.text && now !== dropped) onInput();
       }
       const prompt = field ? field.value : '';
+      const shownCheck = result ? withAnswered(result.check, answered) : null;
       const state = lineState({
-        on: prefs.on, offerSeen: prefs.offerSeen, offerGone, prompt, result: result ? result.check : null, checking: inflight !== null, failure,
+        on: prefs.on, offerSeen: prefs.offerSeen, offerGone, prompt, result: shownCheck, checking: inflight !== null, failure,
       });
       const bar = box ? box.querySelector(':scope > .ask-composer-row') : null;
       if (state.kind === 'off' || !bar) {
         line.remove();
+        removeRows();
         offerOnScreen = false;
         return;
       }
-      if (line.nextElementSibling !== bar || line.parentNode !== box) bar.before(line);
+      if (state.kind === 'result' && state.words.fold) {
+        if (line.parentNode !== box || line.nextElementSibling !== rows || rows.nextElementSibling !== bar) { bar.before(line); line.after(rows); }
+        paintRows(shownCheck);
+      } else {
+        removeRows();
+        if (line.nextElementSibling !== bar || line.parentNode !== box) bar.before(line);
+      }
       if (state.kind === 'result') {
         const { fold: folds, head: h, rest: r } = state.words;
         const shownEl = folds ? foldBtn : sum;
@@ -287,6 +438,9 @@ export function createGuideLine({
     function reset() {
       clearPending();
       abortFlight();
+      addOpen = null;
+      held = null;
+      answered.clear();
       result = null;
       asked = null;
       dropped = null;
@@ -327,15 +481,21 @@ export function createGuideLine({
       fire();
       if (typeof ctx.focus === 'function') ctx.focus();
     }
-    /** An ended request: applied only while it is the latest and the field still holds the text it was asked for. */
+    /** An ended request: held while an Add field is open (a later landing replaces it), else applied. */
     function land(req, out) {
       if (inflight !== req) return;
       inflight = null;
+      if (addOpen !== null) { held = { req, out }; paintLine(); return; }
+      applyLanding(req, out);
+    }
+    /** Applied only while the field still holds the text it was asked for. */
+    function applyLanding(req, out) {
       let speak = null;
       if (!field || field.value.trim() !== req.text) {
         asked = null;
       } else if (out && out.ok === true && resultWords(out.check)) {
         result = { text: req.text, check: out.check };
+        answered.clear();
         failure = null;
         speak = resultSpeech(out.check);
       } else if (out && out.ok !== true && (out.code === 'ABORTED' || out.code === 'GUIDE_SUPERSEDED')) {
@@ -344,6 +504,7 @@ export function createGuideLine({
       } else {
         // A failure (a 200 that is no result counts as one): the older result was for other text, so it goes.
         result = null;
+        answered.clear();
         failure = out && out.ok !== true ? failureKind(out.code) : 'failed';
         said = null;
       }
@@ -353,12 +514,54 @@ export function createGuideLine({
         if (typeof ctx.announce === 'function') ctx.announce(speak);
       }
     }
+    /** Close the Add field (its draft is dropped) and apply a landing held while it was open. */
+    function closeField() {
+      addOpen = null;
+      if (held) { const h = held; held = null; applyLanding(h.req, h.out); } else paintLine();
+    }
+    /** A gap's quiet Add: its field opens in place of the button (one at a time) and takes the focus. */
+    function openField(id) {
+      if (!result) return;
+      addOpen = id;
+      paintLine();
+      const input = rows.querySelector('.ask-guide-ans input');
+      if (input) input.focus();
+    }
+    function cancelField() {
+      closeField();
+      focusPrompt();
+    }
+    /** Enter or the field's Add: the answer joins the prompt, the point is covered, and the next open gap's field opens
+     *  (after this row, else before it); with none left the field closes and the prompt takes the focus. */
+    function commit(id, answerText) {
+      if (!result || !field || String(answerText).trim() === '') return;
+      const c = result.check.checks.find((x) => x && x.id === id);
+      if (!c) return;
+      const text = addLine(addHead(c), answerText);
+      answered.add(id);
+      const open = withAnswered(result.check, answered).checks.filter((x) => x && x.covered !== true).map((x) => x.id);
+      const at = GUIDE_CHECK_IDS.indexOf(id);
+      addOpen = open.find((x) => GUIDE_CHECK_IDS.indexOf(x) > at) ?? open[0] ?? null;
+      selfWrite = true;
+      try {
+        field.value = appendAnswer(field.value, text);
+        field.dispatchEvent(new (doc.defaultView || globalThis).Event('input', { bubbles: true }));
+      } finally {
+        selfWrite = false;
+      }
+      if (!result) { focusPrompt(); return; }   // the append went over the limit: the result was cleared
+      if (addOpen === null) { closeField(); focusPrompt(); return; }
+      paintLine();
+      const input = rows.querySelector('.ask-guide-ans input');
+      if (input) input.focus();
+    }
     function detach() {
       reset();
       shown = false;
       offerOnScreen = false;
       sw.row.remove();
       line.remove();
+      rows.remove();
     }
     function apply(p) {
       const model = p && p.model && typeof p.model.label === 'string' && p.model.label ? { id: p.model.id, label: p.model.label } : null;
@@ -410,7 +613,9 @@ export function createGuideLine({
 
     const onField = () => paintLine();
     const FIELD_EVENTS = ['input', 'keyup', 'focus'];
-    if (field) field.addEventListener('input', onInput);   // before the repaint, so it paints what onInput decided
+    // The person's own typing in the prompt closes an open Add field; Add's own write does not.
+    const onFieldInput = () => { if (addOpen !== null && !selfWrite) closeField(); onInput(); };
+    if (field) field.addEventListener('input', onFieldInput);   // before the repaint, so it paints what onInput decided
     if (field) for (const type of FIELD_EVENTS) field.addEventListener(type, onField);
     // Never on send: Enter and a click on Send clear the pause before the send runs; the intent's send signal for this
     // field then drops everything.
@@ -443,7 +648,7 @@ export function createGuideLine({
         offSend();
         if (field) {
           for (const type of FIELD_EVENTS) field.removeEventListener(type, onField);
-          field.removeEventListener('input', onInput);
+          field.removeEventListener('input', onFieldInput);
           field.removeEventListener('keydown', onKey);
         }
         if (box) box.removeEventListener('click', onClick, true);

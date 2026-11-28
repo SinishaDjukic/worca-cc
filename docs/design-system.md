@@ -523,6 +523,13 @@ only `.ask-guide-rest` ends in an ellipsis; the head, the chevron and "checkingâ
 A failed check is the words and one action, a `.btn.btn-sm.btn-quiet` (`.ask-guide-act`), with no icon and no red or
 amber: "Guide is not answering right now." with "Try again", or "Guide has no model to run on." with "Open Models". The
 sentence shrinks first and carries its own title, so a cut one can still be read.
+The Guide rows pattern: the fold opens `.ask-guide-rows.srows`, a sibling right under the line (never inside it, so the
+line keeps its height), holding one `.plan-checks` of rows built by `buildCheckRows`. A gap has `checkMark('wait')`
+(the grey ring) with `role="img"` named `open`, never a cross; a covered check has the tick in `--ink-2` with
+`role="img"` named `covered`, and its label only. The model's question is the row's detail, as text. A gap ends in a
+`btn btn-sm btn-quiet` "Add" named from its label (`Add: who is it for`). Add puts `.ask-guide-ans` in its place: an
+`.input.input-sm` ("Your answer", named by the question) and a `btn btn-sm` "Add". The row then wraps, so the field sits
+under its label; on a narrow line the question also wraps under its label.
 #### Lock tip
 A locked small-runs **Create N PRs** says why in `.rd-tip` (`role="tooltip"`, named by the button's
 `aria-describedby`), never a native `title`, which opens over the status line. It has the Composer bar tip's look

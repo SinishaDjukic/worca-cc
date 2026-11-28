@@ -22,6 +22,13 @@
 .ask-guide-q{flex:none;color:var(--ink-2);}
 .ask-guide-chev{flex:none;}
 .ask-guide-fold[aria-expanded="true"] .ask-guide-chev{transform:rotate(180deg);}
+/* Guide rows (design system, Composer bar): the five checks under the line, built by buildCheckRows; an open Add field wraps under its label. */
+.ask-guide-rows{margin:0 6px;font-size:var(--fs-body);}
+.ask-guide-rows .plan-check-row.ok .plan-check-mark{color:var(--ink-2);}
+.ask-guide-rows .plan-check-row:has(> .ask-guide-ans){flex-wrap:wrap;row-gap:4px;}
+.ask-guide-rows .plan-check-row:has(> .ask-guide-ans) > .plan-check-text{flex-basis:12em;}
+.ask-guide-ans{display:flex;gap:8px;flex:1 0 100%;padding-left:calc(var(--row-mark) + var(--row-gap));box-sizing:border-box;}
+.ask-guide-ans > .input{flex:1 1 auto;min-width:0;}
 @media (pointer:coarse){.ask-guide{height:41px;}.chat-composer-lead > .ask-guide-sw{min-height:40px;}}
 /* The page (worca Chat P1): it fills the content column — .main stops scrolling and gives up its gutter, the section
    takes the rest, and the page is a row: history column · conversation · run panel slot (P4 sets its width). */
