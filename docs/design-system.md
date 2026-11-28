@@ -534,8 +534,9 @@ Write it out, Stop and Undo are the line's three `.ask-guide-do` buttons, each a
 at the line's right end after the flexible `.ask-guide-sp` spacer; they never shrink. "Write it out" follows a result
 with a gap open (and "checking…"); "Writing it out…" in `.ask-guide-t` takes "Stop"; the written words take "Undo":
 `.ask-guide-sum` holding the bold `.ask-guide-head` "Guide filled 4 gaps", a `.ask-guide-mid` " · check them" that never
-shrinks, and `.ask-guide-rest` with the size words, which give way first. The rows leave while writing and written out,
-and the line keeps its height. "(suggested)" is plain text in the field, never a chip.
+shrinks, and `.ask-guide-rest` with the size words, which give way first: the written run (`.ask-guide-filled`) wraps
+inside one line's height, so words that do not fit leave whole and are never cut. A failed write takes the failure
+pattern above, in the same line. The rows leave while writing and written out, and the line keeps its height. "(suggested)" is plain text in the field, never a chip.
 #### Lock tip
 A locked small-runs **Create N PRs** says why in `.rd-tip` (`role="tooltip"`, named by the button's
 `aria-describedby`), never a native `title`, which opens over the status line. It has the Composer bar tip's look

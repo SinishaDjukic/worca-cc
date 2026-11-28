@@ -169,7 +169,7 @@ function setup({ flag = true, prefs = {}, load = null, save = null, pin = null, 
   if (before) before(p, timers);   // listeners that must be in place before the add-ons mount
   const checks = checker();
   const writes = writer();
-  const state = { picker: flag, guide: flag, pickerSubs: new Set(), subs: new Set(), flagOffs: 0, intentOffs: 0, sendSubs: new Set(), role };
+  const state = { picker: flag, guide: flag, pickerSubs: new Set(), subs: new Set(), flagOffs: 0, intentOffs: 0, sendSubs: new Set(), role, roleSubs: new Set() };
   const calls = { load: 0, save: [] };
   const stored = { ...PREFS, ...prefs };
   const intent = createIntentAddon();
@@ -200,6 +200,8 @@ function setup({ flag = true, prefs = {}, load = null, save = null, pin = null, 
     check: check || checks.check,
     write: write || writes.write,
     role: () => state.role,
+    // The role picker's change signal: it fires on every repaint of the picker, a new role or not.
+    onRoleChange: (fn) => { state.roleSubs.add(fn); return () => state.roleSubs.delete(fn); },
     flagOn: (k) => k === 'shaperSmallRuns' && state.guide,
     onFlagChange: (k, fn) => {
       assert.equal(k, 'shaperSmallRuns');
@@ -211,6 +213,8 @@ function setup({ flag = true, prefs = {}, load = null, save = null, pin = null, 
   });
   const handle = ctl.addon.mount(p.lead, p.ctx);
   const setFlag = (on) => { state.guide = on; for (const fn of [...state.subs]) fn(on); };
+  /** The person picks `r` in the role picker (or the picker repaints with the same role). */
+  const setRole = async (r) => { state.role = r; for (const fn of [...state.roleSubs]) fn(); await settle(); };
   const shaper = async () => { intent.set('shape', { focus: false }); await settle(); };
   /** Let `ms` pass on the injected timer, then let the promises run. */
   const wait = async (ms = 2000) => { timers.advance(ms); await settle(); };
@@ -225,7 +229,7 @@ function setup({ flag = true, prefs = {}, load = null, save = null, pin = null, 
   const spoken = () => p.said.filter((t) => t !== 'Shaper');
   /** The line's Write it out, Stop or Undo button. */
   const doBtn = () => p.doc.querySelector('.ask-guide .ask-guide-do');
-  return { ...p, state, calls, stored, intent, intentHandle, ctl, handle, setFlag, shaper, timers, checks: checks.calls, wait, reply, refuse, fold, quiet, act, spoken, writes: writes.calls, doBtn };
+  return { ...p, state, calls, stored, intent, intentHandle, ctl, handle, setFlag, setRole, shaper, timers, checks: checks.calls, wait, reply, refuse, fold, quiet, act, spoken, writes: writes.calls, doBtn };
 }
 
 const PROMPT = 'Export runs as CSV';
@@ -1257,7 +1261,7 @@ for (const [name, leave, back] of LEAVES) {
     assert.equal(s.checks.length, 1, 'back: typing checks');
   });
 
-  test(`${name} mid-check aborts it and drops the result; back, the line is empty and the same text is checked again`, async () => {
+  test(`${name} mid-check aborts it and drops the result; back, the same text is checked again`, async () => {
     const s = await withResult();
     s.type(LONGER);
     await s.wait();
@@ -1267,7 +1271,15 @@ for (const [name, leave, back] of LEAVES) {
     await s.reply(1);
     back(s);
     await settle();
-    emptyLine(s, name);
+    if (name === 'Guide switched off') {
+      // The switch back on over a prompt checks it at once; the pin and the flag wait for the next typing.
+      assert.equal(s.text(), CHECKING, name);
+      assert.equal(s.fold(), null, 'the dropped result is not back');
+      assert.equal(s.checks.length, 3);
+      assert.equal(s.checks[2].body.prompt, LONGER);
+    } else {
+      emptyLine(s, name);
+    }
     s.type(LONGER);
     await s.wait();
     assert.equal(s.checks.length, 3);
@@ -1659,7 +1671,7 @@ test('a short prompt, a send and Guide off each clear the failure', async () => 
   assert.equal(off.line(), null, 'Guide off removes the line');
   off.swInput().click();
   await settle();
-  emptyLine(off, 'Guide on again');
+  assert.equal(off.text(), CHECKING, 'Guide on again: the failure is gone and the prompt is checked afresh');
   assert.equal(off.act(), null);
 });
 
@@ -1928,8 +1940,8 @@ test('app.js installs Guide once, after the role picker and before the panel, an
   const app = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
   assert.match(app, /import \{[^}]*\binstallGuideLine\b[^}]*\} from '\.\/chat\/guide-line\.mjs';/);
   assert.match(app, /import \{[^}]*\brefreshGuideLine\b[^}]*\} from '\.\/chat\/guide-line\.mjs';/);
-  // The check's two dependencies (D2): the role a send carries now, and the app's unref'd timers.
-  const calls = [...app.matchAll(/\binstallGuideLine\(\{ intent: chatIntent, role: \(\) => chatRole\.role\(\), timers: chatHomeTimers \}\)/g)];
+  // The check's dependencies (D2): the role a send carries now, the picker's change signal, and the app's unref'd timers.
+  const calls = [...app.matchAll(/\binstallGuideLine\(\{ intent: chatIntent, role: \(\) => chatRole\.role\(\), onRoleChange: \(fn\) => chatRole\.onChange\(fn\), timers: chatHomeTimers \}\)/g)];
   assert.equal(calls.length, 1);
   assert.ok(calls[0].index > app.indexOf('installRolePicker({ intent: chatIntent })'), 'after the role picker');
   assert.ok(calls[0].index < app.indexOf('askPanel = createAskPanel('), 'before createAskPanel');
@@ -2542,7 +2554,8 @@ test('Guide switched off with a field open closes it; switched on again, no fiel
   assert.equal(rowsEl(s), null);
   s.swInput().click();
   await settle();
-  emptyLine(s, 'Guide on again');
+  assert.equal(s.text(), CHECKING, 'Guide on again: the prompt is checked afresh');
+  assert.equal(s.fold(), null);
   assert.equal(fields(s), 0);
   assert.equal(rowsEl(s), null);
 });
@@ -3259,23 +3272,233 @@ test('R-qa-12: write output holding markup lands as those characters and creates
   assert.equal(s.doc.querySelector('img'), null);
 });
 
-test('a failed write leaves the field byte-identical, shows the result with "Write it out" and announces the failure once', async () => {
+test('a failed write leaves the field byte-identical, says so on the line as a failed check does, and announces it once', async () => {
   for (const [code, words] of [
     ['GUIDE_MODEL_FAILED', FAIL], ['GUIDE_NO_MODEL', NO_MODEL], ['GUIDE_COST_LIMIT', FAIL], ['GUIDE_BUSY', FAIL],
-    ['GUIDE_WRITE_FAILED', FAIL], ['NETWORK', FAIL], ['BAD_REPLY', FAIL],
+    ['GUIDE_RATE_LIMITED', FAIL], ['GUIDE_WRITE_FAILED', FAIL], ['NETWORK', FAIL], ['BAD_REPLY', FAIL],
   ]) {
     const s = await midWrite(TWO_LINES);
     await failWrite(s, 0, code);
     assert.equal(s.input.value, TWO_LINES, code);
-    resultBack(s, GAPS, code);
-    assert.equal(s.act(), null, `${code}: no failure action`);
+    failedLine(s, failureLine(code), code);
+    assert.equal(s.line().title, 'Sending works as it is.', code);
+    assert.equal(s.doBtn(), null, `${code}: no Write it out, Stop or Undo beside the failure`);
+    assert.equal(rowsEl(s), null, `${code}: no rows under a failure`);
+    assert.equal(s.doc.querySelector('.ask-send').disabled, false, `${code}: Send stays on`);
     s.handle.update(null);
     await settle();
+    failedLine(s, failureLine(code), `${code}: it stays through a repaint`);
     assert.deepEqual(s.spoken(), [SPOKEN, words], code);
-    await press(s, WRITE);
-    assert.equal(s.writes.length, 2, `${code}: the button works again`);
+    assert.equal(s.checks.length, 1, `${code}: a failed write starts no check`);
     s.handle.destroy();
   }
+});
+
+test('a failed write: "Try again" writes once more for the same gaps; a write that then lands shows the written line', async () => {
+  const s = await midWrite(TWO_LINES);
+  await failWrite(s, 0, 'GUIDE_MODEL_FAILED');
+  s.act().click();
+  await settle();
+  assert.equal(s.writes.length, 2, 'one more write');
+  assert.deepEqual(s.writes[1].body, s.writes[0].body, 'the same text, role and gaps');
+  assert.equal(s.text(), WRITING);
+  assert.equal(s.act(), null);
+  assert.equal(s.doc.activeElement, s.input, 'focus is in the prompt');
+  const out = written(TWO_LINES, s.writes[1].body.gaps);
+  await land(s, 1, out);
+  assert.equal(s.input.value, out.text);
+  assert.match(s.line().textContent, /^Guide filled 3 gaps · check them/);
+  assert.equal(s.act(), null);
+
+  const again = await midWrite(TWO_LINES);
+  await failWrite(again, 0, 'NETWORK');
+  again.act().click();
+  await settle();
+  await failWrite(again, 1, 'NETWORK');
+  failedLine(again, failureLine('NETWORK'), 'a second failure says so again');
+  assert.deepEqual(again.spoken(), [SPOKEN, FAIL, FAIL]);
+});
+
+test('a failed write stays until the next edit, the next result, a send or Guide off; an aborted or superseded write says nothing', async () => {
+  const edited = await midWrite(PROMPT);
+  await failWrite(edited, 0, 'GUIDE_MODEL_FAILED');
+  edited.type(`${PROMPT}!`);
+  await settle();
+  assert.equal(edited.act(), null, 'an edit');
+  resultBack(edited, GAPS, 'an edit: the result is back while the pause runs');
+  await edited.wait();
+  assert.equal(edited.checks.length, 2, 'the edit is checked after its pause, as ever');
+
+  const checked = await midWrite(PROMPT);
+  await failWrite(checked, 0, 'GUIDE_MODEL_FAILED');
+  await checked.setRole('qa');            // a check that lands with a result
+  assert.equal(checked.checks.length, 2);
+  failedLine(checked, failureLine('GUIDE_MODEL_FAILED'), 'while that check is out');
+  await checked.reply(1, answer(3));
+  assert.equal(checked.act(), null, 'a result');
+  resultBack(checked, 'Prompt 3/5 · 2 gaps', 'a result');
+
+  const sent = await midWrite(PROMPT);
+  await failWrite(sent, 0, 'GUIDE_MODEL_FAILED');
+  sent.intentHandle.transformSend(sent.input.value);
+  sent.handle.update(null);
+  await settle();
+  assert.equal(sent.act(), null, 'a send');
+  assert.doesNotMatch(sent.line()?.textContent ?? '', /not answering/);
+
+  const off = await midWrite(PROMPT);
+  await failWrite(off, 0, 'GUIDE_MODEL_FAILED');
+  off.swInput().click();
+  await settle();
+  assert.equal(off.line(), null, 'Guide off');
+
+  for (const code of ['ABORTED', 'GUIDE_SUPERSEDED', 'GUIDE_OFF']) {
+    const quiet = await midWrite(PROMPT);
+    await failWrite(quiet, 0, code);
+    resultBack(quiet, GAPS, code);
+    assert.equal(quiet.act(), null, code);
+    assert.deepEqual(quiet.spoken(), [SPOKEN], code);
+  }
+});
+
+test('lineState: a failed write outranks the written line and a result, and only writing outranks it', () => {
+  const base = { on: true, offerSeen: true, offerGone: false, prompt: PROMPT, result: answer(), checking: false };
+  assert.deepEqual(guide.lineState({ ...base, writeFailure: 'failed' }), { kind: 'failure', failure: 'failed', write: true });
+  assert.deepEqual(guide.lineState({ ...base, writeFailure: 'no-model', checking: true }), { kind: 'failure', failure: 'no-model', write: true });
+  assert.equal(guide.lineState({ ...base, writeFailure: 'failed', written: { n: 2, size: 'large' } }).kind, 'failure');
+  assert.equal(guide.lineState({ ...base, writeFailure: 'failed', writing: true }).kind, 'writing');
+  assert.equal(guide.lineState({ ...base, on: false, writeFailure: 'failed' }).kind, 'off');
+  assert.equal(guide.lineState({ ...base, writeFailure: null }).kind, 'result');
+});
+
+// ── A new role, and Guide switched back on ──
+test('a role picked while a result shows checks the prompt again for that role: the old result stays with "checking…", then the new rows', async () => {
+  const s = await withRows(product(), { role: 'product' });
+  assert.equal(s.checks[0].body.role, 'product');
+  await s.setRole('engineering');
+  assert.equal(s.checks.length, 2, 'one check at once, with no pause');
+  assert.deepEqual(s.checks[1].body, { prompt: s.checks[0].body.prompt, role: 'engineering' });
+  assert.equal(s.timers.pending(), 0);
+  assert.ok(s.quiet(), 'the last result stays, with the quiet "checking…"');
+  await s.reply(1, answer(2, 'large', 'technical'));
+  assert.ok(rowsEl(s).textContent.includes(GUIDE_CHECK_LABELS.technical.who), 'the rows read in the new role\'s wording');
+  assert.equal(rowsEl(s).textContent.includes(GUIDE_CHECK_LABELS.plain.who), false, 'none of the old role\'s labels is left');
+  await s.setRole(null);
+  assert.equal(s.checks.length, 3, 'No role checks again');
+  assert.equal(s.checks[2].body.role, null);
+});
+
+test('a new role: one check in flight (the older one aborted); the same role again, a pause, a write, a short prompt and an unchecked prompt start none', async () => {
+  const s = await withResult(answer(), { role: 'product' });
+  await s.setRole('qa');
+  await s.setRole('security');
+  assert.equal(s.checks.length, 3);
+  assert.equal(s.checks[1].signal.aborted, true, 'the check for the role before is aborted');
+  assert.equal(s.checks[2].signal.aborted, false);
+  await s.reply(1, answer(5));
+  assert.equal(s.fold()?.textContent, GAPS, 'an aborted check\'s answer is dropped');
+  await s.reply(2, answer(3));
+  assert.equal(s.fold()?.textContent, 'Prompt 3/5 · 2 gaps');
+  await s.setRole('security');
+  assert.equal(s.checks.length, 3, 'the picker repainting with the same role checks nothing');
+
+  s.type(LONGER);                    // a pause is running: it fires by itself, with the role of that moment
+  await s.setRole('design');
+  assert.equal(s.checks.length, 3);
+  await s.wait();
+  assert.equal(s.checks.length, 4);
+  assert.deepEqual(s.checks[3].body, { prompt: LONGER, role: 'design' });
+  await s.reply(3);
+
+  await press(s, WRITE);
+  await s.setRole('qa');
+  assert.equal(s.checks.length, 4, 'never during a write');
+  assert.equal(s.writes[0].signal.aborted, false, 'and the write goes on');
+
+  const short = setup({ role: 'product' });
+  await short.shaper();
+  short.type('Export');
+  await short.setRole('qa');
+  await short.wait(3000);
+  assert.equal(short.checks.length, 0, 'under 12 characters');
+
+  const fresh = setup({ role: 'product', value: PROMPT });
+  await fresh.shaper();
+  await fresh.setRole('qa');
+  assert.equal(fresh.checks.length, 0, 'a prompt no check was made for waits for the person\'s typing');
+
+  const sent = await withResult(answer(), { role: 'product' });
+  sent.intentHandle.transformSend(sent.input.value);
+  sent.input.value = '';
+  sent.handle.update(null);
+  await sent.setRole('qa');
+  await sent.wait(3000);
+  assert.equal(sent.checks.length, 1, 'never on send, nor after it');
+});
+
+test('a new role after a failed check tries again for that role; destroy() drops the role subscription', async () => {
+  const s = await withFailure('GUIDE_MODEL_FAILED', { role: 'product' });
+  await s.setRole('qa');
+  assert.equal(s.checks.length, 2);
+  assert.equal(s.checks[1].body.role, 'qa');
+  assert.equal(s.state.roleSubs.size, 1);
+  s.handle.destroy();
+  assert.equal(s.state.roleSubs.size, 0);
+});
+
+test('Guide switched back on over a prompt of 12 or more characters checks it once the switch is saved; a shorter prompt, or a refused save, checks nothing', async () => {
+  const gate = deferred();
+  const s = setup({ prefs: { on: false, offerSeen: true }, value: PROMPT, save: (patch, n) => (n === 1 ? gate.promise : Promise.resolve({ ...PREFS, ...patch })) });
+  await s.shaper();
+  assert.equal(s.line(), null, 'Guide off: no line');
+  s.swInput().click();
+  await settle();
+  emptyLine(s, 'the save is still out');
+  assert.equal(s.checks.length, 0, 'not before the profile says on (the route refuses a check while it says off)');
+  gate.resolve({ ...PREFS, on: true });
+  await settle();
+  assert.equal(s.checks.length, 1, 'one check, with no pause');
+  assert.deepEqual(s.checks[0].body, { prompt: PROMPT, role: null });
+  assert.equal(s.text(), CHECKING);
+  assert.equal(s.timers.pending(), 0);
+  await s.reply(0);
+  assert.equal(s.fold()?.textContent, GAPS);
+  s.swInput().click();
+  await settle();
+  s.swInput().click();
+  await settle();
+  assert.equal(s.checks.length, 2, 'off and on again: checked again');
+  assert.equal(s.doc.activeElement, s.input, 'focus is in the prompt');
+
+  const short = setup({ prefs: { on: false, offerSeen: true }, value: 'Export' });
+  await short.shaper();
+  short.swInput().click();
+  await settle();
+  await short.wait(3000);
+  assert.equal(short.checks.length, 0, 'under 12 characters');
+  emptyLine(short, 'a short prompt');
+
+  const refused = setup({ prefs: { on: false, offerSeen: true }, value: PROMPT, save: () => Promise.reject(new Error('no')) });
+  await refused.shaper();
+  refused.swInput().click();
+  await settle();
+  assert.equal(refused.checks.length, 0, 'a refused save');
+  assert.equal(refused.line(), null, 'and the switch is back off');
+
+  const gate2 = deferred();
+  const offAgain = setup({ prefs: { on: false, offerSeen: true }, value: PROMPT, save: (patch, n) => (n === 1 ? gate2.promise : Promise.resolve({ ...PREFS, ...patch })) });
+  await offAgain.shaper();
+  offAgain.swInput().click();
+  offAgain.swInput().click();
+  gate2.resolve({ ...PREFS, on: true });
+  await settle();
+  assert.equal(offAgain.checks.length, 0, 'switched off again before the save landed');
+});
+
+test('written out: the words sit in a one-line wrapping run, so the size words go whole when they do not fit', () => {
+  const { base } = cssParts();
+  holds(base, '.ask-guide-filled', ['flex-wrap:wrap', 'max-height:1lh']);
+  holds(base, '.ask-guide-fold .plan-fold-text,.ask-guide-sum', ['overflow:hidden']);
 });
 
 test('a superseded, aborted or Guide-off write changes nothing and announces nothing', async () => {

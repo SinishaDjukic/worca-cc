@@ -551,7 +551,7 @@ Shaper's Requirements step is a hold, like the plan approval, and it has its own
   and that role stays the card's lead for its whole life. With no role sent, the `Your role` row holds the lead picker,
   preset to the role you used last time. **Shape requirements** never waits for a role: started with no pick, the run
   leads as your saved lead, else Product. A pick on the card is remembered when you click it. You can also set or clear
-  the role in Settings › Chat, in its `Your role` card (Advanced and up); a card built earlier keeps its role.
+  the role in Settings › Chat, in the `Your role` row (Advanced and up); a card built earlier keeps its role.
 - **The Requirements card.** `3 decisions need you · as Product`, then the decisions the perspectives could not settle,
   then the agreed requirements folded away, then the foot. Each decision is one question with its answers stacked under
   it, Worca's pick already chosen and marked `recommended`; change any of them. An answer a perspective asked for says who
@@ -632,9 +632,10 @@ role, and with no role the message is sent as before. The Shaper card reads the 
 
 **Guide checks.** With Guide on and the Shaper pinned, the composer checks the prompt 2 seconds after you stop typing,
 once it has 12 characters or more (spaces around it do not count) and has changed since the last check. The check
-carries the role you picked, so its wording is plain or technical. It is never on send: Enter, Send and the send
-itself stop a pending check, and at most one check is out at a time, 30 checks and writes a minute per person. An answer for text you have since changed is
-dropped. The Guide line reads "Checking your prompt…" while the first check runs, then the result: with a gap open a
+carries the role you picked, so its wording is plain or technical. Picking another role while a result shows checks
+the prompt again at once for that role, and so does switching Guide back on over a prompt of 12 characters or more. It
+is never on send: Enter, Send and the send itself stop a pending check, and at most one check is out at a time, 30
+checks and writes a minute per person. An answer for text you have since changed is dropped. The Guide line reads "Checking your prompt…" while the first check runs, then the result: with a gap open a
 fold such as "Prompt 2/5 · 3 gaps", with none the size in words: "Prompt 5/5 · Large: several runs",
 "Prompt 5/5 · Medium: a few runs" or "Clear enough · Small: one run". A re-check keeps the last result with a quiet
 "checking…" after it. When Guide has no model the line reads "Guide has no model to run on." with an Open Models
@@ -664,7 +665,9 @@ reads "Guide filled 4 gaps · check them" with the size words and "Undo", which 
 exactly, line breaks and spaces included. Undo lasts until your first edit; after that the line shows the result again
 and the browser's own undo (Cmd/Ctrl+Z) undoes your edits. Send works as it is in both states: while writing it sends
 what you typed, and once written it sends the prompt as you see it. A failed write leaves the prompt untouched and
-brings "Write it out" back.
+says so on the line as a failed check does: "Guide is not answering right now." with a Try again button that writes
+once more, or the no-model line with Open Models. It stays until your next edit or the next result, which bring
+"Write it out" back. On a narrow composer the written line drops its size words whole rather than cutting them.
 
 ### The card's steps
 

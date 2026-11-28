@@ -6,7 +6,8 @@
 // no line and no request. It never takes, holds or rewords a send: no beforeSend, no transformSend.
 // The check: 2 seconds after the person types a changed prompt of 12 or more characters, one POST
 // /api/shape/guide/check with the role the composer carries. Never on send, at most one in flight, and an answer for
-// text that has since changed is dropped. The line reads "Checking your prompt…", then the result: a fold
+// text that has since changed is dropped. A role picked while a check shows, and Guide switched back on over a prompt
+// of 12 or more characters, each run one check at once. The line reads "Checking your prompt…", then the result: a fold
 // "Prompt 2/5 · 3 gaps", or with no gap the size in words. A failed check says so calmly with one quiet action: "Try
 // again", or "Open Models" when Guide has no model. Each new result is spoken once through the composer's announce.
 // The rows: the fold opens onto the five checks (shut by default; the person's open choice is saved as rowsOpen). An
@@ -17,7 +18,8 @@
 // one POST /api/shape/guide/write; the line reads "Writing it out…" with "Stop", and the person's typing, Stop, a send
 // or Guide off abort it. The answer is the prompt unchanged plus one "(suggested)" line per filled gap; the line then
 // reads "Guide filled 3 gaps · check them" with the size words and "Undo", which gives the exact pre-write text back
-// until the person's first edit. Model text reaches the DOM only as the field's value.
+// until the person's first edit. A write that fails says so in the line, as a failed check does ("Try again" writes
+// once more), until the next edit or the next result. Model text reaches the DOM only as the field's value.
 import { registerComposerAddon } from './extensions.mjs';
 import { makeSwitch } from '../switch.mjs';
 import { flagOn as liveFlagOn, onFlagChange as liveOnFlagChange } from '../flags.mjs';
@@ -117,11 +119,12 @@ export function failureKind(code) {
   return 'failed';
 }
 
-/** What the line shows, first match: off, writing it out, written out, a result (with "checking…" on a re-check, and
- *  `write` while a gap is open), the first check, a failure, the offer, empty. */
-export function lineState({ on, offerSeen, offerGone, prompt, result, checking, failure = null, writing = false, written = null }) {
+/** What the line shows, first match: off, writing it out, a failed write, written out, a result (with "checking…" on a
+ *  re-check, and `write` while a gap is open), the first check, a failure, the offer, empty. */
+export function lineState({ on, offerSeen, offerGone, prompt, result, checking, failure = null, writing = false, written = null, writeFailure = null }) {
   if (!on) return { kind: 'off' };
   if (writing) return { kind: 'writing' };
+  if (writeFailure) return { kind: 'failure', failure: writeFailure, write: true };
   if (written) return { kind: 'written', words: filledWords(written.n, written.size) };
   const words = result ? resultWords(result) : null;
   if (words) return { kind: 'result', words, recheck: checking === true, write: result.checks.some((c) => !c || c.covered !== true) };
@@ -263,7 +266,7 @@ export async function saveGuidePrefs(patch, fetchFn = (...a) => globalThis.fetch
  *   timers?: { setTimeout: Function, clearTimeout: Function },
  *   check?: (body: { prompt: string, role: string|null }, opts: { signal: AbortSignal }) => Promise<object>,
  *   write?: (body: { prompt: string, role: string|null, gaps: string[] }, opts: { signal: AbortSignal }) => Promise<object>,
- *   role?: () => string|null }} deps
+ *   role?: () => string|null, onRoleChange?: (fn: () => void) => () => void }} deps
  * @returns {{ addon: { id: string, mount(leadEl, ctx) }, refresh(): void, prefs(): object|null }}
  */
 export function createGuideLine({
@@ -276,6 +279,7 @@ export function createGuideLine({
   check = (body, opts) => checkGuide(body, opts),
   write = (body, opts) => writeGuide(body, opts),
   role = () => null,
+  onRoleChange = null,
 } = {}) {
   const mounts = new Set();
   let last = null;   // the prefs the latest landed read (or switch use) holds
@@ -297,6 +301,7 @@ export function createGuideLine({
     let offerGone = false;  // within one mount a dismissed offer never returns
     let chain = Promise.resolve();   // saves run one after another
     let asked = null;       // the trimmed text the latest check was made for (null: the next input checks)
+    let askedRole = null;   // the role the latest check was made with
     let pending = null;     // the pause's timer id
     let inflight = null;    // { ctl, text } of the one check out
     let result = null;      // { text, check } of the shown result
@@ -311,6 +316,7 @@ export function createGuideLine({
     let writeFlight = null; // { ctl, before, gaps, size, prior } of the one write out
     let written = null;     // { text, before, n, size, prior } of a landed write: Undo exists while the field holds `text`
     let guideSets = false;  // a write or Undo is setting the field: its input event is not the person's edit
+    let writeFailure = null; // null | 'failed' | 'no-model': a write that failed, shown until the next edit or result
 
     const sw = makeSwitch(doc, { label: 'Guide', rowClass: 'ask-guide-sw', inputClass: 'ask-guide-sw-input' });
     const line = doc.createElement('div');
@@ -388,7 +394,7 @@ export function createGuideLine({
     const filledRest = doc.createElement('span');
     filledRest.className = 'ask-guide-rest';
     const filledSum = doc.createElement('span');
-    filledSum.className = 'ask-guide-sum';
+    filledSum.className = 'ask-guide-sum ask-guide-filled';
     filledSum.append(filledHead, filledMid, filledRest);
 
     const queue = (patch) => {
@@ -454,7 +460,7 @@ export function createGuideLine({
       const shownCheck = result ? withAnswered(result.check, answered) : null;
       const state = lineState({
         on: prefs.on, offerSeen: prefs.offerSeen, offerGone, prompt, result: shownCheck, checking: inflight !== null, failure,
-        writing: writeFlight !== null, written,
+        writing: writeFlight !== null, written, writeFailure,
       });
       const bar = box ? box.querySelector(':scope > .ask-composer-row') : null;
       if (state.kind === 'off' || !bar) {
@@ -537,6 +543,7 @@ export function createGuideLine({
       abortFlight();
       abortWrite();
       written = null;
+      writeFailure = null;
       addOpen = null;
       held = null;
       answered.clear();
@@ -566,13 +573,34 @@ export function createGuideLine({
       const req = { ctl: new AbortController(), text };
       inflight = req;
       asked = text;
+      askedRole = role() ?? null;
       let out;
-      try { out = Promise.resolve(check({ prompt: text, role: role() ?? null }, { signal: req.ctl.signal })); } catch { out = Promise.resolve({ ok: false, code: 'NETWORK' }); }
+      try { out = Promise.resolve(check({ prompt: text, role: askedRole }, { signal: req.ctl.signal })); } catch { out = Promise.resolve({ ok: false, code: 'NETWORK' }); }
       out.then((o) => land(req, o), () => land(req, { ok: false, code: 'NETWORK' }));
       paintLine();
     }
-    /** Try again: one check of the field's text at once, then focus back in the prompt. Never while one is out. */
+    /** One check of the field's text at once, with no pause: a newer role, or Guide switched back on. Never during a
+     *  pause (it fires by itself with the role of that moment) or a write, and never for text too short to check. */
+    function checkNow() {
+      if (destroyed || !shown || !prefs.on || !field || pending !== null || writeFlight) return;
+      if (!checkable(field.value.trim())) return;
+      asked = null;
+      fire();
+    }
+    /** The composer's role changed: a check that shows (or is out) is made again for the new role. */
+    function onRole() {
+      if ((role() ?? null) === askedRole || (asked === null && !result && !inflight)) return;
+      checkNow();
+    }
+    /** Try again: one check of the field's text at once, then focus back in the prompt. Never while one is out. After
+     *  a failed write it writes once more instead. */
     function retry() {
+      if (writeFailure) {
+        writeFailure = null;
+        paintLineNow();
+        startWrite();
+        return;
+      }
       if (destroyed || !shown || !prefs.on || !field || inflight) return;
       clearPending();
       asked = null;
@@ -596,6 +624,7 @@ export function createGuideLine({
         result = { text: req.text, check: out.check };
         answered.clear();
         failure = null;
+        writeFailure = null;
         speak = resultSpeech(out.check);
       } else if (out && out.ok !== true && (out.code === 'ABORTED' || out.code === 'GUIDE_SUPERSEDED')) {
         asked = null;    // what was shown before the check stays; the next input asks again
@@ -605,6 +634,7 @@ export function createGuideLine({
         result = null;
         answered.clear();
         failure = out && out.ok !== true ? failureKind(out.code) : 'failed';
+        writeFailure = null;
         said = null;
       }
       paintLine();
@@ -677,6 +707,7 @@ export function createGuideLine({
       if (field.value.length > GUIDE_PROMPT_MAX) return;
       const gaps = withAnswered(result.check, answered).checks.filter((c) => c && c.covered !== true).map((c) => c.id);
       if (gaps.length === 0) return;
+      writeFailure = null;
       clearPending();
       if (inflight) { abortFlight(); asked = null; }
       if (held) { held = null; asked = null; }
@@ -705,6 +736,7 @@ export function createGuideLine({
       if (!field || field.value !== req.before) { paintLine(); return; }
       if (!out || out.ok !== true) {
         const kind = failureKind(out ? out.code : 'BAD_REPLY');
+        writeFailure = kind;
         paintLine();
         if (mayFocus && !line.contains(doc.activeElement)) focusPrompt();
         if (kind && typeof ctx.announce === 'function') ctx.announce(kind === 'no-model' ? NO_MODEL_TEXT : FAIL_TEXT);
@@ -794,7 +826,7 @@ export function createGuideLine({
       const mine = changes;
       paint();
       queue(offerWasOn ? { on: next, offerSeen: true } : { on: next }).then(
-        () => { savedOn = next; },
+        () => { savedOn = next; if (next && mine === changes) checkNow(); },   // back on over a prompt: one check, once the profile says on
         () => { if (mine === changes) { prefs = { ...prefs, on: savedOn }; last = { ...prefs }; paint(); } },
       );
       if (typeof ctx.focus === 'function') ctx.focus();
@@ -806,7 +838,7 @@ export function createGuideLine({
     // During a write it is aborted (the field keeps everything typed); a written text's first edit ends Undo.
     const onFieldInput = () => {
       if (guideSets) return;
-      if (!selfWrite) { abortWrite(); written = null; }
+      if (!selfWrite) { abortWrite(); written = null; writeFailure = null; }
       if (addOpen !== null && !selfWrite) closeField();
       onInput();
     };
@@ -823,6 +855,7 @@ export function createGuideLine({
       : () => {};
     const offIntent = intent.onChange(decide);
     const offFlag = onFlagChange(FLAG, decide);
+    const offRole = typeof onRoleChange === 'function' ? onRoleChange(onRole) : () => {};
 
     const handle = {
       /** Read once more and repaint (a Models save); a mount not showing drops its kept read instead. */
@@ -841,6 +874,7 @@ export function createGuideLine({
         offIntent();
         offFlag();
         offSend();
+        offRole();
         if (field) {
           for (const type of FIELD_EVENTS) field.removeEventListener(type, onField);
           field.removeEventListener('input', onFieldInput);

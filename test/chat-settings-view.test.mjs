@@ -193,8 +193,9 @@ test('Summarise commands: on by default, a Beta chip, collects its value (#911)'
 });
 
 // ── Shaper ask screens, slice 2: Settings › Chat "Your role" (flag shaperSmallRuns) ──
-// One line: the card heading says "Your role", the explanation sits in the card's info tip, and the row holds only
-// the role button, which opens the composer's menu on the composer's controller.
+// One settings row, as its neighbours: the page's markup holds the label "Your role" with its Labs chip and info tip,
+// and mountRoleSetting puts the role button in the row's control; it opens the composer's menu on the composer's
+// controller. The card has no heading of its own.
 const WHY = 'Who is asking in the Shaper. Worca words its questions for you.';
 const ROLE_LABELS = ['Product', 'Engineering', 'Design', 'QA', 'Security', 'DevOps', 'Compliance', 'No role'];
 const settleRole = async () => { for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0)); };
@@ -220,7 +221,7 @@ async function withProfile(lead, run) {
     return { ok: true, status: 200, json: async () => ({ lead: profile.lead }) };
   };
   _resetAnswerer();
-  const dom = new JSDOM('<!doctype html><body><div class="drows" id="chatRoleHost"></div></body>');
+  const dom = new JSDOM('<!doctype html><body><div class="drows"><div class="field drow"><span class="drow-control" id="chatRoleHost"></span></div></div></body>');
   const d = dom.window.document;
   try {
     await run({ d, win: dom.window, host: d.getElementById('chatRoleHost'), profile });
@@ -236,14 +237,16 @@ const flagHooks = (state) => ({
 });
 const flip = (state, on) => { state.on = on; for (const fn of [...state.subs]) fn(on); };
 
-test('Your role row: only the role button, no second label and no help line; the menu is the composer\'s; a pick saves at once', async () => {
+test('Your role row: the control holds only the role button, the label\'s target; the menu is the composer\'s; a pick saves at once', async () => {
   await withProfile(null, async ({ d, win, host, profile }) => {
     const state = { on: true, subs: new Set() };
     const picker = createRolePicker({ intent: noIntent, ...flagHooks(state) });
     mountRole(host, picker, { doc: d, ...flagHooks(state) });
     await settleRole();
     assert.deepEqual(profile.requests, ['GET /api/answerer']);
-    assert.equal(host.querySelectorAll('.drow').length, 1, 'one row');
+    assert.deepEqual([...host.children], [host.querySelector('button')], 'the control holds the button and nothing else');
+    assert.equal(host.querySelector('button').id, 'chatRolePick', 'the row label\'s target');
+    assert.equal(chatSettings.ROLE_PICK_ID, 'chatRolePick');
     assert.equal(host.querySelectorAll('button').length, 1, 'no Save');
     assert.equal(host.querySelector('.drow-label, .drow-help, small, .hint, p'), null, 'no label and no grey help line');
     const btn = () => host.querySelector('button');
@@ -335,25 +338,34 @@ test('R-arch-11 Your role row: flag off, an empty host and no read; on, it paint
   assert.equal(listeners.size, 0);
 });
 
-test('Settings › Chat markup: the "Your role" card sits between Links in answers and Limits & access, flag-gated, with its info tip and no Save', () => {
+test('Settings › Chat markup: the "Your role" card sits between Links in answers and Limits & access, flag-gated: one row of label, Labs chip, info tip and control, no heading and no Save', () => {
   const page = new JSDOM(readIndexHtml()).window.document;
   const card = page.getElementById('chat-role-card');
   assert.ok(card, '#chat-role-card');
   assert.equal(card.closest('.settings-pane').dataset.tab, 'ask', 'the Chat tab');
   assert.ok(card.matches('section.card.settings-card'));
   assert.equal(card.dataset.flag, 'shaperSmallRuns');
-  assert.ok('flagChip' in card.dataset);
+  assert.equal('flagChip' in card.dataset, false, 'the Labs chip sits with the row label, not under the card');
   assert.equal(card.dataset.minLevel, 'simple');
   assert.equal(card.previousElementSibling?.id, 'chat-links-card');
   assert.equal(card.nextElementSibling?.id, 'ask-settings-card');
-  assert.equal(card.querySelector('h2').textContent.trim(), 'Your role');
-  const tip = card.querySelector('.card-head button.info-tip');
-  assert.ok(tip?.getAttribute('aria-label'), 'the explanation goes into an info tip, as on Limits & access');
+  assert.equal(card.querySelector('.card-head, h2'), null, 'one row and nothing above it, as the Worca root folder card');
+  assert.deepEqual([...card.children].map((n) => n.className), ['drows']);
+  const rows = [...card.querySelectorAll('.drows > *')];
+  assert.equal(rows.length, 1, 'one row');
+  assert.ok(rows[0].matches('div.field.drow'), 'the settings row its neighbours use');
+  assert.deepEqual([...rows[0].children].map((n) => n.className), ['label-row drow-label', 'drow-control'], 'the label, then the control, on one row');
+  const label = rows[0].querySelector('.drow-label > label');
+  assert.equal(label?.textContent.trim(), 'Your role');
+  assert.equal(label.getAttribute('for'), chatSettings.ROLE_PICK_ID, 'the label names the role button');
+  assert.equal(label.dataset.flagChip, 'shaperSmallRuns', 'the Labs chip goes right after the label');
+  const tip = rows[0].querySelector('.drow-label > button.info-tip');
+  assert.ok(tip?.getAttribute('aria-label'), 'the explanation goes into an info tip, as on Turn limit');
   assert.equal(tip.querySelector('.tip-content.hidden')?.textContent.trim(), WHY);
   const host = card.querySelector('#chatRoleHost');
-  assert.ok(host?.matches('div.drows'));
+  assert.ok(host?.matches('.drow > span.drow-control'));
   assert.equal(host.children.length, 0, 'painted by mountRoleSetting, under the flag only');
-  assert.equal(card.querySelector('.drow-label, .drow-help, .hint, small'), null, 'no second label, no grey help line');
+  assert.equal(card.querySelector('.drow-help, .hint, small'), null, 'no grey help line');
   assert.equal(card.querySelector('.btn-primary'), null, 'saves on pick');
   assert.equal(timesSaid(card, 'Your role'), 1);
   const entry = CARDS.find((c) => c.id === 'chat-role-card');

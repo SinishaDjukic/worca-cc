@@ -44656,7 +44656,7 @@ const chatHomeTimers = {
 };
 const chatIntent = installIntentAddon({ onSend: () => { chatHome?.armFlip(); } });
 const chatRole = installRolePicker({ intent: chatIntent });
-installGuideLine({ intent: chatIntent, role: () => chatRole.role(), timers: chatHomeTimers });
+installGuideLine({ intent: chatIntent, role: () => chatRole.role(), onRoleChange: (fn) => chatRole.onChange(fn), timers: chatHomeTimers });
 const chatRoleRow = mountRoleSetting(document.getElementById('chatRoleHost'), chatRole, { doc: document });
 
 // ── Chat home (worca Chat P6) ──────────────────────────────────────────────────────────────────────────────

@@ -110,6 +110,9 @@ test('the app, loaded on a deep link to Settings › Chat, shows one "Your role"
   assert.ok(await a.until(() => setting()?.textContent === 'Compliance'), 'the saved role');
   assert.equal(timesSaid(card, 'Your role'), 1);
   assert.equal(card.querySelectorAll('#chatRoleHost button').length, 1);
+  const labs = card.querySelector('.drow-label > label + a.flag-chip');
+  assert.equal(labs?.textContent, 'Labs', 'the Labs chip sits right after the row label');
+  assert.equal(card.querySelector('#chatRoleHost button').id, card.querySelector('.drow-label > label').getAttribute('for'));
   await saveAnswerer('qa', a.window.fetch);     // a Shaper card saves a role elsewhere
   a.go('settings/general'); await a.settle(8);
   a.go('settings/ask'); await a.settle(12);

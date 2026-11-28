@@ -234,11 +234,13 @@ export function collectAskWebFields(root) {
 }
 
 const ROLE_FLAG = 'shaperSmallRuns';
+export const ROLE_PICK_ID = 'chatRolePick';
 
 /**
- * Settings › Chat "Your role" (Shaper ask screens): one row holding only the role button, which opens the composer
- * picker's own menu (`picker.openMenu`) and saves on pick. The card heading names it and its info tip explains it.
- * With the flag off the host stays empty and nothing is read; the row follows the flag both ways.
+ * Settings › Chat "Your role" (Shaper ask screens): the control of one settings row. The page's markup holds the row
+ * as its neighbours are built (the label "Your role", its Labs chip and info tip); `host` is the row's control, and
+ * this puts the role button in it, which opens the composer picker's own menu (`picker.openMenu`) and saves on pick.
+ * With the flag off the host stays empty and nothing is read; the button follows the flag both ways.
  * @param {HTMLElement} host
  * @param {{ role(): string|null, openMenu(o: object): object, refresh(): void, onChange(fn: Function): () => void }} picker
  * @returns {{ refresh(): void, destroy(): void }}
@@ -262,11 +264,8 @@ export function mountRoleSetting(host, picker, { doc = globalThis.document, flag
     btn.setAttribute('aria-expanded', 'false');
     const own = btn;
     btn.addEventListener('click', () => picker.openMenu({ doc, anchor: own, returnFocus: own }));
-    const row = h(doc, 'div', 'drow');
-    const ctl = h(doc, 'span', 'drow-control');
-    ctl.appendChild(btn);
-    row.appendChild(ctl);
-    host.replaceChildren(row);
+    btn.id = ROLE_PICK_ID;   // the row's <label for>
+    host.replaceChildren(btn);
     paint();
     offPicker = picker.onChange(paint);
     picker.refresh();
