@@ -3879,12 +3879,18 @@ export function answererProfileFor(person, { smallRuns = false } = {}) {
   return { lead: isAnswererLead(lead, { smallRuns }) ? lead : null };
 }
 
-/** Set the person's lead. Throws { code: 'BAD_LEAD' } before any write, naming the leads `smallRuns` allows. */
+/** Set the person's lead, keeping the record's other keys. Under `smallRuns` an explicit `null` ("No role") removes
+ *  the lead. Throws { code: 'BAD_LEAD' } before any write, naming the leads `smallRuns` allows. */
 export async function setAnswererProfileFor(person, { lead } = {}, { smallRuns = false } = {}) {
-  if (!isAnswererLead(lead, { smallRuns })) throw Object.assign(new Error(`Pick one of: ${answererLeadKeys({ smallRuns }).join(', ')}`), { code: 'BAD_LEAD' });
+  const clear = lead === null && smallRuns === true;
+  if (!clear && !isAnswererLead(lead, { smallRuns })) throw Object.assign(new Error(`Pick one of: ${answererLeadKeys({ smallRuns }).join(', ')}`), { code: 'BAD_LEAD' });
   const settings = readSettings();
   const map = answererMap(settings);
-  map[pinsPersonKey(person)] = { lead };
+  const key = pinsPersonKey(person);
+  const record = map[key] && typeof map[key] === 'object' && !Array.isArray(map[key]) ? { ...map[key] } : {};
+  if (clear) delete record.lead;
+  else record.lead = lead;
+  map[key] = record;
   settings.answererProfiles = map;
   await persistSettings(settings);
   return answererProfileFor(person, { smallRuns });

@@ -7,6 +7,9 @@ import assert from 'node:assert/strict';
 import { makePanel } from './helpers/ask-panel-harness.mjs';
 import { stampFrames } from './helpers/ask-frames.mjs';
 import { registerChatCard, registerComposerAddon, _resetChatExtensions } from '../ui/public/chat/extensions.mjs';
+import { installIntentAddon } from '../ui/public/chat/intent.mjs';
+import { _resetAnswerer } from '../ui/public/answerer.mjs';
+import { INTENT_LEADS } from '../src/shared/intent-leads.mjs';
 
 const TID = 'ask_00000001';
 const MID = 'askm_00000001';
@@ -335,4 +338,95 @@ test('New chat hands the add-ons the empty chat at once (update(null)), before a
   assert.equal(seen.at(-1), TID);
   ctx.doc.querySelector('.chat-head [data-ask-new-btn]').click();
   assert.equal(seen.at(-1), null, 'the add-ons see the new (empty) chat');
+});
+
+// The composer's role picker (ui/public/chat/role-picker.mjs) in the real panel, registered after the intent chip as
+// app.js does, on a new chat's home (where a Shaper pin lives). It uses the app's own profile loader and saver, so
+// every /api/answerer request, from the panel's fetch or the page's, is recorded.
+const SHAPER_TEXT = 'Uploads fail on large files';
+
+async function composer(t, { lead = null, flag = true, picker = true, pin = 'shape' } = {}) {
+  _resetChatExtensions();
+  _resetAnswerer();
+  const rec = {};
+  const requests = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    requests.push(`${init?.method || 'GET'} ${url}`);
+    return { ok: true, status: 200, json: async () => ({ lead }) };
+  };
+  t.after(() => { globalThis.fetch = realFetch; _resetAnswerer(); });
+  const intent = installIntentAddon();
+  if (picker) {
+    const { installRolePicker } = await import('../ui/public/chat/role-picker.mjs');
+    installRolePicker({ intent, flagOn: () => flag, onFlagChange: () => () => {} });
+  }
+  const panelApi = api(rec);
+  const ctx = makePanel({
+    fetchHandler: (url, opts) => {
+      requests.push(`${(opts.method || 'GET').toUpperCase()} ${url}`);
+      if (url === '/api/ask/threads' && opts.method === 'POST') return { ok: true, status: 201, json: async () => ({ thread: THREAD }) };
+      return panelApi(url, opts);
+    },
+  });
+  const settle = async () => { for (let i = 0; i < 4; i += 1) await ctx.tick(); ctx.flush(); };
+  ctx.panel.open();
+  await settle();
+  if (pin) intent.set(pin, { focus: false });
+  await settle();
+  const lead0 = ctx.doc.querySelector('[data-chat-composer-lead]');
+  const send = async (text) => {
+    const input = ctx.doc.querySelector('.ask-input');
+    input.value = text;
+    input.dispatchEvent(new ctx.window.Event('input', { bubbles: true }));
+    assert.equal(ctx.doc.querySelector('.ask-send').disabled, false, 'Send is enabled with text');
+    const leadHtml = lead0.innerHTML;
+    ctx.doc.querySelector('.ask-send').click();
+    await settle();
+    return leadHtml;
+  };
+  return { ...ctx, rec, requests, intent, lead: lead0, send, settle };
+}
+
+for (const [row, saved, want] of [
+  ['a role picked', 'compliance', `${INTENT_LEADS.shape}\n\nAsking as: compliance.\n\n${SHAPER_TEXT}`],
+  ['no role', null, `${INTENT_LEADS.shape}\n\n${SHAPER_TEXT}`],
+]) {
+  test(`R-qa-13: a Shaper send with ${row} goes out exactly once, writes no profile and shows only the person's words`, async (t) => {
+    const c = await composer(t, { lead: saved });
+    const picker = c.lead.querySelector('.ask-asker-pick');
+    assert.ok(picker, 'the picker is in the lead row');
+    assert.equal(picker.previousElementSibling, c.lead.querySelector('.chat-intent'));
+    assert.equal(picker.querySelector('.ask-asker-l').textContent, saved ? 'Compliance' : 'Your role');
+    await c.send(SHAPER_TEXT);
+    assert.equal(c.rec.messageBodies?.length, 1, 'exactly one message');
+    assert.equal(c.rec.messageBodies[0].text, want);
+    assert.deepEqual(c.requests.filter((r) => r.includes('/api/answerer')), ['GET /api/answerer'], 'the send writes no profile');
+    assert.equal(c.doc.querySelector('.ask-user-bubble').textContent, SHAPER_TEXT);
+    assert.ok(c.doc.querySelector('.ask-user-intent'), 'the Shaper chip on the bubble');
+    assert.doesNotMatch(c.panel.root.textContent, /Asking as:/);
+  });
+}
+
+test('R-arch-1 example: an ordinary chat with the flag on and no Shaper pin shows no picker, no switch, no line and asks for nothing', async (t) => {
+  const c = await composer(t, { lead: 'qa', pin: null });
+  assert.equal(c.lead.childElementCount, 0);
+  await c.send('why did the last run fail?');
+  assert.equal(c.doc.querySelector('.ask-asker-pick'), null);
+  assert.equal(c.doc.querySelector('.ask-guide, .ask-guide-sw, .chat-composer-lead [role="switch"]'), null);
+  assert.deepEqual(c.requests.filter((r) => /answerer|guide/i.test(r)), []);
+  assert.equal(c.rec.messageBodies.at(-1).text, 'why did the last run fail?');
+});
+
+test('R-arch-1: with the flag off, even with the Shaper pin, the lead row, the requests and the sent text are as without the picker', async (t) => {
+  const walk = async (picker) => {
+    const c = await composer(t, { lead: 'qa', flag: false, picker });
+    const leadHtml = await c.send(SHAPER_TEXT);
+    return { leadHtml, requests: c.requests, text: c.rec.messageBodies.at(-1).text, pickers: c.doc.querySelectorAll('.ask-asker-pick').length };
+  };
+  const without = await walk(false);
+  const withPicker = await walk(true);
+  assert.deepEqual(withPicker, without);
+  assert.equal(withPicker.pickers, 0);
+  assert.equal(withPicker.text, `${INTENT_LEADS.shape}\n\n${SHAPER_TEXT}`);
 });

@@ -504,6 +504,9 @@ button keeps its `aria-label` and has no `title`, so the browser's own tooltip n
 above the button on hover or keyboard focus after .3s, and never while a menu of the row is open. Only the
 composer row draws it (the rule is scoped to that row). A tip is `display:none` at rest, never a box laid out at
 opacity 0.
+The lead row above the field holds the intent pin; with the Shaper pinned (and the `shaperSmallRuns` flag on) the role picker sits
+right after it: a `btn btn-sm btn-quiet` with the role's 14px icon, its name and a 12px `chevron-down`, opening the
+app menu. When the lead row would wrap, it folds to its icon and arrow (`.is-folded`); its name stays in `aria-label` and `title`.
 #### Lock tip
 A locked small-runs **Create N PRs** says why in `.rd-tip` (`role="tooltip"`, named by the button's
 `aria-describedby`), never a native `title`, which opens over the status line. It has the Composer bar tip's look

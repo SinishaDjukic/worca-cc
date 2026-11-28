@@ -6,7 +6,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { appServer } from './helpers/app-server.mjs';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _resetForTests } from '../src/core/db.mjs';
@@ -137,3 +137,59 @@ test('POST /api/run with no shape.lead: the saved lead with the flag on, Product
     if (prevFlags === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = prevFlags;
   }
 });
+
+// "No role" (the composer's role picker): with the flag on, `{ lead: null }` removes the lead and nothing else.
+const settingsFile = () => join(home, '.worca-cc', 'settings.json');
+const records = () => JSON.parse(settingsBytes()).answererProfiles;
+function seedProfiles(map) {
+  const now = settingsBytes();
+  writeFileSync(settingsFile(), JSON.stringify({ ...(now ? JSON.parse(now) : {}), answererProfiles: map }));
+}
+async function withFlags(value, fn) {
+  const prev = process.env.WORCA_FLAGS;
+  if (value === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = value;
+  try { await fn(); } finally {
+    if (prev === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = prev;
+  }
+}
+
+test('R-qa-11: flag on, PUT compliance then PUT null returns { lead: null } and keeps every other key of the record', () => withFlags('shaperSmallRuns', async () => {
+  const ada = { lead: 'product', note: 'ada' };
+  seedProfiles({ '': { lead: 'qa', note: 'kept' }, 'ada@example.com': ada });
+  const picked = await put({ lead: 'compliance' });
+  assert.equal(picked.status, 200);
+  assert.deepEqual(records()[''], { lead: 'compliance', note: 'kept' }, 'a lead write merges the record');
+  const none = await put({ lead: null });
+  const body = await none.json();
+  assert.equal(none.status, 200, JSON.stringify(body));
+  assert.deepEqual(body, { lead: null });
+  assert.deepEqual(await get(), { lead: null });
+  assert.deepEqual(records()[''], { note: 'kept' }, 'the lead key is gone, the rest stays');
+  assert.deepEqual(records()['ada@example.com'], ada, 'another person is untouched');
+  const again = await put({ lead: null });
+  assert.equal(again.status, 200, '"No role" with none saved');
+  assert.deepEqual(records()[''], { note: 'kept' });
+}));
+
+test('R-arch-8: flag off, PUT null is 400 BAD_LEAD and writes nothing; a lead write still keeps the other keys', () => withFlags(undefined, async () => {
+  seedProfiles({ '': { lead: 'qa', note: 'kept' } });
+  const before = settingsBytes();
+  const r = await put({ lead: null });
+  assert.equal(r.status, 400);
+  assert.deepEqual(await r.json(), { error: { code: 'BAD_LEAD', message: 'Pick one of: product, architect, ux, qa, security, devops' } });
+  assert.equal(settingsBytes(), before);
+  assert.deepEqual(await get(), { lead: 'qa' });
+  assert.equal((await put({ lead: 'architect' })).status, 200);
+  assert.deepEqual(records()[''], { lead: 'architect', note: 'kept' });
+}));
+
+test('flag on, only an explicit null clears: a body with no lead is still 400 BAD_LEAD and writes nothing', () => withFlags('shaperSmallRuns', async () => {
+  seedProfiles({ '': { lead: 'qa' } });
+  const before = settingsBytes();
+  for (const body of [{}, { lead: '' }, { lead: 'null' }]) {
+    const r = await put(body);
+    assert.equal(r.status, 400, JSON.stringify(body));
+    assert.equal((await r.json()).error.code, 'BAD_LEAD');
+  }
+  assert.equal(settingsBytes(), before);
+}));

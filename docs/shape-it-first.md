@@ -616,6 +616,12 @@ requirement change on a feature that "has no runs that own its requirements", or
 because "the Shaper Labs switch is off". With the flag off, a marked feature's Ship dialog keeps its old One reason, and
 a stored old outcome reads "each run of this feature ships its own pull request".
 
+**Who is asking.** With the Shaper pinned in the Chat composer, a small role button sits right after the pin and asks
+who is asking: one of the seven roles (Product, Engineering, Design, QA, Security, DevOps, Compliance) or "No role". The
+pick is remembered in the person's answerer profile; "No role" clears it. The role rides the sent Shaper message as one
+line after the Shaper lead, for the model only: the bubble and the chat title never show it. Sending never needs a
+role, and with no role the message is sent as before.
+
 ### The card's steps
 
 The feature has one card, and its step heads read as the card shows them:
