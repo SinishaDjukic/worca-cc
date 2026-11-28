@@ -22,7 +22,7 @@ export const NO_ROLE_ICON = 'person';
 
 const FLAG = 'shaperSmallRuns';
 const NAME_NONE = 'Your role';
-const TITLE = 'Who is asking: Worca words its questions for you. Remembered.';
+const TITLE = 'Who is asking: Worca words its questions for you. Remembered; change it in Settings › Chat.';
 const LAST_TIME = 'you, last time';
 
 /** Does the picker sit on a later line of the lead row than the pin (the row wraps)? */
@@ -39,7 +39,9 @@ function layoutWraps(leadEl, pickerEl) {
  *   flagOn?: (key: string) => boolean, onFlagChange?: (key: string, fn: Function) => () => void,
  *   load?: () => Promise<{ lead: string|null }>, save?: (lead: string|null) => Promise<{ lead: string|null }>,
  *   measureWraps?: (leadEl: HTMLElement, pickerEl: HTMLElement) => boolean }} deps
- * @returns {{ addon: { id: string, mount(leadEl, ctx) }, role(): string|null }}
+ * @returns {{ addon: { id: string, mount(leadEl, ctx) }, role(): string|null, choose(lead: string|null): void,
+ *   openMenu(o: { doc: Document, anchor: HTMLElement, returnFocus?: HTMLElement|null }): { close(): void },
+ *   refresh(): void, onChange(fn: () => void): () => void }}
  */
 export function createRolePicker({
   intent,
@@ -60,7 +62,11 @@ export function createRolePicker({
   let stored = 0;         // saves landed so far
   let chain = Promise.resolve(); // saves run one after another, in the order they were picked
   const mounts = new Set();
-  const repaint = () => { for (const m of mounts) m.paint(); };
+  const listeners = new Set();
+  const repaint = () => {
+    for (const m of mounts) m.paint();
+    for (const fn of [...listeners]) fn();
+  };
   const wanted = () => flagOn(FLAG) === true && intent.current() === 'shape';
 
   /** Read the profile each time the picker shows. The app's loader answers from its cache (no request) once a read
@@ -91,7 +97,8 @@ export function createRolePicker({
   /** A pick paints at once. Saves are chained, so the profile ends on the last pick; a refused save puts the stored
    *  role back when it was the latest pick, with nothing said. */
   function choose(next) {
-    if (next === role) return;
+    // Before the first read lands, the role shown is not yet the profile's: a pick of it still saves, and wins.
+    if (next === role && landed) return;
     role = next;
     touched = true;
     picks += 1;
@@ -104,6 +111,20 @@ export function createRolePicker({
         () => { if (role === next) { role = saved; if (!landed) touched = false; } },
       )
       .finally(() => { pending -= 1; repaint(); });
+  }
+
+  /** The role menu, one builder for every opener (the composer's button, the Settings › Chat row). */
+  function openMenu({ doc, anchor, returnFocus = null }) {
+    const items = [
+      ...answererLeadKeys({ smallRuns: true }).map((k) => ({
+        label: leadLabel(k), icon: ROLE_ICONS[k], checked: k === role,
+        ...(k === saved ? { hint: LAST_TIME } : {}),
+        onSelect: () => choose(k),
+      })),
+      { sep: true },
+      { label: 'No role', icon: NO_ROLE_ICON, checked: role === null, onSelect: () => choose(null) },
+    ];
+    return toggleMenu({ doc, anchor, items, label: NAME_NONE, returnFocus });
   }
 
   function mount(leadEl, ctx = {}) {
@@ -160,19 +181,7 @@ export function createRolePicker({
       read();
     }
 
-    btn.addEventListener('click', () => {
-      const keys = answererLeadKeys({ smallRuns: true });
-      const items = [
-        ...keys.map((k) => ({
-          label: leadLabel(k), icon: ROLE_ICONS[k], checked: k === role,
-          ...(k === saved ? { hint: LAST_TIME } : {}),
-          onSelect: () => choose(k),
-        })),
-        { sep: true },
-        { label: 'No role', icon: NO_ROLE_ICON, checked: role === null, onSelect: () => choose(null) },
-      ];
-      menu = toggleMenu({ doc, anchor: btn, items, label: NAME_NONE, returnFocus: input });
-    });
+    btn.addEventListener('click', () => { menu = openMenu({ doc, anchor: btn, returnFocus: input }); });
 
     const offIntent = intent.onChange(decide);
     const offFlag = onFlagChange(FLAG, decide);
@@ -200,7 +209,15 @@ export function createRolePicker({
     return handle;
   }
 
-  return { addon: Object.freeze({ id: ROLE_PICKER_ADDON_ID, mount }), role: () => role };
+  return {
+    addon: Object.freeze({ id: ROLE_PICKER_ADDON_ID, mount }),
+    role: () => role,
+    choose,
+    openMenu,
+    /** Read the profile again (Settings › Chat on each open); nothing with the flag off. */
+    refresh() { if (flagOn(FLAG) === true) read(); },
+    onChange(fn) { listeners.add(fn); return () => { listeners.delete(fn); }; },
+  };
 }
 
 /** Create the picker and register its add-on (CONTRACT §2). app.js calls this right after installIntentAddon. */

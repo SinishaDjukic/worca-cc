@@ -1513,14 +1513,15 @@ const shapeListed = (rec) => { const base = apiHandler(rec); return (url, opts) 
 const startLabel = (el) => [...el.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join('');
 // A thread whose snapshot already holds the card: a hello's resync re-renders the chat from it.
 const settleCard = async (ctx) => { for (let i = 0; i < 8; i++) await ctx.tick(); ctx.flush(); };
-async function openFromSnapshot(block, rec = {}) {
-  const base = apiHandler(rec);
+async function openFromSnapshot(block, rec = {}, { userText = 'hi', flags = '', fetchHandler } = {}) {
+  const base = fetchHandler || apiHandler(rec);
   const snap = { thread: { id: TID, title: 'T', createdAt: 't', updatedAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {} },
-    messages: [{ id: 'askm_u0000001', threadId: TID, seq: 1, role: 'user', text: 'hi', blocks: [], status: null, createdAt: 't' },
+    messages: [{ id: 'askm_u0000001', threadId: TID, seq: 1, role: 'user', text: userText, blocks: [], status: null, createdAt: 't' },
       { id: MID, threadId: TID, seq: 2, role: 'assistant', text: 'ok', blocks: [block], status: 'done', createdAt: 't' }],
     attachments: [], runLinks: [], inFlight: null };
   const ctx = makePanel({ fetchHandler: (url, opts) => (url === `/api/ask/threads/${TID}` && (opts.method || 'GET').toUpperCase() === 'GET'
     ? { ok: true, status: 200, json: async () => snap } : base(url, opts)) });
+  if (flags) ctx.doc.documentElement.dataset.flags = flags;
   ctx.storage.setItem('worca-cc.ask.thread', TID);
   ctx.panel.open();
   await settleCard(ctx);
@@ -3146,6 +3147,104 @@ test('ask-panel-card: direct card, flag on, small or no size', async () => {
 
 // ── Chat runs: source branch (plan steps 8–9): the card's gate comes from GET /api/run-defaults' chatSourceBranch ──
 const PICK_HINT = 'Pick a source branch to start this run. Set in Settings › Runs › Chat runs: source branch.';
+// Shaper ask screens, slice 2 (flag shaperSmallRuns): the card reads the role sent with the message it answers, or
+// offers the picker as its first fact row; Shape requirements never waits for a role and reads no profile at start.
+const sentMessage = (role) => ['Shape this task first: propose a run with `shape`.', ...(role ? [`Asking as: ${role}.`] : []), 'Add export'].join('\n\n');
+/** A proposed card under the flag, answering `role`'s message (null: no role line). `rec.answerer` records every
+ *  /api/answerer request, through the panel's fetch and through the page's own. `run(ctx, cardEl)` is the test body. */
+async function withSentCard({ card, role = null, lead = null, flags = 'shaperSmallRuns' }, run) {
+  _resetAnswerer();
+  const rec = { answerer: [] };
+  const stubbed = answererApi(rec, { lead });
+  const fetchHandler = (url, opts) => {
+    if (url === '/api/answerer') rec.answerer.push((opts.method || 'GET').toUpperCase());
+    return stubbed(url, opts);
+  };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts = {}) => fetchHandler(String(url), opts);
+  try {
+    const ctx = await openFromSnapshot({ kind: 'card', id: CARD_ID, state: 'proposed', card: { ...PROJECT_CARD, ...card } }, rec,
+      { userText: sentMessage(role), flags, fetchHandler });
+    await settle(ctx);
+    ctx.flush();
+    await run({ ctx, rec, card: () => ctx.doc.querySelector('.ask-card') });
+  } finally { globalThis.fetch = realFetch; }
+}
+const roleRow = (cardEl) => cardEl.querySelector('.shape-card .rd-kv-row');
+const CARDS_UNDER_FLAG = [['a nudged card', { nudge: REQ_NUDGE }], ['a direct card', { shape: DIRECT_SHAPE }]];
+
+test('ask-panel-card: Compliance sent, the profile cleared: the card reads Compliance and Shape requirements starts a Compliance-led run (R-qa-8, R-arch-5)', async () => {
+  await checkRows(CARDS_UNDER_FLAG.map(([name, card]) => shapeRow(name, () => withSentCard({ card, role: 'compliance', lead: null }, async ({ ctx, rec, card: cardEl }) => {
+    const first = roleRow(cardEl());
+    assert.equal(first?.querySelector('.rd-kv-k').textContent, 'Your role', 'the first fact row');
+    assert.equal(first.querySelector('.rd-kv-v').textContent, 'Compliance');
+    assert.equal(cardEl().querySelector('.shape-lead-line'), null, 'no "You lead as" sentence');
+    const shapeBtn = cardEl().querySelector('[data-ask-card-shape]');
+    assert.equal(shapeBtn.textContent, 'Shape requirements');
+    assert.equal(shapeBtn.hasAttribute('aria-disabled'), false);
+    ctx.panel.onHello([]);                                  // the hello's resync re-renders the chat: the card keeps its role
+    await settleCard(ctx);
+    assert.equal(roleRow(cardEl()).querySelector('.rd-kv-v').textContent, 'Compliance');
+    cardEl().querySelector('[data-ask-card-shape]').click();
+    await settle(ctx);
+    assert.equal(rec.runBodies?.length, 1);
+    assert.equal(rec.runBodies[0].workflowId, 'wf_shape');
+    assert.equal(rec.runBodies[0].shape.lead, 'compliance');
+    assert.ok(rec.runBodies[0].shape.perspectives.includes('compliance'));
+    assert.deepEqual(rec.answerer, [], 'no /api/answerer request at all, at build or at start');
+  }))));
+});
+
+test('ask-panel-card: no role sent: the picker is the first fact row, Shape requirements is enabled and starts with no lead, so the server fills the saved lead, else Product (R-po-6, R-qa-9)', async () => {
+  await checkRows(CARDS_UNDER_FLAG.map(([name, card]) => shapeRow(name, () => withSentCard({ card, role: null, lead: null }, async ({ ctx, rec, card: cardEl }) => {
+    const first = roleRow(cardEl());
+    assert.equal(first?.querySelector('.rd-kv-k').textContent, 'Your role');
+    assert.equal(first.querySelector('.rd-kv-v .shape-lead-pick')?.textContent, 'pick a role');
+    assert.equal(cardEl().querySelector('.shape-lead-line'), null);
+    const shapeBtn = cardEl().querySelector('[data-ask-card-shape]');
+    assert.equal(shapeBtn.hasAttribute('aria-disabled'), false);
+    assert.equal(shapeBtn.hasAttribute('aria-describedby'), false);
+    const before = rec.answerer.length;
+    shapeBtn.click();
+    await settle(ctx);
+    assert.equal(rec.runBodies?.length, 1, 'it still works');
+    assert.equal(rec.runBodies[0].workflowId, 'wf_shape');
+    assert.ok(rec.runBodies[0].shape, 'a shaped start');
+    assert.equal('lead' in rec.runBodies[0].shape, false);
+    assert.deepEqual(rec.answerer.slice(before), [], 'R-arch-5: no profile read or write at start');
+  }))));
+});
+
+test('ask-panel-card: no role sent, a QA pick on the card: the click reads no profile, saves the pick once and starts with it (R-arch-8)', async () => {
+  await withSentCard({ card: { nudge: REQ_NUDGE }, role: null, lead: 'architect' }, async ({ ctx, rec, card: cardEl }) => {
+    const pickBtn = roleRow(cardEl())?.querySelector('.shape-lead-pick');
+    assert.equal(pickBtn?.textContent, 'Engineering', 'the saved lead presets the first fact row');
+    pickBtn.click();
+    [...ctx.doc.querySelectorAll('.wfv-menu [role="menuitemradio"]')]
+      .find((i) => i.querySelector('.wfv-menu-l').textContent === 'QA').click();
+    assert.equal(rec.puts, undefined, 'a pick alone does not save');
+    const before = rec.answerer.length;
+    cardEl().querySelector('[data-ask-card-shape]').click();
+    await settle(ctx);
+    assert.deepEqual(rec.answerer.slice(before), ['PUT'], '0 GET, 1 PUT from the click on');
+    assert.deepEqual(rec.puts, [{ lead: 'qa' }]);
+    assert.equal(rec.runBodies[0].shape.lead, 'qa');
+  });
+});
+
+test('ask-panel-card: flag off, a message that carries a role line changes nothing: the sentence, and blocked until a lead (R-arch-1)', async () => {
+  await withSentCard({ card: { nudge: REQ_NUDGE }, role: 'compliance', lead: null, flags: '' }, async ({ ctx, rec, card: cardEl }) => {
+    assert.equal(cardEl().querySelector('.shape-lead-facts'), null);
+    assert.match(cardEl().querySelector('.shape-lead-line').textContent, /^You lead as pick a role, supported by /);
+    const shapeBtn = cardEl().querySelector('[data-ask-card-shape]');
+    assert.equal(shapeBtn.getAttribute('aria-disabled'), 'true');
+    shapeBtn.click();
+    await settle(ctx);
+    assert.equal(rec.runBodies, undefined);
+    assert.deepEqual(rec.answerer, ['GET'], 'today\'s one read at build');
+  });
+});
+
 const srcSelOf = (cardEl) => cardEl.querySelector('.ask-card-source');
 const srcFieldOf = (cardEl) => srcSelOf(cardEl).closest('.ask-rp-field');
 const branchHint = (cardEl) => cardEl.querySelector('.ask-rp-field p.hint');

@@ -545,6 +545,13 @@ Shaper's Requirements step is a hold, like the plan approval, and it has its own
   **Run as is**, with the facts line and the perspective chips. A card proposed directly as Shaper gets the same
   sentence and **Shape requirements** when medium or large, and it has no **Run as is**; a small or unsized one keeps
   its fields and **Start planning**, with the facts line.
+- **With `shaperSmallRuns` on**, the Shaper card asks no role sentence. Under the facts line it shows two fact rows:
+  `Your role` and `Supported by`. A message sent with a role (see Who is asking under Small runs) shows that role as
+  plain text in the `Your role` row, and the supporters picker is the card's only control; the card reads no profile
+  and that role stays the card's lead for its whole life. With no role sent, the `Your role` row holds the lead picker,
+  preset to the role you used last time. **Shape requirements** never waits for a role: started with no pick, the run
+  leads as your saved lead, else Product. A pick on the card is remembered when you click it. You can also set or clear
+  the role in Settings › Chat, in its `Your role` card (Advanced and up); a card built earlier keeps its role.
 - **The Requirements card.** `3 decisions need you · as Product`, then the decisions the perspectives could not settle,
   then the agreed requirements folded away, then the foot. Each decision is one question with its answers stacked under
   it, Worca's pick already chosen and marked `recommended`; change any of them. An answer a perspective asked for says who
@@ -620,7 +627,8 @@ a stored old outcome reads "each run of this feature ships its own pull request"
 who is asking: one of the seven roles (Product, Engineering, Design, QA, Security, DevOps, Compliance) or "No role". The
 pick is remembered in the person's answerer profile; "No role" clears it. The role rides the sent Shaper message as one
 line after the Shaper lead, for the model only: the bubble and the chat title never show it. Sending never needs a
-role, and with no role the message is sent as before.
+role, and with no role the message is sent as before. The Shaper card reads the role sent with the message (see
+[Requirements first](#requirements-first)), and Settings › Chat › Your role sets or clears it.
 
 ### The card's steps
 

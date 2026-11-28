@@ -232,7 +232,7 @@ import { renderCatalogue, renderModelPanel } from './models/catalogue-view.mjs';
 import { buildJobs, jobsSaved, jobsSaveBody, jobsDirty } from './models/jobs-model.mjs';
 import { renderJobs, openOverrideMenu } from './models/jobs-view.mjs';
 import { openModelPicker } from './models/model-picker.mjs';
-import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
+import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields, collectAskWebFields, mountRoleSetting } from './chat-settings-view.mjs';
 import { renderCredentials } from './credentials-view.mjs';
 import { renderExtensionPairings, browserLabel, formatPairCode, renderExtensionInstall, selectInstallBrowser, detectBrowser } from './extension-settings-view.mjs';
 import { mountNetworkProxyCard } from './settings-network-proxy.mjs';
@@ -42844,6 +42844,7 @@ function showSettingsTab(param = '') {
   if (tab === 'presets') void loadPresetsView();
   if (tab === 'automations') void loadAutomationsView();
   if (tab === 'ask') void paintAskMcpBlock(document.getElementById('ask-mcp-host'), { api: mcpApi });
+  if (tab === 'ask') chatRoleRow.refresh();
   if (tab === 'guardrails') loadGuardrailsView(sub);
   if (tab === 'memory') loadMemoryTab(sub);
   if (tab === 'experimental') loadFlagsTab(sub);
@@ -44651,7 +44652,8 @@ const chatHomeTimers = {
   clearTimeout: (t) => clearTimeout(t),
 };
 const chatIntent = installIntentAddon({ onSend: () => { chatHome?.armFlip(); } });
-installRolePicker({ intent: chatIntent });
+const chatRole = installRolePicker({ intent: chatIntent });
+const chatRoleRow = mountRoleSetting(document.getElementById('chatRoleHost'), chatRole, { doc: document });
 
 // ── Chat home (worca Chat P6) ──────────────────────────────────────────────────────────────────────────────
 // The hero, quick actions, Needs you / Running / Recent chats / Workflows and the promos, inside the Chat page's

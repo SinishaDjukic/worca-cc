@@ -7,6 +7,15 @@ import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, colle
 import { applyFlags } from '../ui/public/flags.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
+// A namespace read, so a missing new export (mountRoleSetting) fails only its own tests.
+import * as chatSettings from '../ui/public/chat-settings-view.mjs';
+import { createRolePicker } from '../ui/public/chat/role-picker.mjs';
+import { _resetChatExtensions } from '../ui/public/chat/extensions.mjs';
+import { _resetAnswerer, saveAnswerer } from '../ui/public/answerer.mjs';
+import { CARDS } from '../ui/public/settings-index.mjs';
+import { icon } from '../ui/public/icons.mjs';
+import { closeMenus } from '../ui/public/workflows/menu.mjs';
+import { bootChat, ok } from './helpers/chat-panel-boot.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 
@@ -183,4 +192,274 @@ test('Summarise commands: on by default, a Beta chip, collects its value (#911)'
   assert.deepEqual(collectSummariesToggle(host), { summariseCommands: false });
   host.replaceChildren(renderSummariesToggle({ prefs: { summariseCommands: false } }, { doc }));
   assert.equal(host.querySelector('input.ask-summaries').checked, false);
+});
+
+// ── Shaper ask screens, slice 2: Settings › Chat "Your role" (flag shaperSmallRuns) ──
+// One line: the card heading says "Your role", the explanation sits in the card's info tip, and the row holds only
+// the role button, which opens the composer's menu on the composer's controller.
+const WHY = 'Who is asking in the Shaper. Worca words its questions for you.';
+const ROLE_LABELS = ['Product', 'Engineering', 'Design', 'QA', 'Security', 'DevOps', 'Compliance', 'No role'];
+const settleRole = async () => { for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0)); };
+/** What a person reads in `node`: its text without the closed info tips. */
+const shownText = (node) => { const c = node.cloneNode(true); c.querySelectorAll('.tip-content').forEach((n) => n.remove()); return c.textContent; };
+const timesSaid = (node, words) => shownText(node).split(words).length - 1;
+const menuRows = (d) => [...d.querySelectorAll('.wfv-menu [role^="menuitem"]')];
+const menuRow = (d, label) => menuRows(d).find((r) => r.querySelector('.wfv-menu-l').textContent === label);
+const noIntent = { current: () => null, onChange: () => () => {} };
+const glyphOf = (d, name) => icon(d, name).querySelector('svg').innerHTML;
+const mountRole = (...a) => {
+  assert.equal(typeof chatSettings.mountRoleSetting, 'function', 'chat-settings-view.mjs exports mountRoleSetting');
+  return chatSettings.mountRoleSetting(...a);
+};
+/** `run` with a fresh page and a stand-in for GET/PUT /api/answerer behind the app's own loader and saver. */
+async function withProfile(lead, run) {
+  const realFetch = globalThis.fetch;
+  const profile = { lead, requests: [] };
+  globalThis.fetch = async (url, init) => {
+    const method = init?.method || 'GET';
+    profile.requests.push(method === 'PUT' ? `PUT ${url} ${init.body}` : `${method} ${url}`);
+    if (method === 'PUT') profile.lead = JSON.parse(init.body).lead;
+    return { ok: true, status: 200, json: async () => ({ lead: profile.lead }) };
+  };
+  _resetAnswerer();
+  const dom = new JSDOM('<!doctype html><body><div class="drows" id="chatRoleHost"></div></body>');
+  const d = dom.window.document;
+  try {
+    await run({ d, win: dom.window, host: d.getElementById('chatRoleHost'), profile });
+  } finally {
+    closeMenus();
+    globalThis.fetch = realFetch;
+    _resetAnswerer();
+  }
+}
+const flagHooks = (state) => ({
+  flagOn: (k) => k === 'shaperSmallRuns' && state.on,
+  onFlagChange: (k, fn) => { assert.equal(k, 'shaperSmallRuns'); state.subs.add(fn); return () => { state.subs.delete(fn); }; },
+});
+const flip = (state, on) => { state.on = on; for (const fn of [...state.subs]) fn(on); };
+
+test('Your role row: only the role button, no second label and no help line; the menu is the composer\'s; a pick saves at once', async () => {
+  await withProfile(null, async ({ d, win, host, profile }) => {
+    const state = { on: true, subs: new Set() };
+    const picker = createRolePicker({ intent: noIntent, ...flagHooks(state) });
+    mountRole(host, picker, { doc: d, ...flagHooks(state) });
+    await settleRole();
+    assert.deepEqual(profile.requests, ['GET /api/answerer']);
+    assert.equal(host.querySelectorAll('.drow').length, 1, 'one row');
+    assert.equal(host.querySelectorAll('button').length, 1, 'no Save');
+    assert.equal(host.querySelector('.drow-label, .drow-help, small, .hint, p'), null, 'no label and no grey help line');
+    const btn = () => host.querySelector('button');
+    assert.ok(btn().matches('.drow .drow-control > button.btn.btn-sm.btn-quiet.shape-lead-pick.ask-asker-pick'), 'the composer\'s button');
+    assert.equal(btn().type, 'button');
+    assert.equal(btn().getAttribute('aria-haspopup'), 'menu');
+    assert.equal(btn().getAttribute('aria-label'), 'Your role: not picked');
+    assert.equal(timesSaid(host, 'Your role'), 0, 'the card heading names it, once');
+    assert.notEqual(btn().textContent.trim(), '', 'the button reads something with no role');
+    assert.equal(btn().querySelector('svg').innerHTML, glyphOf(d, 'person'));
+    assert.equal(btn().querySelectorAll('svg')[1]?.innerHTML, glyphOf(d, 'chevron-down'));
+
+    btn().focus();
+    btn().click();
+    assert.deepEqual(menuRows(d).map((r) => r.querySelector('.wfv-menu-l').textContent), ROLE_LABELS, '7 roles, then No role');
+    assert.equal(d.querySelectorAll('.wfv-menu .menu-sep').length, 1);
+    assert.ok(menuRows(d).every((r) => r.querySelector('.wfv-menu-ic svg')), 'an icon on every row');
+    menuRow(d, 'Compliance').click();
+    await settleRole();
+    assert.equal(profile.requests.at(-1), 'PUT /api/answerer {"lead":"compliance"}');
+    assert.equal(btn().textContent, 'Compliance');
+    assert.equal(btn().getAttribute('aria-label'), 'Your role: Compliance');
+    assert.equal(btn().querySelector('svg').innerHTML, glyphOf(d, 'scale'));
+    assert.equal(d.activeElement, btn(), 'focus is back on the button');
+
+    btn().click();
+    menuRow(d, 'No role').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+    await settleRole();
+    assert.equal(profile.requests.at(-1), 'PUT /api/answerer {"lead":null}');
+    assert.equal(btn().getAttribute('aria-label'), 'Your role: not picked');
+    assert.equal(timesSaid(host, 'Your role'), 0);
+    assert.equal(host.querySelectorAll('button').length, 1);
+
+    btn().click();
+    d.querySelector('.wfv-menu').dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    assert.equal(d.querySelector('.wfv-menu'), null);
+    assert.equal(d.activeElement, btn(), 'Escape returns focus too');
+  });
+});
+
+test('Your role row: refresh() reads the profile again and repaints, following a role saved elsewhere', async () => {
+  await withProfile('compliance', async ({ d, host }) => {
+    const state = { on: true, subs: new Set() };
+    const picker = createRolePicker({ intent: noIntent, ...flagHooks(state) });
+    const setting = mountRole(host, picker, { doc: d, ...flagHooks(state) });
+    await settleRole();
+    assert.equal(host.querySelector('button').textContent, 'Compliance');
+    await saveAnswerer('qa');                 // the Shaper card's write
+    setting.refresh();
+    await settleRole();
+    assert.equal(host.querySelector('button').textContent, 'QA');
+    assert.equal(host.querySelectorAll('button').length, 1);
+  });
+});
+
+test('R-arch-11 Your role row: flag off, an empty host and no read; on, it paints; off again, empty; destroy() lets go', () => {
+  const d = new JSDOM('<!doctype html><body><div id="chatRoleHost"></div></body>').window.document;
+  const host = d.getElementById('chatRoleHost');
+  const calls = { refresh: 0 };
+  const listeners = new Set();
+  const picker = {
+    role: () => 'qa', choose: () => {}, openMenu: () => ({ close() {} }),
+    refresh: () => { calls.refresh += 1; },
+    onChange: (fn) => { listeners.add(fn); return () => { listeners.delete(fn); }; },
+  };
+  const state = { on: false, subs: new Set() };
+  const setting = mountRole(host, picker, { doc: d, ...flagHooks(state) });
+  assert.equal(host.childNodes.length, 0, 'flag off: nothing in the host');
+  setting.refresh();
+  assert.equal(calls.refresh, 0, 'flag off: the profile is never asked for');
+  assert.equal(listeners.size, 0);
+  flip(state, true);
+  assert.equal(host.querySelectorAll('button').length, 1);
+  assert.equal(host.querySelector('button').textContent, 'QA');
+  assert.ok(calls.refresh >= 1, 'painted, then read');
+  assert.equal(listeners.size, 1);
+  const read = calls.refresh;
+  setting.refresh();
+  assert.equal(calls.refresh, read + 1);
+  flip(state, false);
+  assert.equal(host.childNodes.length, 0, 'off again: empty');
+  assert.equal(listeners.size, 0, 'and no longer listening to the picker');
+  setting.refresh();
+  assert.equal(calls.refresh, read + 1);
+  flip(state, true);
+  assert.equal(host.querySelectorAll('button').length, 1, 'on again: one row');
+  setting.destroy();
+  assert.equal(state.subs.size, 0);
+  assert.equal(listeners.size, 0);
+});
+
+test('Settings › Chat markup: the "Your role" card sits between Links in answers and Limits & access, flag-gated, with its info tip and no Save', () => {
+  const page = new JSDOM(readIndexHtml()).window.document;
+  const card = page.getElementById('chat-role-card');
+  assert.ok(card, '#chat-role-card');
+  assert.equal(card.closest('.settings-pane').dataset.tab, 'ask', 'the Chat tab');
+  assert.ok(card.matches('section.card.settings-card'));
+  assert.equal(card.dataset.flag, 'shaperSmallRuns');
+  assert.ok('flagChip' in card.dataset);
+  assert.equal(card.dataset.minLevel, 'simple');
+  assert.equal(card.previousElementSibling?.id, 'chat-links-card');
+  assert.equal(card.nextElementSibling?.id, 'ask-settings-card');
+  assert.equal(card.querySelector('h2').textContent.trim(), 'Your role');
+  const tip = card.querySelector('.card-head button.info-tip');
+  assert.ok(tip?.getAttribute('aria-label'), 'the explanation goes into an info tip, as on Limits & access');
+  assert.equal(tip.querySelector('.tip-content.hidden')?.textContent.trim(), WHY);
+  const host = card.querySelector('#chatRoleHost');
+  assert.ok(host?.matches('div.drows'));
+  assert.equal(host.children.length, 0, 'painted by mountRoleSetting, under the flag only');
+  assert.equal(card.querySelector('.drow-label, .drow-help, .hint, small'), null, 'no second label, no grey help line');
+  assert.equal(card.querySelector('.btn-primary'), null, 'saves on pick');
+  assert.equal(timesSaid(card, 'Your role'), 1);
+  const entry = CARDS.find((c) => c.id === 'chat-role-card');
+  assert.ok(entry, 'the settings search catalogues the card');
+  assert.deepEqual([entry.tab, entry.title, entry.flag, entry.min], ['ask', 'Your role', 'shaperSmallRuns', 'simple']);
+});
+
+// The real app. R-arch-5's example runs on a stored thread: a Compliance message, then a proposed Shaper card.
+const ROLE_TID = 'ask_0000a5ed';
+const ROLE_CARD = {
+  target: 'project', projectKey: 'proj-00000001', projectName: 'proj', projectDir: '/tmp/p', workspaceId: null, workspaceName: null, members: null,
+  workflowId: 'wf_default', workflowName: 'Default', guardrailsId: 'normal', brief: 'Add export', title: 'Add export', sourceBranch: '',
+  featureBranch: 'worca/add-export', sourceBranchByKey: null, note: '', attachments: [],
+  nudge: { reason: 'decisions', size: 'large', openDecisions: ['Storage engine'], perspectives: ['qa'], estimates: { asIs: null, shaped: null }, asIsAuto: false },
+};
+async function bootRole({ url, lead, flags = ['shaperSmallRuns'] }) {
+  _resetAnswerer();
+  _resetChatExtensions();
+  const rec = { lead, answerer: [], runs: [] };
+  const messages = [
+    { id: 'askm_u0000001', threadId: ROLE_TID, seq: 1, role: 'user', blocks: [], status: null, createdAt: 't',
+      text: 'Shape this task first: propose a run with `shape`.\n\nAsking as: compliance.\n\nAdd export' },
+    { id: 'askm_00000001', threadId: ROLE_TID, seq: 2, role: 'assistant', text: 'ok', status: 'done', createdAt: 't',
+      blocks: [{ kind: 'card', id: 'card_00000001', state: 'proposed', card: ROLE_CARD }] },
+  ];
+  const ctx = await bootChat({ url, flags, arms: (u, opts) => {
+    const path = u.split('?')[0];
+    const method = (opts.method || 'GET').toUpperCase();
+    if (path === '/api/answerer') {
+      rec.answerer.push(method === 'PUT' ? `PUT ${opts.body}` : method);
+      if (method === 'PUT') rec.lead = JSON.parse(opts.body).lead;
+      return ok({ lead: rec.lead });
+    }
+    if (path === `/api/ask/threads/${ROLE_TID}` && method === 'GET') {
+      return ok({ thread: { id: ROLE_TID, title: 'Export', createdAt: 't', updatedAt: 't', context: { pinned: true, projectKey: 'proj-00000001' } },
+        messages, attachments: [], runLinks: [], inFlight: null });
+    }
+    if (path === '/api/run' && method === 'POST') { rec.runs.push(JSON.parse(opts.body)); return ok({ runId: 'run-uuid-1' }); }
+    if (path === '/api/projects') return ok({ projects: [{ key: 'proj-00000001', name: 'proj', path: '/tmp/p', exists: true }] });
+    if (path === '/api/workflows') return ok({ workflows: [{ id: 'wf_default', name: 'Default' }] });
+    if (path === '/api/guardrails') return ok({ guardrails: [{ id: 'normal', name: 'Normal' }] });
+    if (path === '/api/run-defaults') return ok({ engine: { value: 'claude', source: 'default' }, chatSourceBranch: { mode: 'current', source: 'user', needs: [] } });
+    if (path === '/api/branches') return ok({ branches: ['main'], current: 'main' });
+    return null;
+  } });
+  await ctx.settle(12);
+  const doc = ctx.window.document;
+  const until = async (find) => { for (let i = 0; i < 40; i++) { const hit = find(); if (hit) return hit; await ctx.settle(2); } return find(); };
+  return { ...ctx, doc, rec, until };
+}
+
+test('R-arch-5 example in the app: clearing the role in Settings › Chat makes the composer read "Your role"; the earlier card still reads Compliance and starts a Compliance-led run', async () => {
+  const a = await bootRole({ url: `http://localhost:4317/#chat/${ROLE_TID}`, lead: 'compliance' });
+  const cardRole = () => a.doc.querySelector('.ask-card .shape-card .rd-kv-row .rd-kv-v')?.textContent;
+  assert.ok(await a.until(() => a.doc.querySelector('.ask-card [data-ask-card-shape]')), 'the card is up');
+  assert.equal(cardRole(), 'Compliance');
+
+  a.go('settings/ask'); await a.settle(12);
+  const setting = () => a.doc.querySelector('#chat-role-card #chatRoleHost button');
+  assert.ok(await a.until(setting), 'Settings › Chat shows the role button');
+  assert.equal(setting().textContent, 'Compliance');
+  setting().click();
+  menuRow(a.doc, 'No role').click();
+  await a.settle(12);
+  assert.equal(a.rec.answerer.at(-1), 'PUT {"lead":null}');
+
+  a.go('chat/new'); await a.settle(12);
+  const tile = await a.until(() => a.doc.querySelector('[data-chat-home] [data-intent="shape"]'));
+  tile.click();
+  await a.settle(12);
+  assert.equal(a.doc.querySelector('.chat-composer-lead .ask-asker-pick .ask-asker-l')?.textContent, 'Your role', 'the composer');
+
+  a.go(`chat/${ROLE_TID}`); await a.settle(12);
+  const shapeBtn = await a.until(() => a.doc.querySelector('.ask-card [data-ask-card-shape]'));
+  assert.equal(cardRole(), 'Compliance', 'the earlier card');
+  assert.equal(shapeBtn.hasAttribute('aria-disabled'), false);
+  const before = a.rec.answerer.length;
+  shapeBtn.click();
+  assert.ok(await a.until(() => a.rec.runs.length), 'POST /api/run');
+  assert.equal(a.rec.runs[0].shape.lead, 'compliance');
+  assert.deepEqual(a.rec.answerer.slice(before), [], 'no profile read or write at start');
+  assert.equal(a.rec.lead, null, 'the role stays cleared');
+});
+
+test('the app: a deep link to Settings › Chat shows one "Your role", and the row re-reads the profile each time the tab opens', async () => {
+  const a = await bootRole({ url: 'http://localhost:4317/#settings/ask', lead: 'compliance' });
+  const card = a.doc.getElementById('chat-role-card');
+  assert.ok(card, '#chat-role-card');
+  const setting = () => card.querySelector('#chatRoleHost button');
+  assert.ok(await a.until(() => setting()?.textContent === 'Compliance'), 'the saved role');
+  assert.equal(timesSaid(card, 'Your role'), 1);
+  assert.equal(card.querySelectorAll('#chatRoleHost button').length, 1);
+  await saveAnswerer('qa', a.window.fetch);     // a Shaper card saves a role elsewhere
+  a.go('settings/general'); await a.settle(8);
+  a.go('settings/ask'); await a.settle(12);
+  assert.equal(setting().textContent, 'QA');
+});
+
+test('R-arch-1 in the app: flag off, Settings › Chat has an empty Your role host and makes no /api/answerer request', async () => {
+  const a = await bootRole({ url: 'http://localhost:4317/#settings/ask', lead: 'compliance', flags: [] });
+  a.go('settings/general'); await a.settle(8);
+  a.go('settings/ask'); await a.settle(12);
+  const host = a.doc.getElementById('chatRoleHost');
+  assert.ok(host, '#chatRoleHost');
+  assert.equal(host.childNodes.length, 0);
+  assert.deepEqual(a.rec.answerer, []);
 });

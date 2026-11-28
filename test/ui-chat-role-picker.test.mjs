@@ -20,6 +20,9 @@ import { icon } from '../ui/public/icons.mjs';
 import { closeMenus } from '../ui/public/workflows/menu.mjs';
 import { answererLeadKeys } from '../src/shared/answerer.mjs';
 import { readStyleCss } from '../src/core/read-style-css.mjs';
+// A namespace read, so a missing new export (mountRoleSetting) fails only its own test.
+import * as chatSettings from '../ui/public/chat-settings-view.mjs';
+import { shapeCardExtras } from '../ui/public/shape/proposal.mjs';
 
 const LEAD = INTENTS.shape.lead;
 const ROLES = ['product', 'architect', 'ux', 'qa', 'security', 'devops', 'compliance'];
@@ -27,7 +30,7 @@ const LABELS = ['Product', 'Engineering', 'Design', 'QA', 'Security', 'DevOps', 
 const ICON_OF = {
   product: 'briefcase', architect: 'terminal', ux: 'design', qa: 'eye', security: 'shield', devops: 'cloud', compliance: 'scale',
 };
-const TITLE_NONE = 'Who is asking: Worca words its questions for you. Remembered.';
+const TITLE_NONE = 'Who is asking: Worca words its questions for you. Remembered; change it in Settings › Chat.';
 
 const saved = {};
 beforeEach(() => {
@@ -691,7 +694,7 @@ test('installRolePicker registers one add-on after the intent chip, and reads th
 
 // R-po-1's example, with the app's own loader and saver against a stand-in for GET/PUT /api/answerer (the server side
 // is proved in test/api-answerer.test.mjs). A "next week" / reload is a new page: a fresh cache and a fresh composer.
-// The Settings › Chat half of the example belongs to the slice that adds that setting.
+// The Settings › Chat half of the example is proved further down and in test/chat-settings-view.test.mjs.
 test('R-po-1 example: pick Compliance and send; next week it reads "Compliance" with "you, last time"; after "No role" and a reload, "Your role"', async () => {
   let stored = null;
   const requests = [];
@@ -741,4 +744,149 @@ test('app.js installs the picker once, after the intent add-on and before the pa
   assert.equal(calls.length, 1);
   assert.ok(calls[0].index > app.indexOf('installIntentAddon({'), 'after the intent add-on');
   assert.ok(calls[0].index < app.indexOf('askPanel = createAskPanel('), 'before createAskPanel');
+});
+
+// ── Shaper ask screens, slice 2: Settings › Chat "Your role" runs on the composer's controller ──
+/** The picker's menu items as a person reads them. */
+const menuShape = (doc) => rows(doc).map((r) => ({
+  label: rowLabel(r), icon: r.querySelector('.wfv-menu-ic svg')?.innerHTML, checked: r.getAttribute('aria-checked'),
+  hint: r.querySelector('.wfv-menu-hint')?.textContent ?? null,
+}));
+
+test('R-arch-10: openMenu from any anchor shows the composer\'s items; a pick there is the composer\'s pick and focus returns', async () => {
+  const s = setup({ profile: 'qa' });
+  await s.shaper();
+  s.picker().click();
+  const composer = menuShape(s.doc);
+  assert.equal(composer.length, 8);
+  s.intent.clear();
+  assert.equal(menu(s.doc), null, 'the composer\'s own menu still closes with the pin');
+  await s.shaper();
+  const anchor = s.doc.getElementById('elsewhere');
+  assert.equal(typeof s.ctl.openMenu, 'function', 'the controller opens the role menu');
+  const handle = s.ctl.openMenu({ doc: s.doc, anchor, returnFocus: anchor });
+  assert.equal(typeof handle?.close, 'function', 'toggleMenu\'s handle');
+  assert.equal(anchor.getAttribute('aria-expanded'), 'true');
+  assert.deepEqual(menuShape(s.doc), composer);
+  assert.equal(menu(s.doc).querySelectorAll('.menu-sep').length, 1);
+  row(s.doc, 'Security').click();
+  await settle();
+  assert.equal(menu(s.doc), null);
+  assert.equal(s.doc.activeElement, anchor, 'focus returns to the opener');
+  assert.deepEqual(s.calls.save, ['security']);
+  assert.equal(s.ctl.role(), 'security');
+  assert.equal(s.name(), 'Security', 'the composer follows');
+});
+
+test('R-arch-10: choose() saves and repaints, and onChange tells its listeners after each repaint until off()', async () => {
+  const s = setup({ profile: 'qa' });
+  await s.shaper();
+  assert.equal(typeof s.ctl.onChange, 'function');
+  assert.equal(typeof s.ctl.choose, 'function');
+  const seen = [];
+  const off = s.ctl.onChange(() => seen.push(s.ctl.role()));
+  s.ctl.choose('ux');
+  assert.equal(seen[0], 'ux', 'told at once, as the picker paints');
+  await settle();
+  assert.deepEqual(s.calls.save, ['ux']);
+  assert.equal(s.name(), 'Design');
+  const n = seen.length;
+  off();
+  s.ctl.choose('devops');
+  await settle();
+  assert.equal(seen.length, n, 'off() stops the listener');
+});
+
+test('R-arch-10: refresh() reads the profile again while the flag is on, tells the listeners, and reads nothing with it off', async () => {
+  let profile = 'qa';
+  const s = setup({ load: () => Promise.resolve({ lead: profile }) });
+  assert.equal(typeof s.ctl.refresh, 'function');
+  const seen = [];
+  s.ctl.onChange(() => seen.push(s.ctl.role()));
+  s.ctl.refresh();                                   // no Shaper pin: Settings still reads
+  await settle();
+  assert.equal(s.calls.load, 1);
+  assert.equal(s.ctl.role(), 'qa');
+  profile = 'compliance';
+  s.ctl.refresh();
+  await settle();
+  assert.equal(s.ctl.role(), 'compliance');
+  assert.equal(seen.at(-1), 'compliance');
+  s.state.on = false;
+  s.ctl.refresh();
+  await settle();
+  assert.equal(s.calls.load, 2, 'flag off: no read');
+});
+
+test('D14: "No role" picked before the first read lands is saved, and the late read does not put the old role back', async () => {
+  const d = deferred();
+  const s = setup({ load: () => d.promise });
+  await s.shaper();
+  await pick(s, 'No role');
+  assert.deepEqual(s.calls.save, [null]);
+  d.resolve({ lead: 'compliance' });
+  await settle();
+  assert.equal(s.name(), 'Your role');
+  assert.equal(s.ctl.role(), null);
+  assert.equal(s.sent('x'), `${LEAD}\n\nx`);
+  s.picker().click();
+  assert.equal(menu(s.doc).querySelector('.wfv-menu-hint'), null, 'no role is "last time"');
+});
+
+test('R-arch-5 example: "No role" in Settings › Chat makes the composer read "Your role"; a card for a message sent as Compliance still reads Compliance and leads with it', async () => {
+  let stored = 'compliance';
+  const requests = [];
+  globalThis.fetch = async (url, init) => {
+    const method = init?.method || 'GET';
+    requests.push(method === 'PUT' ? `PUT ${url} ${init.body}` : `${method} ${url}`);
+    if (method === 'PUT') stored = JSON.parse(init.body).lead;
+    return { ok: true, status: 200, json: async () => ({ lead: stored }) };
+  };
+  const p = page();
+  p.doc.documentElement.dataset.flags = 'shaperSmallRuns';
+  const intent = createIntentAddon();
+  intent.addon.mount(p.lead, p.ctx);
+  const flags = { flagOn: () => true, onFlagChange: () => () => {} };
+  const ctl = createRolePicker({ intent, ...flags });
+  ctl.addon.mount(p.lead, p.ctx);
+  intent.set('shape', { focus: false });
+  await settle();
+  assert.equal(p.name(), 'Compliance');
+  const card = shapeCardExtras(p.doc, { shape: { perspectives: ['qa'], size: 'large' } }, { fetch: globalThis.fetch, sentRole: 'compliance' });
+  p.doc.body.appendChild(card.el);
+  await settle();
+
+  assert.equal(typeof chatSettings.mountRoleSetting, 'function', 'chat-settings-view.mjs exports mountRoleSetting');
+  const host = p.doc.createElement('div');
+  p.doc.body.appendChild(host);
+  chatSettings.mountRoleSetting(host, ctl, { doc: p.doc, ...flags });
+  await settle();
+  const setting = host.querySelector('button');
+  assert.equal(setting.getAttribute('aria-label'), 'Your role: Compliance');
+  setting.click();
+  row(p.doc, 'No role').click();
+  await settle();
+
+  assert.equal(p.name(), 'Your role', 'the composer');
+  assert.equal(ctl.role(), null);
+  assert.equal(host.querySelector('button').getAttribute('aria-label'), 'Your role: not picked', 'the Settings row');
+  assert.equal(requests.at(-1), 'PUT /api/answerer {"lead":null}');
+  assert.equal(card.el.querySelector('.rd-kv-row .rd-kv-v')?.textContent, 'Compliance', 'the earlier card');
+  assert.equal(card.blocked(), false);
+  assert.equal(card.body().shape.lead, 'compliance', 'it starts a Compliance-led run');
+  card.commit();
+  await settle();
+  assert.equal(requests.at(-1), 'PUT /api/answerer {"lead":null}', 'the card writes nothing back: the role stays cleared');
+});
+
+test('app.js mounts the Settings row once, on the composer\'s controller, and refreshes it when a Settings tab opens', () => {
+  const app = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
+  assert.ok(/import \{[^}]*\bmountRoleSetting\b[^}]*\} from '\.\/chat-settings-view\.mjs';/.test(app), 'app.js imports mountRoleSetting');
+  const mounts = [...app.matchAll(/\bmountRoleSetting\(/g)];
+  assert.equal(mounts.length, 1);
+  assert.ok(mounts[0].index > app.indexOf('installRolePicker({ intent: chatIntent })'), 'after the picker');
+  assert.equal([...app.matchAll(/\bcreateRolePicker\(/g)].length, 0, 'one controller, the installed one');
+  const from = app.indexOf('function showSettingsTab(');
+  const body = app.slice(from, app.indexOf('\n}\n', from));
+  assert.equal([...body.matchAll(/\bchatRoleRow\.refresh\(\)/g)].length, 1);
 });

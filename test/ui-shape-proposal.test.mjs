@@ -4,6 +4,9 @@ import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { shapeCardExtras, shapeWhatHappens, shapeAdvancedSummary } from '../ui/public/shape/proposal.mjs';
+// A namespace read, so a missing new export (sentShapeRole) fails only its own tests.
+import * as PROPOSAL from '../ui/public/shape/proposal.mjs';
+import { INTENT_LEADS } from '../src/shared/intent-leads.mjs';
 import { SHAPE_ATTENTION } from '../ui/public/shape/plan-text.mjs';
 import { _resetAnswerer } from '../ui/public/answerer.mjs';
 import { resolveShapeRequest } from '../src/core/shape/run.mjs';
@@ -515,11 +518,11 @@ test('small runs flag: off, the chips and the lead menu list 0 Compliance; on, 1
   }
 });
 
-test('small runs flag: the lead is asked once (pick a role, 1 PUT), then the saved lead is preset and nothing is sent', async () => {
+test('small runs flag: a first pick is saved once (1 PUT); the next card shows the saved lead, sends nothing and never blocks', async () => {
   const first = await reqCard({}, { lead: null, flags: 'shaperSmallRuns' });
   const [lead] = first.triggers();
   assert.equal(lead.textContent, 'pick a role');
-  assert.equal(first.ui.blocked(), true);
+  assert.equal(first.ui.blocked(), false, 'under the flag a missing role never blocks');
   lead.click();
   menuItems(first.d).find((i) => i.querySelector('.wfv-menu-l').textContent === 'Compliance').click();
   assert.equal(first.ui.blocked(), false);
@@ -532,5 +535,230 @@ test('small runs flag: the lead is asked once (pick a role, 1 PUT), then the sav
   next.ui.commit();
   await tick();
   assert.deepEqual(puts, [], 'the next card sends 0 PUTs');
-  assert.equal(next.ui.body().shape.lead, 'compliance');
+  assert.equal(next.ui.body().shape.lead, 'compliance', 'the body sends the lead the card shows');
+});
+
+// ── Shaper ask screens, slice 2: the card reads the sent role (flag shaperSmallRuns) ──
+const SHAPE_LEAD = INTENT_LEADS.shape;
+const sentText = (role, body = 'Add export') => (role ? `${SHAPE_LEAD}\n\nAsking as: ${role}.\n\n${body}` : `${SHAPE_LEAD}\n\n${body}`);
+const userRow = (text, blocks = []) => ({ role: 'user', text, blocks });
+const answerRow = (blocks = [], text = 'ok') => ({ role: 'assistant', text, blocks });
+const cardBlock = (id) => ({ kind: 'card', id, state: 'proposed' });
+const noticeRow = (over = {}) => ({ role: 'user', text: '[worca event] the person acted on a card',
+  blocks: [{ kind: 'notice', synthetic: true, text: 'Done', ...over }] });
+const sentRoleOf = (rows, id) => {
+  assert.equal(typeof PROPOSAL.sentShapeRole, 'function', 'proposal.mjs exports sentShapeRole');
+  return PROPOSAL.sentShapeRole(rows, id);
+};
+
+test('R-arch-13 sentShapeRole: the role of the user message the card answers', () => {
+  const rows = [userRow(sentText('compliance')), answerRow([cardBlock('card_1')])];
+  assert.equal(sentRoleOf(rows, 'card_1'), 'compliance');
+  assert.equal(sentRoleOf([userRow(`${SHAPE_LEAD}\n\nAsking as: qa.`), answerRow([cardBlock('card_1')])], 'card_1'), 'qa', 'the lead and the role line alone');
+  assert.equal(sentRoleOf([userRow(sentText('architect')), answerRow([], 'thinking'), answerRow([cardBlock('card_1')])], 'card_1'), 'architect',
+    'the nearest earlier user row, past an assistant row');
+});
+
+test('R-arch-13 sentShapeRole: null with no role line, an ordinary message, a missing card or no user row', () => {
+  const answered = (text) => [userRow(text), answerRow([cardBlock('card_1')])];
+  assert.equal(sentRoleOf(answered(sentText(null)), 'card_1'), null, 'no role paragraph');
+  assert.equal(sentRoleOf(answered('Asking as: compliance.\n\nAdd export'), 'card_1'), null, 'not a Shaper message');
+  assert.equal(sentRoleOf(answered('Add export'), 'card_1'), null, 'an ordinary message');
+  assert.equal(sentRoleOf(answered(sentText('admin')), 'card_1'), null, 'not a lead key');
+  assert.equal(sentRoleOf(answered(sentText('compliance')), 'card_9'), null, 'a block id that is not there');
+  assert.equal(sentRoleOf([answerRow([cardBlock('card_1')]), userRow(sentText('compliance'))], 'card_1'), null, 'only a LATER user row');
+  assert.equal(sentRoleOf([], 'card_1'), null);
+});
+
+test('R-arch-13 sentShapeRole: a synthetic notice row is skipped; a card in a later turn reads its own turn\'s message', () => {
+  for (const notice of [noticeRow(), noticeRow({ quiet: true })]) {
+    const rows = [userRow(sentText('compliance')), answerRow(), notice, answerRow([cardBlock('card_1')])];
+    assert.equal(sentRoleOf(rows, 'card_1'), 'compliance');
+  }
+  const later = [userRow(sentText('compliance')), answerRow([cardBlock('card_1')]), userRow('and a second one'), answerRow([cardBlock('card_2')])];
+  assert.equal(sentRoleOf(later, 'card_2'), null, 'the later message carries no role');
+  assert.equal(sentRoleOf(later, 'card_1'), 'compliance');
+  const turns = [userRow(sentText('compliance')), answerRow([cardBlock('card_1')]), userRow(sentText('qa')), answerRow([cardBlock('card_2')])];
+  assert.equal(sentRoleOf(turns, 'card_2'), 'qa');
+});
+
+/** A card under the flag, built with `sentRole` through its own fetch. `calls` records that fetch AND the page's. */
+function flagCard({ sentRole = null, lead = null, card = null, flags = 'shaperSmallRuns' } = {}) {
+  _resetAnswerer();
+  stubAnswerer({ lead });
+  const stub = globalThis.fetch;
+  const calls = [];
+  const spy = (url, init = {}) => { calls.push(`${init.method || 'GET'} ${url}`); return stub(url, init); };
+  globalThis.fetch = spy;
+  const d = flagDoc(flags);
+  const ui = shapeCardExtras(d, card || { nudge: nudge({ perspectives: ['architect', 'qa', 'security'] }) }, { fetch: spy, sentRole });
+  d.body.appendChild(ui.el);
+  return { d, ui, calls };
+}
+const factRows = (ui) => [...ui.el.querySelectorAll('.rd-kv-row')];
+const factKey = (r) => r.querySelector('.rd-kv-k').textContent;
+const factValue = (r) => r.querySelector('.rd-kv-v');
+const menuLabel = (i) => (i.querySelector('.wfv-menu-l') || i.querySelector('b')).textContent;
+const sorted = (a) => [...a].sort();
+
+test('R-qa-7: a message sent as Compliance renders "Compliance" as the first fact, no role sentence, and "Supported by" is the only control', async () => {
+  const { ui, calls } = flagCard({ sentRole: 'compliance' });
+  await tick();
+  assert.equal(ui.requirements, true);
+  assert.deepEqual(texts(ui.el, '.shape-facts'), ['Large task · ≈ $2 · ~9 min'], 'the facts line stays');
+  assert.equal(ui.el.querySelectorAll('.shape-lead-line').length, 0);
+  assert.doesNotMatch(ui.el.textContent, /You lead as|pick a role/);
+  assert.ok(ui.el.querySelector('dl.rd-kv.shape-lead-facts'), 'the app\'s fact rows');
+  const rows = factRows(ui);
+  assert.deepEqual(rows.map(factKey), ['Your role', 'Supported by']);
+  assert.deepEqual(rows.map((r) => r.hidden), [false, false]);
+  assert.equal(factValue(rows[0]).textContent, 'Compliance');
+  assert.equal(factValue(rows[0]).querySelector('button'), null, 'the sent role is plain text');
+  assert.ok(rows[0].querySelector('.rd-kv-v[title="Sent with your message"], .rd-kv-v [title="Sent with your message"]'));
+  const pickers = [...ui.el.querySelectorAll('.shape-lead-pick')];
+  assert.equal(pickers.length, 1, 'one control');
+  assert.equal(pickers[0].dataset.menu, 'shape-supporters');
+  assert.ok(rows[1].contains(pickers[0]));
+  assert.equal(pickers[0].textContent, 'Engineering, QA and Security');
+  assert.equal(rows[0].querySelector('.rd-kv-k').id, ui.labelId);
+  assert.ok(ui.labelId);
+  assert.equal(ui.blocked(), false);
+  assert.deepEqual(calls, [], 'R-arch-9: a card with a sent role reads no profile');
+});
+
+test('R-qa-8: the sent role leads the run even with the profile cleared; no /api/answerer read at all and nothing written back', async () => {
+  const { ui, calls } = flagCard({ sentRole: 'compliance', lead: null });
+  assert.equal(ui.blocked(), false, 'at once');
+  assert.equal(ui.body().shape.lead, 'compliance', 'at once: nothing is awaited');
+  await tick();
+  const body = ui.body();
+  assert.equal(body.workflowId, 'wf_shape');
+  assert.equal(body.shape.lead, 'compliance');
+  assert.equal(body.shape.size, 'large');
+  assert.deepEqual(sorted(body.shape.perspectives), sorted(['product', 'compliance', 'architect', 'qa', 'security']));
+  const res = resolveShapeRequest(body, { smallRuns: true });
+  assert.equal(res.ok, true, res.error);
+  assert.equal(res.shape.lead, 'compliance');
+  ui.commit();
+  await tick();
+  assert.deepEqual(calls, [], 'a sent role is never read or written back');
+  assert.deepEqual(puts, []);
+});
+
+test('R-arch-5: the sent role wins over the profile for the card\'s whole life, on a direct card too', async () => {
+  const { ui, calls } = flagCard({ sentRole: 'compliance', lead: 'qa', card: { shape: { perspectives: ['qa'], size: 'medium' } } });
+  await tick();
+  assert.equal(factValue(factRows(ui)[0]).textContent, 'Compliance');
+  assert.equal(ui.body().shape.lead, 'compliance');
+  assert.deepEqual(sorted(ui.body().shape.perspectives), sorted(['product', 'compliance', 'qa']));
+  assert.deepEqual(calls, []);
+});
+
+test('under the flag the sent role is never offered as a supporter, and is listed once in the body', async () => {
+  for (const [role, label, perspectives] of [['compliance', 'Compliance', ['compliance', 'qa']], ['architect', 'Engineering', ['architect', 'qa']]]) {
+    const { d, ui } = flagCard({ sentRole: role, card: { nudge: nudge({ perspectives }) } });
+    await tick();
+    const supp = ui.el.querySelector('.shape-lead-pick[data-menu="shape-supporters"]');
+    assert.ok(supp, 'the supporters picker');
+    assert.equal(supp.textContent, 'QA', `${label} is not named as its own supporter`);
+    supp.click();
+    const names = menuItems(d).map(menuLabel);
+    assert.ok(names.includes('QA'));
+    assert.equal(names.includes(label), false, `${label} is not offered`);
+    assert.deepEqual(sorted(ui.body().shape.perspectives), sorted(['product', role, 'qa']));
+    menuItems(d).find((i) => menuLabel(i) === 'QA').click();
+    assert.equal(supp.textContent, 'no one else');
+    assert.deepEqual(sorted(ui.body().shape.perspectives), sorted(['product', role]));
+  }
+});
+
+test('R-qa-9: no role sent, no saved lead: the picker is the first fact row, nothing blocks and the body names no lead', async () => {
+  const { ui, calls } = flagCard({ lead: null });
+  assert.equal(ui.blocked(), false, 'enabled before the profile lands');
+  const early = factRows(ui);
+  assert.deepEqual(early.map(factKey), ['Your role', 'Supported by'], 'the rows paint at once');
+  assert.equal(factValue(early[0]).querySelector('.shape-lead-pick')?.textContent, 'pick a role');
+  await tick();
+  const rows = factRows(ui);
+  assert.deepEqual(rows.map((r) => r.hidden), [false, false]);
+  const lead = factValue(rows[0]).querySelector('.shape-lead-pick');
+  assert.equal(lead.dataset.menu, 'shape-lead');
+  assert.equal(lead.textContent, 'pick a role');
+  assert.ok(factValue(rows[1]).querySelector('.shape-lead-pick[data-menu="shape-supporters"]'));
+  assert.equal(ui.el.querySelectorAll('.shape-lead-line').length, 0);
+  assert.equal(ui.el.querySelectorAll('.shape-lead-pick').length, 2);
+  assert.equal(ui.blocked(), false);
+  assert.equal('lead' in ui.body().shape, false);
+  assert.deepEqual(sorted(ui.body().shape.perspectives), sorted(['product', 'architect', 'qa', 'security']));
+  ui.commit();
+  await tick();
+  assert.deepEqual(puts, [], 'no pick: nothing saved');
+  assert.deepEqual(calls, ['GET /api/answerer'], 'R-arch-9: read once, at build');
+});
+
+test('no role sent: the saved lead presets the picker ("you, last time") and the body sends the lead the card shows', async () => {
+  const { d, ui, calls } = flagCard({ lead: 'architect' });
+  await tick();
+  const lead = factValue(factRows(ui)[0]).querySelector('.shape-lead-pick');
+  assert.equal(lead.textContent, 'Engineering');
+  _resetAnswerer(); stubAnswerer({ lead: null });
+  assert.equal(ui.body().shape.lead, 'architect', 'the profile cleared after the build: the run still leads as the shown role');
+  assert.deepEqual(sorted(ui.body().shape.perspectives), sorted(['product', 'architect', 'qa', 'security']), 'the shown lead is listed once, not as a supporter');
+  ui.commit();
+  await tick();
+  assert.deepEqual(puts, []);
+  const supp = ui.el.querySelector('.shape-lead-pick[data-menu="shape-supporters"]');
+  assert.equal(supp.textContent, 'QA and Security', 'the shown lead is not its own supporter');
+  supp.click();
+  assert.equal(menuItems(d).map(menuLabel).includes('Engineering'), false);
+  supp.click();
+  lead.click();
+  const hinted = menuItems(d).filter((i) => i.querySelector('.wfv-menu-hint'));
+  assert.deepEqual(hinted.map((i) => [menuLabel(i), i.querySelector('.wfv-menu-hint').textContent]), [['Engineering', 'you, last time']]);
+  assert.deepEqual(calls, ['GET /api/answerer']);
+});
+
+test('no role sent: a QA pick on the card leads the body, is saved by commit() with 1 PUT, and repaints the gate', async () => {
+  const { d, ui, calls } = flagCard({ lead: 'architect' });
+  let changes = 0;
+  ui.el.addEventListener('shape-lead-change', () => { changes += 1; });
+  await tick();
+  const before = changes;
+  const lead = factValue(factRows(ui)[0]).querySelector('.shape-lead-pick');
+  lead.click();
+  menuItems(d).find((i) => menuLabel(i) === 'QA').click();
+  assert.equal(changes, before + 1, 'shape-lead-change on a pick');
+  assert.equal(lead.textContent, 'QA');
+  assert.equal(ui.blocked(), false);
+  assert.equal(ui.body().shape.lead, 'qa');
+  assert.deepEqual(sorted(ui.body().shape.perspectives), sorted(['product', 'qa', 'architect', 'security']));
+  assert.deepEqual(puts, [], 'a pick alone does not save');
+  ui.commit();
+  await tick();
+  assert.deepEqual(puts, [{ lead: 'qa' }]);
+  assert.deepEqual(calls, ['GET /api/answerer', 'PUT /api/answerer'], 'R-arch-8: commit reads nothing');
+});
+
+test('R-arch-1: flag off, a sent role is ignored: the sentence, the block and the body are today\'s', async () => {
+  const { ui } = flagCard({ sentRole: 'compliance', lead: null, flags: '' });
+  assert.equal(ui.blocked(), true);
+  await tick();
+  assert.equal(ui.el.querySelector('.shape-lead-facts'), null);
+  assert.equal(ui.el.querySelector('.shape-lead-line').textContent, 'You lead as pick a role, supported by Engineering, QA and Security.');
+  assert.equal(ui.blocked(), true);
+  const saved = flagCard({ sentRole: 'compliance', lead: 'architect', flags: '' });
+  await tick();
+  assert.equal(saved.ui.body().shape.lead, 'architect');
+  assert.deepEqual(saved.calls, ['GET /api/answerer']);
+});
+
+test('flag on, a small card: a sent role changes nothing (chips, no picker, no lead)', async () => {
+  const { ui } = flagCard({ sentRole: 'compliance', card: { nudge: nudge({ size: 'small', perspectives: ['architect'] }) } });
+  await tick();
+  assert.equal(ui.requirements, false);
+  assert.ok(ui.el.querySelector('.shape-chips'));
+  assert.equal(ui.el.querySelector('.shape-lead-pick'), null);
+  assert.equal(ui.el.querySelector('.rd-kv'), null);
+  assert.equal(ui.blocked(), false);
+  assert.equal('lead' in ui.body().shape, false);
 });

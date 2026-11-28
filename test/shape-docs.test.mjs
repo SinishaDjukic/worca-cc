@@ -598,3 +598,14 @@ test('s18: the guide and the design system say a failed Verifier round or an ope
   const design = flat(read('design-system.md'));
   assert.deepEqual(missing(design, [/failed Verifier round or an open confirmation outranks In review/i]), [], 'design-system.md');
 });
+
+test('ask screens s2 (R-po-6): Requirements first describes the flag-on card and Settings › Chat "Your role", and keeps the flag-off sentence; Who is asking points there', () => {
+  const requirements = flat(section(read('shape-it-first.md'), 'Requirements first'));
+  assert.ok(requirements.includes('You lead as'), 'the flag-off sentence stays');
+  for (const term of ['shaperSmallRuns', 'Your role', 'Supported by', 'Settings › Chat', 'Shape requirements', 'saved lead, else Product']) {
+    assert.ok(requirements.includes(term), `"${term}" in Requirements first`);
+  }
+  const small = section(read('shape-it-first.md'), 'Small runs (`shaperSmallRuns`)');
+  const asking = flat((small.split('\n**Who is asking.**')[1] || '').split('\n### ')[0]);
+  assert.ok(asking.includes('(#requirements-first)'), 'the Who is asking paragraph points at the card');
+});
