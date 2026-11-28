@@ -77,6 +77,7 @@
     "smoke:auto": "WORCA_MOCK=1 WORCA_HOME=.worca-cc-smoke node --disable-warning=ExperimentalWarning src/cli/worca-cc.mjs --project sandbox --prompt \"demo task\" --mock --yes --workflow auto",
     "smoke:workspace": "WORCA_MOCK=1 WORCA_HOME=.worca-cc-smoke node --disable-warning=ExperimentalWarning tools/smoke-workspace.mjs",
     "smoke:plugin": "WORCA_MOCK=1 WORCA_HOME=.worca-cc-smoke node --disable-warning=ExperimentalWarning tools/smoke-plugin.mjs",
+    "smoke:toolchain-bootstrap": "node tools/smoke-toolchain-bootstrap.mjs",
     "docker:build": "node tools/docker-build.mjs",
     "docker:smoke": "node tools/docker-smoke.mjs",
     "e2b:build": "node docker/e2b/build.mjs",

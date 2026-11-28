@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "skipInstallsNothing",
+      "name": "Skip installs nothing",
+      "params": {},
+      "ports": null,
+      "inputs": {
+        "plan": {
+          "text": "{\"toolchainRoot\":\"/tmp/worca-toolchains-test\",\"rows\":[{\"id\":\"r1\",\"tool\":\"node\",\"kind\":\"mise\",\"version\":\"20.10.0\",\"spec\":\"node@20.10.0\",\"status\":\"installable\",\"change\":\"added\"}]}"
+        },
+        "approved": {
+          "text": "{\"decision\":\"skip\",\"approved\":[]}"
+        }
+      },
+      "cwd": {
+        "kind": "scratch"
+      },
+      "timeoutMs": null,
+      "expect": {
+        "verdict": "clean"
+      }
+    },
+    {
+      "id": "systemRowMustMatchItsManager",
+      "name": "a system row that does not match its manager is refused, never run",
+      "params": {},
+      "ports": null,
+      "inputs": {
+        "plan": {
+          "text": "{\"toolchainRoot\": \"/tmp/worca-toolchains-test\", \"rows\": [{\"id\": \"r1\", \"tool\": \"brew:libpq\", \"kind\": \"system\", \"manager\": \"apt\", \"package\": \"libpq\", \"version\": null, \"spec\": \"brew:libpq\", \"status\": \"installable\", \"change\": \"added\"}]}"
+        },
+        "approved": {
+          "text": "{\"decision\": \"all\", \"approved\": [{\"id\": \"r1\", \"spec\": \"brew:libpq\"}]}"
+        }
+      },
+      "cwd": {
+        "kind": "scratch"
+      },
+      "timeoutMs": null,
+      "expect": {
+        "verdict": "clean",
+        "summaryIncludes": "0 installed, 0 failed, 1 skipped, 1 refused"
+      }
+    }
+  ]
+}

@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "unwritableRootFailsEarly",
+      "name": "an unwritable root stops at Resolve with a clear message",
+      "params": {
+        "toolchainRoot": "/data/toolchains"
+      },
+      "ports": null,
+      "inputs": {
+        "facts": {
+          "text": "{\"facts\":[],\"capabilities\":[]}"
+        },
+        "proposals": {
+          "text": "[]"
+        }
+      },
+      "cwd": {
+        "kind": "scratch"
+      },
+      "timeoutMs": null,
+      "expect": {
+        "verdict": "error"
+      }
+    },
+    {
+      "id": "nothingDetected",
+      "name": "nothing detected: clean, nothing to approve",
+      "params": {
+        "toolchainRoot": "/tmp/worca-toolchains-test"
+      },
+      "ports": null,
+      "inputs": {
+        "facts": {
+          "text": "{\"facts\":[],\"capabilities\":[]}"
+        },
+        "proposals": {
+          "text": "[]"
+        }
+      },
+      "cwd": {
+        "kind": "scratch"
+      },
+      "timeoutMs": null,
+      "expect": {
+        "verdict": "clean"
+      }
+    },
+    {
+      "id": "riskyProposalsRefused",
+      "name": "risky backends, bad names and versioned system packages are refused: no rows",
+      "params": {
+        "toolchainRoot": "/tmp/worca-toolchains-test"
+      },
+      "ports": null,
+      "inputs": {
+        "facts": {
+          "text": "{\"facts\": [], \"capabilities\": []}"
+        },
+        "proposals": {
+          "text": "[{\"tool\": \"ubi:junegunn/fzf\", \"version\": null, \"constraint\": \"range\", \"evidence\": [\"Makefile:3\"], \"confidence\": \"high\", \"why\": \"The build calls it.\"}, {\"tool\": \"asdf:foo\", \"version\": null, \"constraint\": \"range\", \"evidence\": [\"Makefile:3\"], \"confidence\": \"high\", \"why\": \"The build calls it.\"}, {\"tool\": \"vfox:foo\", \"version\": null, \"constraint\": \"range\", \"evidence\": [\"Makefile:3\"], \"confidence\": \"high\", \"why\": \"The build calls it.\"}, {\"tool\": \"github:fzf\", \"version\": null, \"constraint\": \"range\", \"evidence\": [\"Makefile:3\"], \"confidence\": \"high\", \"why\": \"The build calls it.\"}, {\"tool\": \"npm:../x\", \"version\": null, \"constraint\": \"range\", \"evidence\": [\"Makefile:3\"], \"confidence\": \"high\", \"why\": \"The build calls it.\"}, {\"tool\": \"go:fmt\", \"version\": null, \"constraint\": \"range\", \"evidence\": [\"Makefile:3\"], \"confidence\": \"high\", \"why\": \"The build calls it.\"}, {\"tool\": \"brew:owner/tap/formula\", \"version\": null, \"constraint\": \"range\", \"evidence\": [\"Makefile:3\"], \"confidence\": \"high\", \"why\": \"The build calls it.\"}, {\"tool\": \"apt:foo;rm\", \"version\": null, \"constraint\": \"range\", \"evidence\": [\"Makefile:3\"], \"confidence\": \"high\", \"why\": \"The build calls it.\"}, {\"tool\": \"winget:Git\", \"version\": null, \"constraint\": \"range\", \"evidence\": [\"Makefile:3\"], \"confidence\": \"high\", \"why\": \"The build calls it.\"}, {\"tool\": \"choco:git\", \"version\": null, \"constraint\": \"range\", \"evidence\": [\"Makefile:3\"], \"confidence\": \"high\", \"why\": \"The build calls it.\"}, {\"tool\": \"brew:libpq\", \"version\": \"16\", \"constraint\": \"exact\", \"evidence\": [\"Makefile:3\"], \"confidence\": \"high\", \"why\": \"The build calls it.\"}]"
+        }
+      },
+      "cwd": {
+        "kind": "scratch"
+      },
+      "timeoutMs": null,
+      "expect": {
+        "verdict": "clean",
+        "summaryIncludes": "0 rows"
+      }
+    }
+  ]
+}

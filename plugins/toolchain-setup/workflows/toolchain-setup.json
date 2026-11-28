@@ -1,0 +1,340 @@
+{
+  "version": 2,
+  "name": "Toolchain setup",
+  "domain": "toolchains",
+  "nodes": [
+    {
+      "id": "n_y2tn1493",
+      "kind": "task",
+      "x": 60,
+      "y": 55,
+      "config": {}
+    },
+    {
+      "id": "n_bu8exo9j",
+      "kind": "script",
+      "key": "toolchainDetect",
+      "x": 380,
+      "y": 55,
+      "config": {}
+    },
+    {
+      "id": "n_z95qa85z",
+      "kind": "agent",
+      "key": "toolchainInvestigate",
+      "x": 700,
+      "y": 55,
+      "config": {
+        "model": "claude-sonnet-5-5",
+        "effort": "medium",
+        "awaitAll": true
+      }
+    },
+    {
+      "id": "n_h5yl79ef",
+      "kind": "agent",
+      "key": "toolchainApprove",
+      "x": 1342,
+      "y": 55,
+      "config": {
+        "model": "claude-haiku-5-5",
+        "effort": "medium",
+        "askQuestions": true
+      }
+    },
+    {
+      "id": "n_8zy5ktx2",
+      "kind": "script",
+      "key": "toolchainInstall",
+      "x": 1660,
+      "y": 55,
+      "config": {
+        "awaitAll": true
+      }
+    },
+    {
+      "id": "n_n2utpnia",
+      "kind": "or",
+      "x": 1980,
+      "y": 55,
+      "config": {
+        "arity": 2
+      }
+    },
+    {
+      "id": "n_g95ndeb2",
+      "kind": "script",
+      "key": "toolchainVerify",
+      "x": 2300,
+      "y": 55,
+      "config": {}
+    },
+    {
+      "id": "n_lqaf4ukq",
+      "kind": "script",
+      "key": "toolchainRecord",
+      "x": 2620,
+      "y": 55,
+      "config": {}
+    },
+    {
+      "id": "n_3m4qt1ua",
+      "kind": "end",
+      "x": 2940,
+      "y": 55,
+      "config": {}
+    },
+    {
+      "id": "n_x9bivf47",
+      "kind": "script",
+      "key": "toolchainResolver",
+      "x": 1342,
+      "y": 242,
+      "config": {
+        "awaitAll": true
+      }
+    },
+    {
+      "id": "n_askmise",
+      "kind": "agent",
+      "key": "toolchainAskBootstrap",
+      "x": 700,
+      "y": 429,
+      "config": {
+        "model": "claude-haiku-5-5",
+        "effort": "medium",
+        "askQuestions": true
+      }
+    },
+    {
+      "id": "n_bootmise",
+      "kind": "script",
+      "key": "toolchainBootstrap",
+      "x": 1020,
+      "y": 429,
+      "config": {
+        "awaitAll": true
+      }
+    },
+    {
+      "id": "n_orready",
+      "kind": "or",
+      "x": 1020,
+      "y": 242,
+      "config": {
+        "arity": 2
+      }
+    }
+  ],
+  "wires": [
+    {
+      "id": "w_pdjcowq8",
+      "from": {
+        "node": "n_y2tn1493",
+        "port": "task"
+      },
+      "to": {
+        "node": "n_bu8exo9j",
+        "port": "task"
+      }
+    },
+    {
+      "id": "w_aglp1221",
+      "from": {
+        "node": "n_y2tn1493",
+        "port": "task"
+      },
+      "to": {
+        "node": "n_z95qa85z",
+        "port": "task"
+      }
+    },
+    {
+      "id": "w_d9jpaddf",
+      "from": {
+        "node": "n_bu8exo9j",
+        "port": "facts"
+      },
+      "to": {
+        "node": "n_z95qa85z",
+        "port": "facts"
+      }
+    },
+    {
+      "id": "w_6rn05bjl",
+      "from": {
+        "node": "n_h5yl79ef",
+        "port": "approved"
+      },
+      "to": {
+        "node": "n_8zy5ktx2",
+        "port": "approved"
+      }
+    },
+    {
+      "id": "w_dgqjpu62",
+      "from": {
+        "node": "n_8zy5ktx2",
+        "port": "install"
+      },
+      "to": {
+        "node": "n_n2utpnia",
+        "port": "in1"
+      }
+    },
+    {
+      "id": "w_0p5h7y83",
+      "from": {
+        "node": "n_n2utpnia",
+        "port": "out"
+      },
+      "to": {
+        "node": "n_g95ndeb2",
+        "port": "state"
+      }
+    },
+    {
+      "id": "w_usl8jv5e",
+      "from": {
+        "node": "n_g95ndeb2",
+        "port": "verify"
+      },
+      "to": {
+        "node": "n_lqaf4ukq",
+        "port": "verify"
+      }
+    },
+    {
+      "id": "w_k19uckil",
+      "from": {
+        "node": "n_lqaf4ukq",
+        "port": "report"
+      },
+      "to": {
+        "node": "n_3m4qt1ua",
+        "port": "result"
+      }
+    },
+    {
+      "id": "w_8iup494w",
+      "from": {
+        "node": "n_bu8exo9j",
+        "port": "facts"
+      },
+      "to": {
+        "node": "n_x9bivf47",
+        "port": "facts"
+      }
+    },
+    {
+      "id": "w_n8l53bon",
+      "from": {
+        "node": "n_z95qa85z",
+        "port": "proposals"
+      },
+      "to": {
+        "node": "n_x9bivf47",
+        "port": "proposals"
+      }
+    },
+    {
+      "id": "w_fyhp4u7k",
+      "from": {
+        "node": "n_x9bivf47",
+        "port": "changes"
+      },
+      "to": {
+        "node": "n_h5yl79ef",
+        "port": "plan"
+      }
+    },
+    {
+      "id": "w_t2wkvyxn",
+      "from": {
+        "node": "n_x9bivf47",
+        "port": "plan"
+      },
+      "to": {
+        "node": "n_8zy5ktx2",
+        "port": "plan"
+      }
+    },
+    {
+      "id": "w_21935vpp",
+      "from": {
+        "node": "n_x9bivf47",
+        "port": "unchanged"
+      },
+      "to": {
+        "node": "n_n2utpnia",
+        "port": "in2"
+      }
+    },
+    {
+      "id": "w_mise_ask",
+      "from": {
+        "node": "n_bu8exo9j",
+        "port": "bootstrap"
+      },
+      "to": {
+        "node": "n_askmise",
+        "port": "bootstrap"
+      }
+    },
+    {
+      "id": "w_mise_boot",
+      "from": {
+        "node": "n_bu8exo9j",
+        "port": "bootstrap"
+      },
+      "to": {
+        "node": "n_bootmise",
+        "port": "bootstrap"
+      }
+    },
+    {
+      "id": "w_mise_dec",
+      "from": {
+        "node": "n_askmise",
+        "port": "decision"
+      },
+      "to": {
+        "node": "n_bootmise",
+        "port": "decision"
+      }
+    },
+    {
+      "id": "w_mise_ready",
+      "from": {
+        "node": "n_bu8exo9j",
+        "port": "ready"
+      },
+      "to": {
+        "node": "n_orready",
+        "port": "in1"
+      }
+    },
+    {
+      "id": "w_mise_done",
+      "from": {
+        "node": "n_bootmise",
+        "port": "done"
+      },
+      "to": {
+        "node": "n_orready",
+        "port": "in2"
+      }
+    },
+    {
+      "id": "w_mise_gate",
+      "from": {
+        "node": "n_orready",
+        "port": "out"
+      },
+      "to": {
+        "node": "n_x9bivf47",
+        "port": "await"
+      }
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "metaVersion": 2,
+  "key": "toolchainRecord",
+  "displayName": "Toolchain: record",
+  "description": "Writes toolchain.lock.json and toolchain.env (JAVA_HOME, ANDROID_HOME, PATH entries) to the project's folder under the toolchain root, never into the repo (worca runs do not load it yet), and reports installed, failed, skipped and not-possible-here.",
+  "color": "blue",
+  "icon": "",
+  "domain": "toolchains",
+  "order": 99,
+  "runtime": "node",
+  "file": "toolchainRecord.mjs",
+  "command": null,
+  "timeoutMs": 300000,
+  "params": [],
+  "portSummary": "Reads verify; produces report.",
+  "inputs": [
+    {
+      "id": "verify",
+      "type": "json",
+      "required": true
+    }
+  ],
+  "outputs": [
+    {
+      "id": "report",
+      "type": "md",
+      "when": "always",
+      "filename": "toolchain-report.md",
+      "store": "run",
+      "artifactKind": "report"
+    }
+  ]
+}

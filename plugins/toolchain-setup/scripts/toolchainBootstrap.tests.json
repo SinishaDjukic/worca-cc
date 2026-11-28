@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "skipPassesThrough",
+      "name": "Skip installs nothing and passes straight through",
+      "params": {},
+      "ports": null,
+      "inputs": {
+        "bootstrap": {
+          "text": "{\"present\":false,\"version\":null,\"brew\":true,\"winget\":false,\"scoop\":false,\"platform\":\"darwin\"}"
+        },
+        "decision": {
+          "text": "{\"decision\":\"skip\"}"
+        }
+      },
+      "cwd": {
+        "kind": "scratch"
+      },
+      "timeoutMs": null,
+      "expect": {
+        "verdict": "clean",
+        "summaryIncludes": "mise install declined"
+      }
+    },
+    {
+      "id": "unclearAnswerIsSkip",
+      "name": "an answer other than install is Skip",
+      "params": {},
+      "ports": null,
+      "inputs": {
+        "bootstrap": {
+          "text": "{\"present\":false,\"version\":null,\"brew\":true,\"winget\":false,\"scoop\":false,\"platform\":\"darwin\"}"
+        },
+        "decision": {
+          "text": "{\"decision\":\"Install\",\"notes\":\"capitalised, so not the install decision\"}"
+        }
+      },
+      "cwd": {
+        "kind": "scratch"
+      },
+      "timeoutMs": null,
+      "expect": {
+        "verdict": "clean",
+        "summaryIncludes": "mise install declined"
+      }
+    },
+    {
+      "id": "wrongShapeIsSkip",
+      "name": "a decision that is not an object with decision \"install\" is Skip",
+      "params": {},
+      "ports": null,
+      "inputs": {
+        "bootstrap": {
+          "text": "{\"present\":false,\"version\":null,\"brew\":true,\"winget\":false,\"scoop\":false,\"platform\":\"darwin\"}"
+        },
+        "decision": {
+          "text": "[\"install\"]"
+        }
+      },
+      "cwd": {
+        "kind": "scratch"
+      },
+      "timeoutMs": null,
+      "expect": {
+        "verdict": "clean",
+        "summaryIncludes": "mise install declined"
+      }
+    },
+    {
+      "id": "noDecisionIsSkip",
+      "name": "no decision file (the ask was never answered) is Skip, never Install",
+      "params": {},
+      "ports": null,
+      "inputs": {
+        "bootstrap": {
+          "text": "{\"present\":false,\"version\":null,\"brew\":true,\"winget\":false,\"scoop\":false,\"platform\":\"darwin\"}"
+        }
+      },
+      "cwd": {
+        "kind": "scratch"
+      },
+      "timeoutMs": null,
+      "expect": {
+        "verdict": "clean",
+        "summaryIncludes": "mise install declined"
+      }
+    },
+    {
+      "id": "noProbeStops",
+      "name": "no probe from Detect stops with an error before anything is installed",
+      "params": {},
+      "ports": null,
+      "inputs": {
+        "decision": {
+          "text": "{\"decision\":\"install\"}"
+        }
+      },
+      "cwd": {
+        "kind": "scratch"
+      },
+      "timeoutMs": null,
+      "expect": {
+        "verdict": "error"
+      }
+    }
+  ]
+}
