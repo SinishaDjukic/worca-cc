@@ -369,6 +369,21 @@ test('addThreadTotals: sums every turn (null cost adds 0 but counts), usage.ctx 
       assert.equal(tot.ctxWindow, 200000, 'a model switch replaces it');
       assert.equal(getThread(t.id).totals.ctxWindow, 200000, 'rowToThread surfaces it');
     } },
+    { name: 'addThreadTotals: sessionCost (#1479) REPLACES the session\'s last running total; a turn without one, or a garbage one, leaves it', run: () => {
+      const t = createThread({});
+      let tot = addThreadTotals(t.id, { costUsd: 0.05, usage: null });
+      assert.equal('sessionCost' in tot, false, 'never reported: absent');
+      tot = addThreadTotals(t.id, { costUsd: 0.05, usage: null, sessionCost: { sessionId: 'sess-1', usd: 0.05 } });
+      assert.deepEqual(tot.sessionCost, { sessionId: 'sess-1', usd: 0.05 });
+      tot = addThreadTotals(t.id, { costUsd: 0.03, usage: null, sessionCost: { sessionId: 'sess-1', usd: 0.08 } });
+      assert.deepEqual(tot.sessionCost, { sessionId: 'sess-1', usd: 0.08 }, 'the later total replaces, never sums');
+      assert.equal(tot.costUsd, 0.13, 'the chat total books the turns, not the session totals');
+      for (const sessionCost of [null, { sessionId: '', usd: 1 }, { sessionId: 'sess-1', usd: NaN }, { sessionId: 'sess-1', usd: '2' }, { usd: 1 }]) {
+        tot = addThreadTotals(t.id, { costUsd: 0, usage: null, sessionCost });
+        assert.deepEqual(tot.sessionCost, { sessionId: 'sess-1', usd: 0.08 }, JSON.stringify(sessionCost));
+      }
+      assert.deepEqual(getThread(t.id).totals.sessionCost, { sessionId: 'sess-1', usd: 0.08 }, 'rowToThread surfaces it');
+    } },
   ]);
 });
 
@@ -813,7 +828,7 @@ test('appendMessage keeps a reply\'s engine; switchThreadEngine moves the chat a
   updateThread(t.id, { model: 'gpt-5.5', effort: 'low', engine: 'codex', sessionId: 'codex:abc' });
   appendMessage(t.id, { role: 'user', text: 'u' });
   const a = appendMessage(t.id, { role: 'assistant', text: 'x', status: 'done', model: 'gpt-5.5', effort: 'low', engine: 'codex' });
-  addThreadTotals(t.id, { costUsd: 1.5, usage: { input: 10, output: 5, ctx: 180_000, ctxWindow: 200_000 } });
+  addThreadTotals(t.id, { costUsd: 1.5, usage: { input: 10, output: 5, ctx: 180_000, ctxWindow: 200_000 }, sessionCost: { sessionId: 'codex:abc', usd: 1.5 } });
   assert.equal(getMessage(a.id).engine, 'codex');
   assert.equal(listMessages(t.id)[0].engine, null, 'a user row has none');
   const { thread, message } = switchThreadEngine(t.id, { engine: 'claude', model: 'claude-opus-5-5', effort: 'high',
@@ -823,6 +838,7 @@ test('appendMessage keeps a reply\'s engine; switchThreadEngine moves the chat a
   assert.deepEqual(message.blocks[0].engineSwitch, { from: 'codex', to: 'claude' });
   assert.deepEqual([thread.totals.costUsd, thread.totals.turns, thread.totals.input], [1.5, 1, 10], 'the chat total spans every engine');
   assert.deepEqual(['ctx' in thread.totals, 'ctxWindow' in thread.totals], [false, false], 'the context meter starts over');
+  assert.equal('sessionCost' in thread.totals, false, 'no session, no session total');
   assert.throws(() => switchThreadEngine('ask_ffffffff', { engine: 'claude', model: 'm', effort: 'high', text: 't', blocks: [] }), /unknown thread/);
   assert.equal(listMessages(t.id).length, 3, 'nothing half-written');
 });

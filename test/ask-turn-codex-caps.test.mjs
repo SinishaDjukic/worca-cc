@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { createAskTurn, CODEX_SHELL_TRIPPED_MESSAGE, codexToolTrippedMessage } from '../src/core/ask/turn.mjs';
-import { createThread, appendMessage, getMessage } from '../src/core/ask/store.mjs';
+import { createThread, appendMessage, getMessage, addThreadTotals } from '../src/core/ask/store.mjs';
 
 useTempHome(after);
 // settings.json lives under $HOME/.worca-cc: HOME is a scratch dir too.
@@ -98,6 +98,26 @@ test('askMaxBudgetUsd: a reported cost over the cap stops the turn with the budg
   assert.equal(done.reason, 'max_budget');
   assert.equal(done.costUsd, 0.75, 'the spend still books');
   assert.ok(getMessage(s.asst.id).blocks.some((b) => b.text === 'Stopped: reached the $0.5 per-turn cap (Settings → Chat)'));
+});
+
+// Defensive only: no locked-down engine flags cumulativeCost today, so these events are hand-made. The real chat cap on a
+// resumed Claude session is the --max-budget-usd flag (ask-turn.test.mjs, #1479).
+test('watchdog (defensive): a result flagged as a session\'s running total adds only its share to the turn\'s spend (#1479)', async () => {
+  const s = seed();
+  addThreadTotals(s.thread.id, { costUsd: 0.4, usage: null, sessionCost: { sessionId: 'codex:t', usd: 0.4 } });
+  const total = (usd) => ({ type: 'result', text: 'x', isError: false, usage: { input_tokens: 1, output_tokens: 1 }, costUsd: usd, cumulativeCost: true, sessionId: 'codex:t' });
+  const { turn, frames } = makeTurn(s, { maxTurns: 400, maxBudgetUsd: 0.5 }, async (o) => {
+    o.onEvent({ type: 'session', sessionId: 'codex:t', init: true });
+    o.onEvent({ type: 'text', text: 'x', parentId: null, from: 'assistant', blocks: ['x'], messageId: 'i1' });
+    o.onEvent(total(0.45));
+    o.onEvent(total(0.8));
+    return { text: 'x', exitCode: 0 };
+  });
+  await turn.run();
+  const done = frames.find((f) => f.type === 'ask-done');
+  assert.equal(done.reason, undefined, 'the turn added 0.05 + 0.35: under the $0.5 cap (summing the totals trips at 1.25)');
+  assert.equal(done.status, 'done');
+  assert.equal(done.costUsd, 0.4);
 });
 
 test('budget set and an unpriced model: the turn refuses to start, naming the model', async () => {

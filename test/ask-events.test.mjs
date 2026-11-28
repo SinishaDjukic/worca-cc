@@ -936,6 +936,70 @@ test('agent ctxWindow: each sub-agent gets its own model\'s window at finish; an
   assert.equal('ctxWindow' in agents.toolu_s, false, 'an alias that never resolved matches nothing: no guess');
 });
 
+// #1479: Claude Code's total_cost_usd is the SESSION's running total (claude-events.mjs `cumulativeCost`) and `--resume`
+// restores it into a turn's first result, so a resumed chat turn books only the difference against the last total the
+// thread booked for that session (`costBaseline`, persisted per thread), the rule of run-harness _sessionCostDelta.
+test('cumulative session cost: a resumed turn books the difference against the thread\'s last total for that session', async () => {
+  await checkRows([
+    { name: 'a resumed session books its total minus the baseline, everywhere the turn reports it; sessionCost is the new total', run: () => {
+      const h = harness({ costBaseline: { sessionId: SID, usd: 0.05 } });
+      h.push(session(), init(), atext('msg_1', 'hi'), result({ total_cost_usd: 0.08 }));
+      assert.equal(h.frames.filter((f) => f.type === 'ask-usage').at(-1).costUsd, 0.03, 'the live frame shows the turn, not the session');
+      assert.equal(h.r.snapshot().costUsd, 0.03);
+      const s = h.r.finish();
+      assert.equal(s.costUsd, 0.03);
+      assert.deepEqual(s.sessionCost, { sessionId: SID, usd: 0.08 }, 'what the next turn subtracts');
+    } },
+    { name: 'no baseline, or one for another session (a fresh or replaced session): the whole figure is this turn\'s', run: () => {
+      for (const costBaseline of [undefined, null, { sessionId: 'sess-other', usd: 0.05 }, { sessionId: SID, usd: 'x' }]) {
+        const h = harness({ costBaseline });
+        h.push(init(), result());
+        const s = h.r.finish();
+        assert.equal(s.costUsd, 0.0234, JSON.stringify(costBaseline));
+        assert.deepEqual(s.sessionCost, { sessionId: SID, usd: 0.0234 });
+      }
+      const exact = harness();
+      exact.push(init(), result({ total_cost_usd: 0.07543725 }));
+      assert.equal(exact.r.finish().costUsd, 0.07543725, 'nothing subtracted: the CLI figure exactly, never rounded');
+    } },
+    { name: 'several results in one turn (a re-woken process): each adds only its own share, never the running total again', run: () => {
+      const h = harness({ costBaseline: { sessionId: SID, usd: 0.01 } });
+      h.push(init(), result({ total_cost_usd: 0.03 }), result({ total_cost_usd: 0.05, origin: { kind: 'task-notification' } }));
+      const s = h.r.finish();
+      assert.equal(s.costUsd, 0.04);
+      assert.deepEqual(s.sessionCost, { sessionId: SID, usd: 0.05 });
+    } },
+    { name: 'a total below the baseline (a killed process that saved less) books nothing and becomes the baseline', run: () => {
+      const h = harness({ costBaseline: { sessionId: SID, usd: 0.5 } });
+      h.push(init(), result({ total_cost_usd: 0.2 }), result({ total_cost_usd: 0.25 }));
+      const s = h.r.finish();
+      assert.equal(s.costUsd, 0.05);
+      assert.deepEqual(s.sessionCost, { sessionId: SID, usd: 0.25 });
+    } },
+    { name: 'resolveCost re-prices the turn\'s share, not the session total', run: () => {
+      const seen = [];
+      const h = harness({ costBaseline: { sessionId: SID, usd: 0.05 }, resolveCost: (cli) => { seen.push(cli); return cli * 2; } });
+      h.push(init(), result({ total_cost_usd: 0.08 }));
+      assert.equal(h.r.finish().costUsd, 0.06);
+      assert.deepEqual(seen, [0.03]);
+    } },
+    { name: 'a cost that is the result\'s own (no cumulative flag, or no session id) stays last-wins; no result → sessionCost null', run: () => {
+      const own = harness({ costBaseline: { sessionId: SID, usd: 0.05 } });
+      own.push({ type: 'result', text: 'x', isError: false, costUsd: 0.75, sessionId: SID });
+      assert.equal(own.r.finish().costUsd, 0.75);
+      assert.equal(own.r.snapshot().sessionCost, null);
+      const noSid = harness({ costBaseline: { sessionId: SID, usd: 0.05 } });
+      noSid.push(init(), result({ session_id: undefined, total_cost_usd: 0.08 }));
+      assert.equal(noSid.r.finish().costUsd, 0.08);
+      const none = harness({ costBaseline: { sessionId: SID, usd: 0.05 } });
+      none.push(init());
+      const s = none.r.finish();
+      assert.equal(s.costUsd, null);
+      assert.equal(s.sessionCost, null);
+      } },
+    ]);
+});
+
 test('hands-free <spoken> block: split out of the stream into ask-spoken; deltas, textLength and finish() stay clean', async () => {
   const live = (h) => h.frames.filter((f) => f.type === 'ask-delta' || f.type === 'ask-spoken' || f.type === 'ask-block');
   const deltaText = (h) => h.frames.filter((f) => f.type === 'ask-delta').map((f) => f.text).join('');

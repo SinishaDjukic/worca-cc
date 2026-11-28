@@ -67,7 +67,7 @@
     "ctx": 32425,
     "ctxWindow": 200000
    },
-   "costUsd": 0.08018644999999999,
+   "costUsd": 0.080186,
    "estimatedCostUsd": null
   },
   {
@@ -118,8 +118,12 @@
    "ctx": 32425,
    "ctxWindow": 200000
   },
-  "costUsd": 0.08018644999999999,
+  "costUsd": 0.080186,
   "sessionId": "00000000-0000-4000-8000-000000000001",
+  "sessionCost": {
+   "sessionId": "00000000-0000-4000-8000-000000000001",
+   "usd": 0.08018644999999999
+  },
   "status": "done",
   "reason": null,
   "resultSubtype": "success",

@@ -27,7 +27,7 @@ import { cleanText } from '../../shared/graph/assemble.mjs';
 import { MCP_TOOL_NAME_400_RE, MCP_TOOL_NAME_TOO_LONG } from '../../shared/mcp-tool-name.mjs';
 import { createRedactor } from '../redact.mjs';
 import { redactAskText } from './redact.mjs';
-import { createTurnReducer } from './events.mjs';
+import { createTurnReducer, sessionCostDelta, sessionCostSeen } from './events.mjs';
 import { buildAskSpawnOptions, buildMcpConfig, ASK_MCP_SERVER_PATH } from './spawn.mjs';
 import { refreshAskMemoryMount } from './memory-deps.mjs';
 import { createUsageTally, noteOfReadMemory, recordMemoryUsage } from '../memory-usage.mjs';
@@ -73,7 +73,7 @@ import { resolveSetting } from '../settings-cascade.mjs';
 import { withRole } from '../model-roles.mjs';
 import { mentionedRefs } from './contexts.mjs';
 import {
-  newAskId, finishMessage, setMessageBlocks, addThreadTotals, addThreadContexts, updateThread, setThreadTitle, listAttachments, getAttachment, listMessages, ASK_ID_RE, claimThreadDir,
+  newAskId, finishMessage, setMessageBlocks, addThreadTotals, addThreadContexts, getThread, updateThread, setThreadTitle, listAttachments, getAttachment, listMessages, ASK_ID_RE, claimThreadDir,
 } from './store.mjs';
 import { budgetStatus, recordAskCostDelta } from '../cost-budget.mjs';
 import { generateSuggestion, suggestionModel, claimSuggestion, releaseSuggestion, cancelSuggestion, SUGGESTION_TIMEOUT_MS } from './suggest.mjs';
@@ -255,7 +255,7 @@ class AskTurn extends EventEmitter {
       materializeSkillMount: deps.materializeSkillMount ?? materializeSkillMount,
       removeSkillMount: deps.removeSkillMount ?? ((base) => rm(base, { recursive: true, force: true })),
       store: {
-        finishMessage, setMessageBlocks, addThreadTotals, addThreadContexts, updateThread, setThreadTitle, listAttachments, getAttachment,
+        finishMessage, setMessageBlocks, addThreadTotals, addThreadContexts, getThread, updateThread, setThreadTitle, listAttachments, getAttachment,
         ...(deps.store || {}),
       },
       // Claude Code's sign-in for propose_run's per-agent picks, asked once per turn (proposal.mjs proposalClaudeAuth: a
@@ -1076,6 +1076,30 @@ class AskTurn extends EventEmitter {
     this._persistBlocks();
   }
 
+  /** The session total the thread last booked (store.mjs addThreadTotals `sessionCost`), read once per turn: every
+   *  attempt's reducer subtracts it from a result of that session (#1479). null for a new thread or a deleted one — and
+   *  for a thread last used before #1479, whose first resumed turn therefore books the session's whole total once (the
+   *  CLI's earlier total was never stored, so it cannot be backfilled); every turn after it books its own share. */
+  _costBaseline() {
+    if (this._sessionCostBaseline === undefined) {
+      try { this._sessionCostBaseline = this.deps.store.getThread?.(this.threadId)?.totals?.sessionCost ?? null; }
+      catch { this._sessionCostBaseline = null; }
+    }
+    return this._sessionCostBaseline;
+  }
+
+  /** The limits an attempt's spawn gets. Claude's --max-budget-usd counts the whole session, earlier turns included
+   *  (session-host.mjs HOST_BUDGET_IS_CUMULATIVE), so an attempt that resumes the session the baseline belongs to gets
+   *  the per-turn cap plus that session's booked total, as session-host `_maxBudgetUsd` does (#1479). The
+   *  resume-fallback retry runs a fresh session and keeps the raw cap. Locked-down engines never read the flag. */
+  _spawnLimits(limitsNow, isRetry) {
+    const cap = limitsNow.maxBudgetUsd;
+    const base = this._costBaseline();
+    if (this.lockedDown || isRetry || cap == null || !this.resumeSessionId || base?.sessionId !== this.resumeSessionId) return limitsNow;
+    if (typeof base.usd !== 'number' || !Number.isFinite(base.usd) || base.usd <= 0) return limitsNow;
+    return { ...limitsNow, maxBudgetUsd: Math.round((cap + base.usd) * 1e6) / 1e6 };
+  }
+
   _makeReducer() {
     this._wfCards.clear();
     this._tracked.clear();
@@ -1085,6 +1109,7 @@ class AskTurn extends EventEmitter {
     // estimatedCostUsd:null and the footer keeps today's behaviour.
     let liveRates = null;
     try { liveRates = (this.lockedDown ? this._ratesFor() : d.liveCostRates(this.model)) ?? null; } catch { liveRates = null; }
+    this._watchSeen = sessionCostSeen(this._costBaseline());   // the watchdog's running totals start over with the attempt
     this.reducer = createTurnReducer({
       onFrame: (f) => this._frame(f),
       onLimit: (evt) => recordClaudeLimit(evt),
@@ -1102,6 +1127,8 @@ class AskTurn extends EventEmitter {
       // the orchestrator's result intake does. Trusts the CLI when the model
       // carries no override, which is the default.
       resolveCost: (cliCostUsd, usage) => d.resolveModelCost(this.model, cliCostUsd, usage),
+      // #1479: a resumed session's result carries the earlier turns' cost; the turn books only what it adds.
+      costBaseline: this._costBaseline(),
       limits: d.limits,
       // A composer turn (the Workflows chat) shows only its own cards. Its MCP child refuses Ask's tools, but the CLI
       // still reports a hallucinated propose_run as an is_error result — which onProposal re-validates into a
@@ -1326,7 +1353,7 @@ class AskTurn extends EventEmitter {
     let threadTotals = null;
     try {
       threadTotals = d.store.addThreadTotals(this.threadId, {
-        costUsd, usage: summary.usage, agents: summary.agents,
+        costUsd, usage: summary.usage, agents: summary.agents, sessionCost: summary.sessionCost,
       });
     } catch { /* deleted thread */ }
     // D10: the spend is a financial fact even when the thread was deleted
@@ -1424,7 +1451,9 @@ class AskTurn extends EventEmitter {
       return;
     }
     if (e.type === 'result' && Number.isFinite(e.costUsd)) {
-      this._spentUsd += e.costUsd;
+      // Defensive only: no locked-down engine flags cumulativeCost today (only Claude's normalizer does, and Claude's cap
+      // is the CLI's own flag, see _spawnLimits). Should one ever report a session's running total, it adds its share (#1479).
+      this._spentUsd += sessionCostDelta(this._watchSeen, e);
       this._lastUsage = e.usage ?? null;
       // An error result is the spend of a turn that already ended (stopped, failed — codex.mjs books it from codex's
       // session file): it is booked, never a reason to stop what has stopped.
@@ -1656,7 +1685,7 @@ class AskTurn extends EventEmitter {
             }
           },
         },
-        limits: limitsNow,
+        limits: this._spawnLimits(limitsNow, isRetry),
         mcpConfigPath,
         scratchDir,
         memoryDir: this.memoryDir,

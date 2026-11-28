@@ -543,8 +543,10 @@ export function setThreadTitle(id, title, { onlyIf } = {}) {
   return info.changes > 0;
 }
 
-/** Every turn — done, stopped or error — adds to the thread totals; a null cost adds 0 but counts the turn. */
-export function addThreadTotals(id, { costUsd = null, usage = null, agents = 0 } = {}) {
+/** Every turn — done, stopped or error — adds to the thread totals; a null cost adds 0 but counts the turn.
+ *  `sessionCost` {sessionId, usd}: the CLI's running total of the thread's session after the turn (#1479). It REPLACES the
+ *  stored one (a turn without one keeps it): the next turn books only what its session total adds to it (events.mjs). */
+export function addThreadTotals(id, { costUsd = null, usage = null, agents = 0, sessionCost = null } = {}) {
   return tx(() => {
     const row = prepare('SELECT totals FROM ask_threads WHERE id = ?').get(id);
     if (!row) return null;
@@ -553,6 +555,9 @@ export function addThreadTotals(id, { costUsd = null, usage = null, agents = 0 }
     for (const k of ['input', 'output', 'cacheRead', 'cacheCreation']) t[k] += Number(usage?.[k]) || 0;
     if (Number.isFinite(usage?.ctx)) t.ctx = usage.ctx;                   // context fill: the turn's last per-call figure REPLACES (never sums)
     if (Number.isInteger(usage?.ctxWindow) && usage.ctxWindow > 0) t.ctxWindow = usage.ctxWindow;   // the model's window: REPLACES; a turn without one keeps the last
+    if (typeof sessionCost?.sessionId === 'string' && sessionCost.sessionId && typeof sessionCost.usd === 'number' && Number.isFinite(sessionCost.usd)) {
+      t.sessionCost = { sessionId: sessionCost.sessionId, usd: sessionCost.usd };
+    }
     t.turns += 1;
     t.agents += Number.isInteger(agents) && agents > 0 ? agents : 0;
     prepare('UPDATE ask_threads SET totals = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(t), now(), id);
@@ -657,10 +662,11 @@ export function switchThreadEngine(threadId, { engine, model, effort, text, bloc
     if (!row) throw new Error(`switchThreadEngine: unknown thread ${threadId}`);
     // The context meter starts over: the fresh session has no fill yet, and the old model's window is not the new
     // one (addThreadTotals keeps the last window when a turn reports none, and only Claude reports one). Cost, tokens
-    // and turns stay: the chat's total spans every engine.
+    // and turns stay: the chat's total spans every engine. The old session's running total goes with the session.
     const totals = { ...emptyTotals(), ...(parse(row.totals, {}) || {}) };
     delete totals.ctx;
     delete totals.ctxWindow;
+    delete totals.sessionCost;
     prepare('UPDATE ask_threads SET engine = ?, model = ?, effort = ?, session_id = NULL, totals = ?, updated_at = ? WHERE id = ?')
       .run(engine, model, effort, JSON.stringify(totals), t, threadId);
     const id = insertMessage(threadId, { role: 'system', text, blocks }, t);

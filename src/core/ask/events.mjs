@@ -115,6 +115,34 @@ export function matchModelKey(model, modelUsage, { single = true } = {}) {
   return single && keys.length === 1 ? keys[0] : null;
 }
 
+/** What a result's cost adds to the turn (#1479), the rule of run-harness `_sessionCostDelta`. A `cumulativeCost` figure
+ *  (Claude Code) is the session's running total: `--resume` restores the earlier turns' cost into the first result and a
+ *  re-woken process repeats it. So `seen` (session id → the last total booked) gets the new total and the difference is
+ *  booked; a total below the kept one (a killed process that saved less) books nothing and becomes the baseline. Any
+ *  other cost is the result's own, as is a cumulative one with no session id. NaN when the result carries no cost.
+ *  Only a difference is rounded (to the micro-dollar, so 0.08 − 0.05 books 0.03): a session's first total is exact. */
+export function sessionCostDelta(seen, e) {
+  const cost = e?.costUsd != null ? Number(e.costUsd) : NaN;
+  if (!isSessionTotal(e)) return cost;
+  const prior = seen.get(e.sessionId);
+  seen.set(e.sessionId, cost);
+  return prior == null ? cost : Math.round(Math.max(0, cost - prior) * 1e6) / 1e6;
+}
+
+/** Is this result's cost a session's running total that sessionCostDelta books the difference of? */
+function isSessionTotal(e) {
+  return e?.cumulativeCost === true && typeof e.sessionId === 'string' && !!e.sessionId && e.costUsd != null && Number.isFinite(Number(e.costUsd));
+}
+
+/** A thread's persisted `{sessionId, usd}` (store.mjs addThreadTotals `sessionCost`) as a fresh `seen` map. */
+export function sessionCostSeen(baseline) {
+  const seen = new Map();
+  if (baseline && typeof baseline.sessionId === 'string' && baseline.sessionId && typeof baseline.usd === 'number' && Number.isFinite(baseline.usd)) {
+    seen.set(baseline.sessionId, baseline.usd);
+  }
+  return seen;
+}
+
 /** Spec §6.6: costUSD × w(agent) / w(model total), clamped; null without usage or a matching model. Always estimated:true. */
 export function estimateAgentCosts(agents, result) {
   const mu = result?.modelUsage && typeof result.modelUsage === 'object' ? result.modelUsage : {};
@@ -312,6 +340,8 @@ export function scriptResultNote(name, text, isError = false) {
  *   AUTHORITATIVE cost. Injected (rather than imported) to keep this reducer free
  *   of config/DB dependencies. Default: trust the CLI. A non-finite return, or a
  *   throw, falls back to the CLI figure.
+ * @param {{sessionId:string, usd:number}|null} [o.costBaseline]  the session total the thread last booked (#1479): a
+ *   cumulative result of that session books only what it adds (sessionCostDelta)
  * @param {object} [o.limits]
  * @param {boolean} [o.emitWholeMessages]  Codex (D15): a message that arrives whole, with no deltas, still streams as one ask-delta
  */
@@ -358,6 +388,7 @@ export function createTurnReducer({
   estimateLiveCost = null,
   attachmentNames = {},
   resolveCost = null,
+  costBaseline = null,
   limits = ASK_LIMITS,
   emitWholeMessages = false,
 } = {}) {
@@ -387,6 +418,9 @@ export function createTurnReducer({
   let sawResult = false;
   let sessionId = null;
   let lastResult = null;
+  const sessionTotals = sessionCostSeen(costBaseline);   // session id → the last running total booked (#1479)
+  let sessionShare = null;        // what this turn's cumulative results added: the turn's cost when the last result is one
+  let sessionCost = null;         // { sessionId, usd }: the last cumulative total seen — the next turn's baseline
   let mainModel = null;           // the init frame's model — picks this turn's entry out of result.modelUsage
   let reducerErrors = 0;
   let summary = null;
@@ -440,8 +474,13 @@ export function createTurnReducer({
     if (w) u.ctxWindow = w;                                               // absent, not null, when unknown: old payloads stay byte-identical
     return u;
   };
-  /** What the CLI itself reported for this turn — null until the `result` frame lands. */
-  const cliCost = () => (lastResult && typeof lastResult.costUsd === 'number' && Number.isFinite(lastResult.costUsd) ? lastResult.costUsd : null);
+  /** What the CLI itself reported for this turn — null until the `result` frame lands. A session's running total
+   *  counts only what this turn's results added to it (#1479). */
+  const cliCost = () => {
+    if (!lastResult) return null;
+    if (isSessionTotal(lastResult)) return sessionShare;
+    return typeof lastResult.costUsd === 'number' && Number.isFinite(lastResult.costUsd) ? lastResult.costUsd : null;
+  };
   // The AUTHORITATIVE turn cost: cliCost() re-priced by the injected override, if
   // any. Memoized on lastResult — resolveCost reads the model catalog off disk, and
   // this is read by every ask-usage frame as well as finish()/snapshot(). null
@@ -983,6 +1022,12 @@ export function createTurnReducer({
     sawResult = true;
     lastResult = evt;                                                     // the LAST result wins; never sum
     if (typeof evt.sessionId === 'string') sessionId = evt.sessionId;
+    if (isSessionTotal(evt)) {
+      // A running total: each result adds only its share, so a re-woken process never books the earlier turns again.
+      const share = sessionCostDelta(sessionTotals, evt);
+      sessionShare = sessionShare == null ? share : Math.round((sessionShare + share) * 1e6) / 1e6;
+      sessionCost = { sessionId: evt.sessionId, usd: Number(evt.costUsd) };
+    }
     emitUsage();
   }
 
@@ -1059,7 +1104,7 @@ export function createTurnReducer({
     },
     snapshot() {
       return {
-        text: mainText(), blocks: blocks.map(clone), usage: currentUsage(), costUsd: currentCost(), sessionId,
+        text: mainText(), blocks: blocks.map(clone), usage: currentUsage(), costUsd: currentCost(), sessionId, sessionCost,
         ...terminal(), sawInit, sawAssistant, sawResult, agents: blocks.filter((b) => b.kind === 'agent').length,
         runningAgents, labels: [...labels], reducerErrors, cliErrorText: cliErrorText || null,
       };
@@ -1101,7 +1146,7 @@ export function createTurnReducer({
       const text = mainText() || splitSpoken(lastResult && !lastResult.isError && typeof lastResult.text === 'string' ? lastResult.text : '').text
         || [...messages.values()].map(messageSpoken).filter(Boolean).join('\n\n').trim();
       summary = {
-        text: redact(text), blocks: blocks.map(clone), usage: currentUsage(), costUsd: currentCost(), sessionId,
+        text: redact(text), blocks: blocks.map(clone), usage: currentUsage(), costUsd: currentCost(), sessionId, sessionCost,
         ...terminal(), sawInit, sawAssistant, sawResult, agents: agents.length, labels: [...labels], reducerErrors,
         cliErrorText: cliErrorText || null,
       };
