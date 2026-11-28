@@ -117,7 +117,8 @@ export class SessionHost {
     const cutCostRestored = port.mock ? mockRestoresCutCost() : HOST_CUT_COST_RESTORED;
     this.limits = { cutCostRestored, rotateDispatches: HOST_ROTATE_DISPATCHES, rotateContextTokens: HOST_ROTATE_CONTEXT_TOKENS,
       degradeAfter: HOST_DEGRADE_AFTER, mainThreadGuard: HOST_MAIN_THREAD_GUARD, guardField: HOST_GUARD_CONTEXT_FIELD, ...limits };
-    this.engine = port.engine ?? null;
+    // The session's harness: the run-start decision's when its members are on another one, else the run's.
+    this.engine = decision.engine ?? port.engine ?? null;
     this.hostEpoch = 1;                        // C2: the first host session is epoch 1
     this.hostSessionId = null;
     this.hostResolvedModel = null;
@@ -294,7 +295,9 @@ export class SessionHost {
 
   /** The harness books; a booking that throws is logged and the turn goes on (its records say what is known). */
   _book(b) {
-    try { return this.port.bookTurn(b) || null; } catch (err) {
+    // A session off the run's harness names its own, so the booking prices it on that harness (today's shape otherwise).
+    const own = this.engine !== (this.port.engine ?? null) ? { engine: this.engine } : {};
+    try { return this.port.bookTurn({ ...b, ...own }) || null; } catch (err) {
       this._log('warn', `session ${this.sid}: booking ${b.turnId} failed: ${err?.message || err}`, { session: this.sid });
       return null;
     }

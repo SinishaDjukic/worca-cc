@@ -531,7 +531,7 @@ test("a single-project codex run's project deny rules reach every codex spawn an
   // Without the consent the Permissive set's run is refused: the command rule holds only in part.
   assert.deepEqual(await make({ engine: 'codex' }).engineStartRefusal(), {
     error: `engine codex: the project's .claude/settings.json denies Bash(git push:*), which this engine holds only in part: ${REACH} — pass --allow-unguarded-engine to run it with them as a partial guard`,
-    overridable: true,
+    overridable: true, engines: ['codex'],
   });
   const o = make({ engine: 'codex', allowUnguardedEngine: true });
   const seen = [];
@@ -572,7 +572,7 @@ test('engineStartRefusal answers before a run exists, and says when the consent 
   const strict = make({ engine: 'codex' }, { guardrailsId: 'normal' });
   assert.deepEqual(await strict.engineStartRefusal(), {
     error: 'engine codex: guardrail set "normal" has permission rules this engine cannot enforce (Read(.env*), Edit(.env*), Read(*.pem) (+32 more)) — run it with --guardrails permissive, or pass --allow-unguarded-engine to run it without them',
-    overridable: true,
+    overridable: true, engines: ['codex'],
   });
   assert.equal(await make({ engine: 'codex', allowUnguardedEngine: true }, { guardrailsId: 'normal' }).engineStartRefusal(), null);
   // Secure was already refused for its path rules; WebFetch now joins the rules it lists, and the consent still lifts it.
@@ -600,7 +600,7 @@ test('engineStartRefusal reports an MCP registry layer as not liftable', async (
   o._resolveMcp = layer([{ name: 'sentry_billing', setName: 'Billing' }]);
   assert.deepEqual(await o.engineStartRefusal(), {
     error: 'engine codex: this run attaches MCP servers codex cannot attach — remote, and codex attaches stdio servers only: sentry_billing',
-    overridable: false,
+    overridable: false, engines: ['codex'],
   });
   // Rules AND copies: the consent would lift only the rules, so the answer is the copies, not liftable.
   const both = createOrchestrator({ projectDir: tmp(), guardrailsId: 'normal', claude: { mock: true, engine: 'codex' } });
@@ -622,7 +622,7 @@ test('engineStartRefusal sees the Team set\'s copies before the run resolves its
   };
   assert.deepEqual(await o.engineStartRefusal(), {
     error: 'engine codex: this run attaches MCP servers codex cannot attach — remote, and codex attaches stdio servers only: github',
-    overridable: false,
+    overridable: false, engines: ['codex'],
   });
   assert.deepEqual(asked, { team }, 'the cached Team set reaches the early look');
   o.policyRun = { home: 'acme/platform', fields: {}, deviations: [] };

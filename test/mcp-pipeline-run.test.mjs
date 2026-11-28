@@ -214,6 +214,25 @@ test('the capability path that drops --mcp-config drops the registry layer too',
   assert.equal(orch.mcpLayer, null);
 });
 
+test('the capability probe runs when any step is on Claude Code, and asks Claude Code\'s binary, never the run\'s other-harness bin', async () => {
+  const { DEFAULT_BIN } = await import('../src/core/engines/claude.mjs');
+  const probe = async (engines) => {
+    const orch = createOrchestrator({ projectDir: gitDir('mcp-cap-u'), claude: { engine: 'codex', bin: '/opt/codex' } });
+    orch.runRoot = mkdtempSync(join(tmpdir(), 'worca-cc-mcp-cap-u-'));
+    orch._harnessPlan = () => ({ engines, steps: new Map() });
+    let asked = 0;
+    orch._claudeCaps = async () => { asked += 1; return { version: '2.1.300', mcpConfig: true }; };
+    await orch._recordCapabilities();
+    return { asked, caps: (await readRunManifest(orch.runRoot)).capabilities };
+  };
+  const mixed = await probe(['claude', 'codex']);
+  assert.deepEqual([mixed.asked, mixed.caps.probed, mixed.caps.version], [1, true, '2.1.300'], 'a Codex run with a step on Claude Code probes claude');
+  const codexOnly = await probe(['codex']);
+  assert.deepEqual([codexOnly.asked, codexOnly.caps.probed, codexOnly.caps.engine], [0, false, 'codex']);
+  assert.equal(createOrchestrator({ projectDir: gitDir('mcp-cap-bin'), claude: { engine: 'codex', bin: '/opt/codex' } })._claudeBin(), DEFAULT_BIN, 'Codex\'s bin is never asked for claude\'s capabilities');
+  assert.equal(createOrchestrator({ projectDir: gitDir('mcp-cap-bin2'), claude: { bin: '/opt/claude' } })._claudeBin(), '/opt/claude');
+});
+
 test('_resolveMcp: a translated model anywhere in the run sets the 64 limit, so untested copies are skipped `untested`', async () => {
   const { dir } = await fixture();
   await withGw(async () => {

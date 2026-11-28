@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { gitDir } from './helpers/git-dir.mjs';
+import { gitDir, templateRepo } from './helpers/git-dir.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { _testing } from '../src/core/graph/executor.mjs';
 import { runClaude } from '../src/core/claude-runner.mjs';
@@ -376,4 +376,29 @@ test('a fix fed through an or by another review leaves the role round\'s counts 
   assert.ok(round.counts.raised > 0);
   assert.equal(round.counts.open, round.counts.raised, 'no disposition marked a code finding');
   assert.ok(round.roles.flatMap((r) => r.findings).every((f) => f.status === 'open'));
+});
+
+test('a role pinned to Codex spawns its slice on Codex with its own model, no Claude bin and no Claude model guard; a Codex step carries the project\'s denies', async () => {
+  const dir = templateRepo('role-engine-codex', { files: { '.claude/settings.json': JSON.stringify({ permissions: { deny: ['Bash(curl:*)'] } }), 'seed.txt': 'x\n' } });
+  const orch = createOrchestrator({ projectDir: dir, workflowId, prompt: 'demo', guardrailsId: 'permissive', claude: { mock: true, bin: '/opt/fake-claude', allowUnguardedEngine: true },
+    overlay: { nodes: { n_reviewer: { roles: { security: { model: 'gpt-5.5', effort: 'high', engine: 'codex' } } }, n_plan: { model: 'gpt-5.5', engine: 'codex' } } } });
+  const seen = [];
+  const realCtx = orch._execCtx.bind(orch);
+  orch._execCtx = (node, nc, args) => {
+    const ctx = realCtx(node, nc, args);
+    const c = ctx.claudeOpts;
+    seen.push({ node: node.id, role: args.slice?.role ?? null, engine: c.engine, nodeEngine: ctx.node?.engine, model: c.model, bin: c.bin ?? null, guard: !!c.modelGuard, deny: c.permissionRules?.deny || [] });
+    return ctx;
+  };
+  orch.on('question', (q) => setImmediate(() => orch.answer(q.id, q.kind === 'plan' ? { decision: 'approve' } : { answers: [] })));
+  const res = await orch.run();
+  assert.equal(res.status, 'done', res.error);
+  const sec = seen.filter((s) => s.role === 'security');
+  const cor = seen.filter((s) => s.role === 'correctness');
+  assert.ok(sec.length && cor.length, JSON.stringify(seen));
+  for (const s of sec) assert.deepEqual([s.engine, s.nodeEngine, s.model, s.bin, s.guard], ['codex', 'codex', 'gpt-5.5', null, false]);
+  for (const s of cor) assert.deepEqual([s.engine, s.nodeEngine, s.bin, s.guard], ['claude', 'claude', '/opt/fake-claude', true]);
+  for (const s of sec) assert.ok(s.deny.includes('Bash(curl:*)'), JSON.stringify(s.deny));
+  const plan = seen.filter((s) => s.node === 'n_plan');
+  assert.ok(plan.length && plan.every((s) => s.engine === 'codex' && s.deny.includes('Bash(curl:*)')), JSON.stringify(plan));
 });

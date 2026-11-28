@@ -269,7 +269,7 @@ test('engine: OpenCode is the fifth choice; it sends engine opencode and says he
   assert.equal(ctx.posted.at(-1).engine, 'opencode');
 });
 
-test('engine: on Cursor the agent rows offer Cursor models only and no sub-agent model', async () => {
+test('engine: on Cursor the row\'s picker opens on Cursor, and there is no sub-agent model', async () => {
   const ctx = await boot();
   const np = ctx.window.__np;
   np._setModels([
@@ -281,8 +281,11 @@ test('engine: on Cursor the agent rows offer Cursor models only and no sub-agent
   np.renderAgentRows([{ nodeId: 'n1', key: 'planner', label: 'Plan', color: '', stepIndex: 0, parallel: false,
     model: '', effort: '', fanOut: false, subagentModel: '', askQuestions: null, def, override: {}, modified: false }]);
   const model = ctx.doc.querySelector('#agents-rows .step-model');
-  assert.deepEqual([...model.options].map((o) => o.value).filter((v) => v !== '__add__'), ['', 'my-cursor-m']);
-  assert.equal(model.options[0].textContent, '(default model)');
+  model.click();
+  const pop = ctx.doc.querySelector('.mdl-cols-pop');
+  const shown = pop.querySelector('[data-col="harness"] [aria-selected="true"]');
+  assert.deepEqual([shown.dataset.key, shown.querySelector('.badge').textContent], ['cursor', 'Default']);
+  assert.deepEqual([...pop.querySelectorAll('[data-col="model"] [role="option"]')].map((b) => b.dataset.key), ['my-cursor-m']);
   assert.equal(ctx.doc.querySelector('#agents-rows .step-subagent').closest('.select-wrap').hidden, true);
 });
 
@@ -299,7 +302,7 @@ for (const [engine, label] of [['gemini', 'Gemini CLI'], ['qwen', 'Qwen Code']])
     assert.equal(ctx.posted.at(-1).engine, engine);
   });
 
-  test(`engine: on ${label} the agent rows offer ${label} models only and no sub-agent model`, async () => {
+  test(`engine: on ${label} the row's picker opens on ${label}, and there is no sub-agent model`, async () => {
     const ctx = await boot();
     const np = ctx.window.__np;
     np._setModels([
@@ -312,7 +315,11 @@ for (const [engine, label] of [['gemini', 'Gemini CLI'], ['qwen', 'Qwen Code']])
     np.renderAgentRows([{ nodeId: 'n1', key: 'planner', label: 'Plan', color: '', stepIndex: 0, parallel: false,
       model: '', effort: '', fanOut: false, subagentModel: '', askQuestions: null, def, override: {}, modified: false }]);
     const model = ctx.doc.querySelector('#agents-rows .step-model');
-    assert.deepEqual([...model.options].map((o) => o.value).filter((v) => v !== '__add__'), ['', `my-${engine}-m`]);
+    model.click();
+    const pop = ctx.doc.querySelector('.mdl-cols-pop');
+    const shown = pop.querySelector('[data-col="harness"] [aria-selected="true"]');
+    assert.deepEqual([shown.dataset.key, shown.querySelector('.badge').textContent], [engine, 'Default']);
+    assert.deepEqual([...pop.querySelectorAll('[data-col="model"] [role="option"]')].map((b) => b.dataset.key), [`my-${engine}-m`]);
     assert.equal(ctx.doc.querySelector('#agents-rows .step-subagent').closest('.select-wrap').hidden, true);
   });
 }
@@ -402,4 +409,17 @@ test('execution environment: a saved default of another backend follows the same
   await waitFor(() => select.value === 'loopback');
   await submit(ctx);
   assert.equal('execEnv' in ctx.posted.at(-1), false, 'the run gets the saved default: nothing to send');
+});
+
+test('engine: on Claude, a liftable refusal for a step pinned to Codex offers the consent, and starting again sends it', async () => {
+  const refusal = { error: 'engine codex (Plan): guardrail set "normal" has permission rules this engine cannot enforce', code: 'engine-refused', overridable: true, engines: ['codex'] };
+  const ctx = await boot({ run: (_body, n) => (n === 1 ? ok(refusal, 409) : ok({ runId: 'r2' })) });
+  const doc = ctx.doc;
+  await submit(ctx);
+  await waitFor(() => !doc.getElementById('engineRefusal').hidden);
+  assert.equal(doc.getElementById('engineAllowRow').hidden, false);
+  doc.getElementById('engineAllowUnguarded').checked = true;
+  await submit(ctx);
+  const resent = ctx.posted.at(-1);
+  assert.deepEqual(['engine' in resent, resent.allowUnguardedEngine], [false, true]);
 });

@@ -3205,3 +3205,56 @@ test('Fix round 1 (F35): an example that finishes loading, or a gone test that f
   await tick(10);
   assert.deepEqual([w.location.hash, replaced], ['#runs', []], 'the late 404 fallback leaves the Runs address alone');
 });
+
+// The columns model picker in the real app (spec 2026-11-26 "The surfaces"): app.js hands the Workflows view the run's
+// default harness (GET /api/run-defaults), the readiness rows (GET /api/engines) and Add model on a harness.
+const PICK_ROW = { id: 'wf_agent', name: 'Agent one', version: 2, domain: 'coding',
+  nodes: [{ id: 'n_task', kind: 'task', x: 60, y: 200, config: {} }, { id: 'n_a', kind: 'agent', key: 'planner', x: 400, y: 200, config: {} }, { id: 'n_end', kind: 'end', x: 960, y: 200, config: {} }],
+  wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_a', port: 'task' } }] };
+const PICK_CAT = [{ id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['medium', 'high', 'xhigh', 'max'] }, { id: 'gpt-5.5', label: 'GPT-5.5', engine: 'codex', efforts: ['minimal', 'low', 'medium', 'high'] }];
+async function bootPicker(runEngine) {
+  const ok = (v) => Promise.resolve({ ok: true, status: 200, json: async () => v });
+  const { window: w } = await boot({ workflows: [DEFAULT_ROW, PICK_ROW], fetchHandler: (url) => {
+    const p = url.split('?')[0];
+    if (p.endsWith('/api/run-defaults')) return ok({ engine: { value: runEngine, source: 'user' } });
+    if (p.endsWith('/api/engines')) return ok({ engines: [{ name: 'claude', label: 'Claude Code', ready: true }, { name: 'codex', label: 'Codex', ready: false, reason: 'not signed in' }] });
+    if (p.endsWith('/api/config')) return ok({ config: { steps: {}, customModels: [] }, models: PICK_CAT, efforts: ['medium', 'high', 'xhigh', 'max'] });
+    return null;
+  } });
+  await go(w, 'workflows/wf_agent');
+  w.__gv().c.select({ kind: 'node', id: 'n_a' });
+  await tick(2);
+  return w;
+}
+const pickerOpt = (doc, col, key) => [...doc.querySelectorAll(`.mdl-cols-pop [data-col="${col}"] [role="option"]`)].find((b) => b.dataset.key === key);
+
+test('in the real app the run\'s default harness decides an inherit step\'s efforts, and the picker reads /api/engines', async () => {
+  for (const [engine, efforts] of [['codex', ['high', 'low', 'medium', 'minimal']], ['claude', ['high', 'max', 'medium', 'xhigh']]]) {
+    const w = await bootPicker(engine);
+    const doc = w.document;
+    doc.querySelector('.wfv-tb [data-tb="effort"]').click(); await tick();
+    assert.deepEqual([...doc.querySelectorAll('.wfv-menu .wfv-menu-item')].map((b) => b.textContent).slice(1).sort(), efforts, engine);
+    doc.querySelector('.wfv-tb [data-tb="model"]').click(); await tick(4);
+    assert.equal(pickerOpt(doc, 'harness', engine).querySelector('.badge')?.textContent, 'Default', engine);
+    // Codex is not ready: listed only where it is the run's default harness, with the reason on its sign-in.
+    if (engine === 'codex') {
+      pickerOpt(doc, 'harness', 'codex').click(); await tick();
+      assert.deepEqual([...doc.querySelectorAll('.mdl-cols-pop .mdl-st')].map((e) => [e.textContent, e.title]), [['Not ready', 'not signed in']], engine);
+    } else {
+      assert.equal(pickerOpt(doc, 'harness', 'codex'), undefined, 'a harness that is not ready is not listed');
+      assert.ok(pickerOpt(doc, 'harness', 'copilot'), 'one with no readiness row is');
+    }
+  }
+});
+test('in the real app Add model under a harness with no models opens Add model on #models for that harness', async () => {
+  for (const [harness, step] of [['cursor', '1'], ['opencode', '2']]) {
+    const w = await bootPicker('claude');
+    const doc = w.document;
+    doc.querySelector('.wfv-tb [data-tb="model"]').click(); await tick(4);
+    pickerOpt(doc, 'harness', harness).click(); await tick();
+    doc.querySelector('.mdl-cols-pop .mdl-cols-add').click();
+    await tick(10);
+    assert.deepEqual([w.location.hash, !!doc.querySelector('#model-editor-modal:not(.hidden)'), [...doc.querySelectorAll('.mdl-add')].map((e) => e.dataset.step)], ['#models', true, [step]], harness);
+    if (step === '1') assert.deepEqual([...doc.querySelectorAll('.mdl-hx-t[aria-pressed="true"]')].map((e) => e.dataset.engine), [harness]);
+  }
+});

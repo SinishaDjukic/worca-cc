@@ -5,6 +5,7 @@ import { PERSPECTIVE_ROLE_CHECKLIST } from '../shape/role-review.mjs';
 import { REQUIREMENTS_ROLE_CHECKLIST } from '../shape/requirements.mjs';
 import { REQUIREMENTS_COVERAGE_CHECKLIST, COVERAGE_ROLE } from '../review/requirements-coverage.mjs';
 import { dispositionsBlock } from '../review/findings.mjs';
+import { MODEL_ENGINE_NAMES } from '../engine-switch.mjs';
 
 const BLOCKING = new Set(['critical', 'major']);
 const SEVERITIES = new Set(['critical', 'major', 'minor', 'suggestion']);
@@ -18,7 +19,7 @@ export const ROLE_KEY_RE = /^[a-z]{1,24}$/;   // finding ids are `key-round-n`: 
 const MAX_ROLES = 12;
 const LABEL_MAX = 60;
 const SPEC_KEYS = new Set(['roles', 'source', 'target', 'checklist', 'sink', 'secondOpinion']);
-const ROLE_KEYS = new Set(['key', 'label', 'model', 'effort']);
+const ROLE_KEYS = new Set(['key', 'label', 'model', 'effort', 'engine']);
 const SOURCES = ['declared', 'picked'];
 
 /** The slice task id for one role; the executor prefixes that role's files with it. */
@@ -98,12 +99,16 @@ export function roleReviewIssues(config) {
   rr.roles.forEach((r, i) => {
     const at = `roleReview.roles[${i}]`;
     if (!isObj(r)) { out.push(`${at} must be an object`); return; }
-    for (const k of Object.keys(r)) if (!ROLE_KEYS.has(k)) out.push(`${at}.${String(k).slice(0, 32)} is unknown (known: key, label, model, effort)`);
+    for (const k of Object.keys(r)) if (!ROLE_KEYS.has(k)) out.push(`${at}.${String(k).slice(0, 32)} is unknown (known: ${[...ROLE_KEYS].join(', ')})`);
     if (typeof r.key !== 'string' || !ROLE_KEY_RE.test(r.key)) out.push(`${at}.key ${quote(r.key)} must be 1–24 lowercase letters`);
     else if (seen.has(r.key)) out.push(`${at}.key ${quote(r.key)} is declared twice`);
     else seen.add(r.key);
     if (typeof r.label !== 'string' || !r.label.trim() || r.label.length > LABEL_MAX) out.push(`${at}.label must be 1–${LABEL_MAX} characters`);
     for (const k of ['model', 'effort']) if (r[k] !== undefined && typeof r[k] !== 'string') out.push(`${at}.${k} must be a string`);
+    if (r.engine !== undefined) {
+      if (!MODEL_ENGINE_NAMES.includes(r.engine)) out.push(`${at}.engine must be one of ${MODEL_ENGINE_NAMES.join(', ')}`);
+      else if (!(typeof r.model === 'string' && r.model)) out.push(`${at}.engine needs a model beside it`);
+    }
   });
   if (rr.checklist === 'coverage' && !rr.roles.some((r) => isObj(r) && r.key === COVERAGE_ROLE.key)) {
     out.push(`roleReview.roles needs a role with key "${COVERAGE_ROLE.key}" for the coverage checklist`);
@@ -120,7 +125,7 @@ export function roleReviewOf(config) {
   if (!isObj(rr) || roleReviewIssues(config).length) return null;
   const provider = rr.checklist ? ROLE_CHECKLISTS[rr.checklist] : null;
   const roles = rr.roles
-    ? rr.roles.map((r) => ({ key: r.key, label: r.label.trim(), ...(r.model ? { model: r.model } : {}), ...(r.effort ? { effort: r.effort } : {}) }))
+    ? rr.roles.map((r) => ({ key: r.key, label: r.label.trim(), ...(r.model ? { model: r.model } : {}), ...(r.effort ? { effort: r.effort } : {}), ...(r.engine ? { engine: r.engine } : {}) }))
     : provider.roles();
   return { roles, source: rr.source || 'declared', target: rr.target, ...(rr.checklist ? { checklist: rr.checklist } : {}), sink: rr.sink, ...(rr.secondOpinion ? { secondOpinion: rr.secondOpinion } : {}) };
 }

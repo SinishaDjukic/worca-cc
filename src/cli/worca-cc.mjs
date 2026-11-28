@@ -4056,7 +4056,7 @@ async function main() {
       ...(runEngine !== 'claude' ? { engine: runEngine } : {}),
       ...(flags.allowUnguardedEngine ? { allowUnguardedEngine: true } : {}),
     },
-    ...(execEnv !== 'local' ? { execEnv } : {}),
+    ...(execEnv !== 'local' ? { execEnv, ...(execResolved.source !== 'run' ? { execEnvDefault: true } : {}) } : {}),
     ...(execResolved.fallback ? { execEnvFallback: execResolved.fallback } : {}),   // the run log says why it runs locally
     auto: flags.auto,
     humanInLoop: flags.humanInLoop === false ? false : undefined,

@@ -14,6 +14,7 @@ import { VAULT_REF_PREFIX } from '../secrets/refs.mjs';
  *  only: a sandbox never gets a reference (it could not resolve one) nor a value read through one by this path. */
 const hasVaultRef = (v) => typeof v === 'string' && v.includes(VAULT_REF_PREFIX);
 import { REMOTE_ENGINES, remoteEnginesText, remoteEngineRefusal } from '../../shared/exec-env.mjs';
+import { engineLabel } from '../../shared/engine-switch.mjs';
 
 export const SANDBOX_TIMEOUT_MS = 30 * 60_000;       // refreshed by the heartbeat while a run is live
 export const HEARTBEAT_MS = 5 * 60_000;
@@ -197,6 +198,13 @@ export function remotePreflight({ title, engine, isWorkspace, workMode = 'git', 
   if (runRootMode === 'legacy') errors.push(`${title} execution needs the detached run-root mode, but WORCA_RUN_ROOT (or the runRootMode setting) is "legacy". Unset it, or pick Local.`);
   if (platform === 'win32') errors.push(`${title} execution needs a macOS or Linux worca host (it mirrors POSIX paths into the sandbox).`);
   return errors;
+}
+/** A remote run runs every step on one harness. `elsewhere`: [{ step, engine }] for the steps on another harness.
+ *  null when there are none; else why an explicit pick of the remote environment is refused. */
+export function remoteHarnessRefusal(title, engine, elsewhere) {
+  if (!Array.isArray(elsewhere) || !elsewhere.length) return null;
+  const sets = elsewhere.map((e) => `${e.step} to ${engineLabel(e.engine)}`).join(', ');
+  return `${title} execution runs every step on the run's harness (${engineLabel(engine || 'claude')}), but this run sets ${sets}. Pick Local, or let those steps follow the run.`;
 }
 /** Why a SAVED (not explicit) remote default does not apply to a run, for every backend; null when it does.
  *  The New run dialog applies the same rule (src/shared/exec-env.mjs). */

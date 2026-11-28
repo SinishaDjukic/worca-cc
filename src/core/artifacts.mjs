@@ -2095,7 +2095,7 @@ function toPipelineRow(o) {
     review_stats: (() => { const r = runReviewStats(o.roleReviews); return r ? s(r) : null; })(),
     // §5.9 outcome: the derived run-level v2 facts, so a rehydrated state matches
     // a live one. NULL for a v1 run (nothing to say), so v1 rows are unchanged.
-    outcome: (o.engine === 2 || o.endReached !== undefined || (typeof o.runEngine === 'string' && o.runEngine !== 'claude'))
+    outcome: (o.engine === 2 || o.endReached !== undefined || (typeof o.runEngine === 'string' && o.runEngine !== 'claude') || Array.isArray(o.runEngines))
       ? s({
           endReached: !!o.endReached,
           result: o.result ?? null,
@@ -2107,6 +2107,8 @@ function toPipelineRow(o) {
           wireDeliveries: o.wireDeliveries ?? {},
           tokens: o.tokens ?? {},
           ...(typeof o.runEngine === 'string' && o.runEngine && o.runEngine !== 'claude' ? { runEngine: o.runEngine } : {}),
+          // Every harness a run's steps used: only a run that used more than one (its state holds it then).
+          ...(validEngines(o.runEngines) ? { runEngines: validEngines(o.runEngines) } : {}),
           // Session groups (C6): each session's summary — only on a run that has one, so other rows are unchanged.
           ...(o.sessionHosts && typeof o.sessionHosts === 'object' && Object.keys(o.sessionHosts).length ? { sessionHosts: o.sessionHosts } : {}),
           // Where it executed (plans/e2b-execution-design.md): written for a remote run only.
@@ -2581,6 +2583,7 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     ...(row.limit_scope ? { limitScope: row.limit_scope, limitModel: row.limit_model ?? null } : {}),
     ...(row.model_confirm ? { modelConfirm: j(row.model_confirm, null) } : {}),
     runEngine: row.run_engine || 'claude',
+    ...(runEnginesOfJson(row.run_engines) ? { runEngines: runEnginesOfJson(row.run_engines) } : {}),
     // E2/2.3: the done-run caveat (open issues left by a forced loop, End not reached). Only on a v2 row.
     ...(row.open_issue_count ? { openIssueCount: Number(row.open_issue_count) } : {}),
     ...(row.end_reached === 0 ? { endReached: false } : row.end_reached === 1 ? { endReached: true } : {}),
@@ -2709,6 +2712,7 @@ async function listPipelinesNow(projectDir, opts, workspaceKey) {
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.modelConfirm') AS model_confirm,
            resume_point IS NOT NULL AS has_resume_point,
            ${RUN_ENGINE_SQL} AS run_engine,
+           ${RUN_ENGINES_SQL} AS run_engines,
            ${OUTCOME_NOTE_SQL}
     FROM pipelines
     WHERE ${workspaceKey ? 'workspace_key = ?' : 'project_key = ?'} AND archived_at IS NULL AND is_test IS NULL
@@ -2761,6 +2765,7 @@ async function listAllPipelinesNow(opts, { batchSize = 16 } = {}) {
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.modelConfirm') AS model_confirm,
            resume_point IS NOT NULL AS has_resume_point,
            ${RUN_ENGINE_SQL} AS run_engine,
+           ${RUN_ENGINES_SQL} AS run_engines,
            ${OUTCOME_NOTE_SQL}
     FROM pipelines
     WHERE archived_at IS ${opts.archived ? 'NOT NULL' : 'NULL'} AND deleted_at IS NULL AND is_test IS NULL
@@ -3079,6 +3084,8 @@ function rowToState(row) {
   state.limitModel = typeof rp?.limitModel === 'string' ? rp.limitModel : null;
   state.limitScope = rp?.limitScope === 'model' || rp?.limitScope === 'connection' ? rp.limitScope : null;
   state.runEngine = runEngineOfRow(row);
+  const runEngines = runEnginesOfRow(row);
+  if (runEngines) state.runEngines = runEngines;
   // Shaper D28: only a shaped run carries shapeStats (run_size is write-only: Statistics reads the column)
   if (row.shape_stats) state.shapeStats = j(row.shape_stats, null);
   if (row.rerun_of) state.rerunOf = resolveRerunOf(row.rerun_of);   // one lookup, only for a rerun; a source never lists its reruns
@@ -3164,6 +3171,21 @@ export function runEngineOfRow(row) {
   if (outcome && typeof outcome.runEngine === 'string' && outcome.runEngine) return outcome.runEngine;
   const rp = j(row.resume_point, null);
   return typeof rp?.claude?.engine === 'string' && rp.claude.engine ? rp.claude.engine : 'claude';
+}
+/** runEnginesOfRow as a SELECT expression: the outcome's harness list as JSON text, NULL for a one-harness run. */
+const RUN_ENGINES_SQL = `json_extract(CASE WHEN json_valid(outcome) THEN outcome END, '$.runEngines')`;
+/** A list of harness names (two or more strings), or null. */
+const validEngines = (v) => (Array.isArray(v) && v.length > 1 && v.every((e) => typeof e === 'string' && e) ? [...v] : null);
+/** The `run_engines` column of a list row (JSON text), or null. */
+function runEnginesOfJson(text) {
+  if (typeof text !== 'string' || !text) return null;
+  try { return validEngines(JSON.parse(text)); } catch { return null; }
+}
+/** Every harness a run's steps used (`outcome.runEngines`), or null for a run that used one. */
+export function runEnginesOfRow(row) {
+  if (!row) return null;
+  const outcome = j(row.outcome, null);
+  return validEngines(outcome?.runEngines);
 }
 /** Where a run executed: `outcome.execEnv`, else the resume point's `execEnv.kind`, else null (local). */
 export function execEnvOfRow(row) {

@@ -29,9 +29,9 @@ import { loadAgentRegistry } from './agent-registry.mjs';
 import { AUTO_WORKFLOW_ID, AUTO_WORKFLOW_NAME, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID, SHAPE_SLICE_REQ_WORKFLOW_IDS, withoutRequirementsInput } from './graph/builtin-workflows.mjs';
 import { careRunGraph } from './shape/care-run.mjs';
 import { classifyLoops } from '../shared/graph/loops.mjs';
-import { buildGraphManifest, manifestTemplate, manifestPortsFn } from '../shared/graph/manifest.mjs';
+import { buildGraphManifest, manifestTemplate, manifestPortsFn, manifestWithoutEngines } from '../shared/graph/manifest.mjs';
 import { DEFAULT_MAX_CYCLES, KEYED_KINDS } from '../shared/graph/constants.mjs';
-import { pickDropWarnings } from '../shared/graph/role-slots.mjs';
+import { pickDropWarnings, autoPinWarnings } from '../shared/graph/role-slots.mjs';
 import { factoryFallbackLines } from './factory-models.mjs';
 import { scriptNodeCtx, pythonMissingSentence } from '../shared/graph/script-meta.mjs';
 import { probePython } from './graph/python-probe.mjs';
@@ -238,19 +238,7 @@ export class GraphOrchestrator extends RunHarness {
     // merges per key): the route's check names it, but a firing schedule ticket's re-parse drops the '' — Auto's
     // proposal uses the same form (auto/proposal.mjs).
     // Loop budgets ride the same overlay (`wires: { wireId: { maxCycles } }`, a run preset's loops).
-    const rawOver = this.opts && this.opts.overlay && typeof this.opts.overlay === 'object' ? this.opts.overlay : {};
-    const rawNodes = rawOver.nodes;
-    const overlayNodes = rawNodes && typeof rawNodes === 'object' && !Array.isArray(rawNodes)
-      ? Object.fromEntries(Object.entries(rawNodes).filter(([, e]) => e && typeof e === 'object' && !Array.isArray(e))
-        .map(([id, e]) => [id, typeof e.model === 'string' && e.model && e.effort === undefined ? { ...e, effort: '' } : { ...e }]))
-      : {};
-    const overlayWires = {};
-    for (const [id, w] of Object.entries(rawOver.wires && typeof rawOver.wires === 'object' ? rawOver.wires : {})) {
-      if (w && Number.isInteger(w.maxCycles) && w.maxCycles >= 1) overlayWires[id] = { maxCycles: w.maxCycles };
-    }
-    const hasNodes = Object.keys(overlayNodes).length > 0;
-    const hasWires = Object.keys(overlayWires).length > 0;
-    const overlay = hasNodes || hasWires ? { ...(hasNodes ? { nodes: overlayNodes } : {}), ...(hasWires ? { wires: overlayWires } : {}) } : null;
+    const overlay = this._runOverlay();
     // Shaper small runs B2 (D13): a later run of a marked feature fills its Default agents' models from the feature's Care.
     const featureId = this.runShape?.slice?.feature || null;
     const care = featureId && smallRunsOfFeature(featureId) ? careOfFeature(featureId) : null;
@@ -320,6 +308,7 @@ export class GraphOrchestrator extends RunHarness {
     // monitor shows exactly what the engine will run.
     const manifest = buildGraphManifest(this.resolved.template, this.resolved.agentsByKey, {
       overlays: { nodes: this.resolved.nodeCtx, wires: this.resolved.wires }, scripts: this.resolved.scriptsByKey,
+      engine: this.claude.engine || 'claude',
     });
     // What THIS run was told to use over the project's settings, beside the cells it resolved to (the run page marks
     // those pills "this run only"; resume reads the cells, never this).
@@ -374,6 +363,25 @@ export class GraphOrchestrator extends RunHarness {
 
   /** The options every resolveGraph of this run shares: its engine, run model, workspace, scripts and sign-in probe, plus
    *  the run overlay and the pinned pairs `_resolveTopology` computed (B2: the Care probe and adopt reuse them). */
+  /** The run's per-run overlay (`this.opts.overlay`), normalized: agent node entries only, a model always naming its
+   *  effort ('' = the model's default), loop budgets that are whole numbers from 1. Null when it names nothing.
+   *  _resolveTopology and the early start check (_earlyHarnesses) read the same one. */
+  _runOverlay() {
+    const rawOver = this.opts && this.opts.overlay && typeof this.opts.overlay === 'object' ? this.opts.overlay : {};
+    const rawNodes = rawOver.nodes;
+    const overlayNodes = rawNodes && typeof rawNodes === 'object' && !Array.isArray(rawNodes)
+      ? Object.fromEntries(Object.entries(rawNodes).filter(([, e]) => e && typeof e === 'object' && !Array.isArray(e))
+        .map(([id, e]) => [id, typeof e.model === 'string' && e.model && e.effort === undefined ? { ...e, effort: '' } : { ...e }]))
+      : {};
+    const overlayWires = {};
+    for (const [id, w] of Object.entries(rawOver.wires && typeof rawOver.wires === 'object' ? rawOver.wires : {})) {
+      if (w && Number.isInteger(w.maxCycles) && w.maxCycles >= 1) overlayWires[id] = { maxCycles: w.maxCycles };
+    }
+    const hasNodes = Object.keys(overlayNodes).length > 0;
+    const hasWires = Object.keys(overlayWires).length > 0;
+    return hasNodes || hasWires ? { ...(hasNodes ? { nodes: overlayNodes } : {}), ...(hasWires ? { wires: overlayWires } : {}) } : null;
+  }
+
   _graphResolveOptions({ overlay = null, defrag = null, scan = null } = {}) {
     return {
       use: this.opts && this.opts.workflowUse !== undefined ? this.opts.workflowUse : 'live',
@@ -786,11 +794,14 @@ export class GraphOrchestrator extends RunHarness {
     }
     this.workflowId = workflowId;
     this._adoptResolvedGraph(resolved);
+    // An Auto run uses one harness: a pin to another one in the adopted workflow was dropped; said once, here.
+    this._noteAutoPins(resolved.nodes);
     // Auto picks runnable models itself and skips the user slots, so it has no user-set model to refuse
     // (signInBlocked is ignored); a dropped factory default is still said once.
     await this._noteFactoryFallbacks(resolved.factoryNotes);
     const manifest = buildGraphManifest(this.resolved.template, this.resolved.agentsByKey, {
       overlays: { nodes: this.resolved.nodeCtx, wires: this.resolved.wires }, scripts: this.resolved.scriptsByKey,
+      engine: this.claude.engine || 'claude',
     });
     // A fallback records what it saved (`saved`) and why (`reason`) beside via 'fallback'.
     manifest.auto = fallback
@@ -934,6 +945,8 @@ export class GraphOrchestrator extends RunHarness {
    */
   _adoptResolvedGraph(resolved) {
     this.resolved = { ...resolved, nodeCtx: resolved.nodes };
+    // The run judges its own resolved graph from here on (RunHarness#_checkNodes), not an early or frozen copy.
+    this._gateNodes = null;
   }
 
   /** The sign-in seam resolveGraph probes with: an injected `claudeAuth` always; the real probe only off mock, so a mock
@@ -958,6 +971,21 @@ export class GraphOrchestrator extends RunHarness {
       this._log('orchestrator', 'warn', line);
       this._pendingAudits.push(`${line}.`);
     }
+  }
+
+  /** The Auto warnings (role-slots autoPinWarnings): one line per pin to another harness the adopted workflow named,
+   *  logged, audited and kept with the pick warnings, as _noteFactoryFallbacks keeps its lines. Synchronous.
+   *  @returns {string[]} the lines */
+  _noteAutoPins(nodeCtx) {
+    const lines = autoPinWarnings(nodeCtx, { engine: this.claude.engine || 'claude', roleLabel: declaredRoleLabel });
+    if (!lines.length) return lines;
+    this._pickWarnings = [...(this._pickWarnings || []), ...lines];
+    this.state.warnings = [...new Set([...lines, ...(this.state.warnings || [])])];
+    for (const line of lines) {
+      this._log('orchestrator', 'warn', line);
+      this._pendingAudits.push(`${line}.`);
+    }
+    return lines;
   }
 
   /** The run warnings for the picks this run's engine dropped (role-slots pickDropWarnings), kept in `_pickWarnings`
@@ -1415,7 +1443,8 @@ export class GraphOrchestrator extends RunHarness {
       ...(this.claude.model ? { model: this.claude.model } : {}),
       ...(this.claude.effort ? { effort: this.claude.effort } : {}),
       ...(engine ? { engine } : {}),
-      ...(engine && this._allowUnguardedEngine ? { allowUnguardedEngine: true } : {}),
+      // The consent rides while some step runs on a harness that needs it, a Claude-default run included.
+      ...((engine || this._harnessPlan().engines.some((e) => e !== 'claude')) && this._allowUnguardedEngine ? { allowUnguardedEngine: true } : {}),
       ...(this._modelForAll && this.claude.model ? { modelForAll: true } : {}),
     };
     return Object.keys(c).length ? { claude: c } : {};
@@ -3107,6 +3136,7 @@ export class GraphOrchestrator extends RunHarness {
     const modelPair = slice?.role ? this._rolePair(nc, slice.role) : null;
     const outputs = allocateOutputs({ node, ports, executionId, ordinal, runCtx });
     const verdict = allocateVerdict({ node, ports, ordinal, runCtx });
+    const stepEngine = this._stepEngine(nc, slice?.role ?? null);
     // attr.stepKey IS the executionId: that single substitution is what re-keys
     // the whole inherited telemetry block (sub_agents.step_key, step skills,
     // graphify counts, cost) onto executions. stepIndex is null — a graph has
@@ -3122,8 +3152,10 @@ export class GraphOrchestrator extends RunHarness {
       // The model the spawn gets (_engineModel drops a Claude model on another engine), so
       // a Claude model's cost override never prices another engine's tokens.
       model: nc.kind === 'script' ? null : (modelPair || this._nodeModelPair(nc)).model,
+      // The step's harness (its role's or node's pin, else the run's): the cost warning reads it.
+      engine: stepEngine,
     };
-    const engineOpts = this._engineNodeOpts(nc);
+    const engineOpts = this._engineNodeOpts(nc, slice?.role ?? null);
     // P1 (v3, defence in depth): a Folder run's nodes never start on the REAL folder, whatever reattach path left runCwd unset.
     if (this.workMode === 'folder' && !this.runCwd) throw new Error('a Folder run has no copy to work on');
     const { resumeSessionId, coldRedispatch } = this._reattachFor(executionId, node.id);
@@ -3175,7 +3207,7 @@ export class GraphOrchestrator extends RunHarness {
       // failed mount), and the frozen set ({ set, files }: memory-sync.mjs frozenManifest; role notes carry `roles`).
       memoryMode: this.memoryOff ? 'off' : (this.memory?.manifest ? 'frozen' : null),
       memoryManifest: this.memory?.manifest || null,
-      memoryBlock: this._memoryBlockFor(nc.key),        // §4.3: the pointer block, rendered once per mount (names the WRITABLE dirs), + this role's notes (#943)
+      memoryBlock: this._memoryBlockFor(nc.key, stepEngine),        // §4.3: the pointer block, rendered once per mount (names the WRITABLE dirs), + this role's notes (#943)
       memoryMount: this.memory?.mount || null,          // the WRITABLE copy: <pipeline.dir>/memory (agents, the defrag mock and tests write here; runOpts passes it as --add-dir)
       memoryRules: this.memory?.rules || null,          // the read-only rules copy inside the cwd (tests read it; agents never write it)
       memoryLoadLog: this._memoryLoadLogFor(executionId),   // memory usage: this execution's InstructionsLoaded hook file, or null
@@ -3255,12 +3287,13 @@ export class GraphOrchestrator extends RunHarness {
       nightDecision: (id) => this.nightDecision(id),
       onEvent: (e) => this._onAgentEvent(nc.key || node.kind, e, attr),
       claudeOpts: {
-        bin: this.claude.bin,
-        engine: this.claude.engine,
+        // The run's bin belongs to the run's engine (as _helperSpawn rules): a step on another harness gets none.
+        bin: stepEngine === (this.claude.engine || 'claude') ? this.claude.bin : undefined,
+        engine: stepEngine,
         permissionMode: this.claude.permissionMode,
         ...(modelPair || this._nodeModelPair(nc)),
         ...this._modelGuardOpts(nc, node, executionId, modelPair, slice),
-        permissionRules: this._spawnPermissionRules(),
+        permissionRules: this._spawnPermissionRules(stepEngine),
         envScrub: this.guardrails?.envScrub || undefined,
         // §5.5.1: a scrubbed spawn with a registry stdio copy keeps the launcher's keep-list.
         envAllowlist: this.guardrails?.envScrub
@@ -3275,7 +3308,7 @@ export class GraphOrchestrator extends RunHarness {
   /** #1450 D-m: the [init] model guard (graph/executor.mjs) for a Claude agent node that does not run on a session host
    *  (a member's synthetic init carries its definition's model and would false-pause). `confirmed` is the run's live list. */
   _modelGuardOpts(nc, node, executionId, modelPair, slice = null) {
-    if (nc.kind !== 'agent' || (this.claude.engine || 'claude') !== 'claude') return {};
+    if (nc.kind !== 'agent' || this._stepEngine(nc, slice?.role ?? null) !== 'claude') return {};
     if (this._sessions?.hostFor(node.id, { slice, role: slice?.role ?? null })) return {};
     const pair = modelPair || this._nodeModelPair(nc);
     return { modelGuard: {
@@ -4511,6 +4544,30 @@ export class GraphOrchestrator extends RunHarness {
     };
   }
 
+  /** U before the run exists (run-harness.mjs#engineStartRefusal): resolveGraph with this run's options and its overlay
+   *  (no defragment pair, scan pins, Care or transform), the Claude sign-in probe only off a Claude default harness. Auto,
+   *  a memory defragment and a workspace scan answer the default harness alone, and so does a resolve that throws.
+   *  Sets `this._gateNodes` to the resolved agent nodes. Calls only resolveGraph: it logs nothing and pushes no audit. */
+  async _earlyHarnesses() {
+    const dflt = this.claude.engine || 'claude';
+    const alone = { engines: [dflt], steps: {}, signInBlocked: null };
+    if (this.workflowId === AUTO_WORKFLOW_ID || this.memoryScope || this._isWorkspaceScan()) return alone;
+    try {
+      const registry = loadAgentRegistry(this.agentsDir);
+      const scripts = loadScriptRegistry({ scriptsDir: this.opts.scriptsDir, agentKeys: Object.keys(registry || {}) });
+      const overlay = this._runOverlay();
+      const resolved = await resolveGraph(this.projectDir, this.workflowId, registry, this.agentsDir, {
+        ...this._graphResolveOptions({ overlay }), scripts, claudeAuth: dflt === 'claude' ? undefined : this._resolveClaudeAuth(),
+      });
+      const nodes = Object.values(resolved.nodes || {}).filter((nc) => nc && nc.kind === 'agent');
+      this._gateNodes = nodes;
+      const signInBlocked = resolved.signInBlocked?.length ? resolved.signInBlocked : null;
+      return { ...this._harnessPlan(nodes), signInBlocked, ...(signInBlocked ? { signInLabels: await this._modelLabels() } : {}) };
+    } catch {
+      return alone;
+    }
+  }
+
   /** Engine hook (run-harness.mjs#_engineResumeGate): the agent nodes of the frozen
    *  manifest, with the model the manifest froze and the tools their agent file grants
    *  (the manifest never carries tools), for the engine gate before the graph is restored. */
@@ -4521,7 +4578,10 @@ export class GraphOrchestrator extends RunHarness {
       if (mn.kind !== 'agent') continue;
       const meta = registry[mn.key] || {};
       const { tools } = await loadAgentFile(this.agentsDir, meta.agentFile ?? null, meta.agentPath ?? null);
-      nodes.push({ nodeId: mn.id, key: mn.key, model: mn.model || undefined, tools });
+      nodes.push({
+        nodeId: mn.id, key: mn.key, model: mn.model || undefined, tools, meta: { displayName: mn.label }, config: mn.config,
+        ...(mn.engine ? { engine: mn.engine } : {}), ...(mn.roles ? { roles: mn.roles } : {}),
+      });
     }
     return nodes;
   }
@@ -4570,9 +4630,14 @@ export class GraphOrchestrator extends RunHarness {
       const nodes = { ...fresh.nodes };
       for (const [id, old] of Object.entries(this.resolved.nodeCtx || {})) {
         if (!nodes[id] || old.kind !== 'agent') continue;
-        nodes[id] = { ...nodes[id], model: old.model, effort: old.effort, modelSource: old.modelSource };
+        // A kept model keeps its harness (and its pin mark), so a one-harness run's cells stay byte-equal.
+        nodes[id] = { ...nodes[id], model: old.model, effort: old.effort, modelSource: old.modelSource, engine: old.engine || this.claude.engine || 'claude' };
+        if (old.pinned) nodes[id].pinned = true;
+        else delete nodes[id].pinned;
       }
-      const next = buildGraphManifest(fresh.template, fresh.agentsByKey, { overlays: { nodes, wires: fresh.wires }, scripts: fresh.scriptsByKey });
+      const next = buildGraphManifest(fresh.template, fresh.agentsByKey, {
+        overlays: { nodes, wires: fresh.wires }, scripts: fresh.scriptsByKey, engine: this.claude.engine || 'claude',
+      });
       Object.assign(manifest, next);
       this._adoptResolvedGraph({ ...fresh, nodes });
     } catch (err) {
@@ -4694,10 +4759,14 @@ export class GraphOrchestrator extends RunHarness {
     if (rp.humanCursor && typeof rp.humanCursor === 'object') { this._humanCursor = rp.humanCursor; this._humanCursorReady = true; }
     // The saved point's reason is spent; a pause THIS resume already took (a SIGTERM or a drain while it set up) keeps its own.
     if (!this.pauseRequested) this._clearPauseReason();
-    const manifest = rp.manifest || this.state.stepper;
+    // A resume that switched harness drops every step's pin from the manifest it adopts and keeps: a later plain resume
+    // keeps the switch.
+    const frozen = rp.manifest || this.state.stepper;
+    const manifest = this._resumeEngineSwitch ? manifestWithoutEngines(frozen) : frozen;
     this.state.stepper = manifest;
     this.scriptRegistry = loadScriptRegistry({ scriptsDir: this.opts.scriptsDir, agentKeys: Object.keys(this.registry || {}) });
     this._adoptResolvedGraph(resolvedFromManifest(manifest, this.registry, this.scriptRegistry));
+    this._noteRunEngines();
     // Silently: the start already logged and audited them. A point without lines had no drop.
     this._notePickDrops(Array.isArray(rp.pickWarnings) ? rp.pickWarnings.filter((w) => typeof w === 'string') : []);
     // §9.4, unchanged messages: the providing plugin may have been disabled or
@@ -4821,6 +4890,8 @@ export function resolvedFromManifest(manifest, registry, scripts = {}) {
       awaitAll: !!mn.awaitAll,
       ...(mn.roles && typeof mn.roles === 'object' && Object.keys(mn.roles).length ? { roles: mn.roles } : {}),
       ...(mn.wanted && typeof mn.wanted === 'object' ? { wanted: mn.wanted } : {}),
+      // The step's harness when the cell names one; none restores the default harness (a pre-change manifest included).
+      ...(typeof mn.engine === 'string' && mn.engine ? { engine: mn.engine } : {}),
       // #1450 D-i: only when the cell has it — a pre-change manifest leaves nc.modelSource undefined (the spawn backstop).
       ...('modelSource' in mn ? { modelSource: mn.modelSource } : {}),
       duplicateKey: false,

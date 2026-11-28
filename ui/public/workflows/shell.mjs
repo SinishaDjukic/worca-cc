@@ -5,7 +5,10 @@
 // the full inspector. Pure DOM + injected callbacks: app.js owns routing, data and the server.
 // Strings and behaviour: composer-mockup.html canvas.js (buildChrome 2363–2448, toolbar 2141–2322).
 import { toggleMenu, closeMenus } from './menu.mjs';
-import { modelGroups } from '../../../src/shared/connections.mjs';
+import { modelGroups, pickEffortsOn } from '../../../src/shared/connections.mjs';
+import { engineLabel } from '../../../src/shared/engine-switch.mjs';
+import { openModelColumns, columnsValue, columnsLabel, nodeModelPatch, pickEfforts } from '../models/model-columns.mjs';
+import { markTile } from '../models/brand-marks.mjs';
 import { DEFAULT_MAX_CYCLES, LIMITS } from '../../../src/shared/graph/constants.mjs';
 import { resolveOrOutType } from '../../../src/shared/graph/ports.mjs';
 import { sessionCandidates, sessionIdOf, SESSION_SHARED_SELECTABLE } from '../../../src/shared/graph/sessions.mjs';
@@ -45,7 +48,8 @@ const ICONS = {
  * @param {object} o.els  {root, stage, canvas, back, wfMenu, name, importFile, libToggle, add, autolayout, zoom, zoomLabel, overlay, inspector}
  * @param {object} o.composer  the createComposer() instance
  * @param {object} o.actions  {back, newCanvas, openLibrary(tab), toggleLibrary, importFile(file), exportCurrent, newAgent, newScript, afterRender?,
- *   pinState?() → {id, pinned}|null, togglePin?}  — the last two: the Chat home pin of the saved canvas
+ *   pinState?() → {id, pinned}|null, togglePin?,  — these two: the Chat home pin of the saved canvas
+ *   engines?(onLoad) → rows|null (the model picker's readiness, never fetched here), addModel?(engine)}
  */
 export function createWorkflowsShell({ doc, els, composer, actions }) {
   const h = (tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
@@ -185,28 +189,49 @@ export function createWorkflowsShell({ doc, els, composer, actions }) {
     return wrap;
   };
 
-  function modelMenu(anchor, node) {
-    const { models } = composer.models();
-    const offered = models.filter((m) => m && (!m.hidden || m.id === node.config.model));
-    const groups = modelGroups(offered);
-    const items = [{ label: 'inherit', checked: !node.config.model, onSelect: () => setCfg(node.id, 'model', { model: null }) }];
-    for (const g of groups) {
-      items.push({ sep: true });
-      if (groups.length > 1 || g.label) items.push({ header: g.label });
-      for (const m of g.models) {
-        items.push({ label: m.label || m.id, checked: node.config.model === m.id, onSelect: () => {
-          const eff = Array.isArray(m.efforts) && m.efforts.length ? m.efforts : null;
-          // Picking a model clears an effort that model does not offer (FIXES A7).
-          setCfg(node.id, 'model', { model: m.id, ...(eff && node.config.effort && !eff.includes(node.config.effort) ? { effort: null } : {}) });
-        } });
-      }
-    }
-    toggleMenu({ doc, anchor, label: 'Model', items });
+  /** The columns model picker (models/model-columns.mjs) for one agent card, from the toolbar's Model button or the
+   *  inspector's Model field. `refocus` finds the same trigger again after a repaint took the old one away. */
+  function openModelPickerFor(anchor, node, { onPick, refocus }) {
+    const { models, defaultEngine } = composer.models();
+    const meta = composer.metaOf(node);
+    closeMenus();
+    openModelColumns({ doc, win: doc.defaultView, anchor, catalog: models, value: columnsValue(node.config), defaultEngine,
+      engines: (onLoad) => act('engines', onLoad) ?? null, inheritHint: 'follows the run',
+      label: `Model for ${(meta && meta.displayName) || node.key || node.id}`,
+      onAddModel: actions && typeof actions.addModel === 'function' ? (e) => act('addModel', e) : null, refocus, onPick });
   }
+  /** A pick as one commit: model and engine always, and an effort the picked model lacks on the picked harness dropped. */
+  const modelPatch = (node, next) => {
+    const { models, defaultEngine } = composer.models();
+    return nodeModelPatch(next, { catalog: models, effort: node.config.effort || '', defaultEngine, effortsOf: pickEffortsOn });
+  };
+  function modelMenu(anchor, node) {
+    openModelPickerFor(anchor, node, {
+      refocus: () => (tb ? tb.querySelector('[data-tb="model"]') : null),
+      onPick: (next) => { const n = nodeOf(node.id); if (n) setCfg(n.id, 'model', modelPatch(n, next)); },
+    });
+  }
+  // The inspector's Model field (graph/inspector.mjs) is the same picker's trigger: a pick sets its value and
+  // data-engine and fires `change`, which the composer commits (inspectorChange) as the toolbar's pick does.
+  on(els.inspector, 'click', (ev) => {
+    const field = ev.target && ev.target.closest ? ev.target.closest('button[data-field="model"]') : null;
+    if (!field || field.disabled) return;
+    const panel = field.closest('[data-node-id]');
+    const node = panel ? nodeOf(panel.dataset.nodeId) : null;
+    if (!node || node.kind !== 'agent') return;
+    openModelPickerFor(field, node, {
+      refocus: () => els.inspector.querySelector('button[data-field="model"]'),
+      onPick: (next) => {
+        field.value = next ? next.model : '';
+        field.dataset.engine = (next && next.engine) || '';
+        field.dispatchEvent(new doc.defaultView.Event('change', { bubbles: true }));
+      },
+    });
+  });
   function effortMenu(anchor, node) {
-    const { models, efforts } = composer.models();
-    const m = node.config.model ? models.find((x) => x.id === node.config.model) : null;
-    const list = m && Array.isArray(m.efforts) && m.efforts.length ? m.efforts : efforts;
+    const { models, defaultEngine } = composer.models();
+    // The picked model's efforts on the harness it runs on (the server accepts its own and the mapped ones).
+    const list = pickEfforts(columnsValue(node.config), { catalog: models, defaultEngine, effortsOf: pickEffortsOn });
     toggleMenu({ doc, anchor, label: 'Effort', items: [
       { label: 'default', checked: !node.config.effort, onSelect: () => setCfg(node.id, 'effort', { effort: null }) },
       { sep: true },
@@ -216,9 +241,12 @@ export function createWorkflowsShell({ doc, els, composer, actions }) {
 
   function agentTools(node, meta) {
     const { models } = composer.models();
-    const m = node.config.model ? models.find((x) => x.id === node.config.model) : null;
+    const lbl = columnsLabel(columnsValue(node.config), models);
     const model = btn('model', '', { menu: true });
-    model.prepend(h('span', 'k', 'Model'), doc.createTextNode(` ${node.config.model ? ((m && m.label) || node.config.model) : 'inherit'}`));
+    model.setAttribute('aria-haspopup', 'dialog');
+    // The harness's mark only for a pinned pick: a soft one runs wherever the run does.
+    const mark = lbl.engine ? [markTile(doc, { kind: 'harness', key: lbl.engine, size: 'sm', label: engineLabel(lbl.engine) })] : [];
+    model.prepend(h('span', 'k', 'Model'), ...mark, doc.createTextNode(` ${lbl.text}`));
     model.addEventListener('click', () => modelMenu(model, node));
     const effort = btn('effort', '', { menu: true });
     effort.prepend(h('span', 'k', 'Effort'), doc.createTextNode(` ${node.config.effort || 'default'}`));

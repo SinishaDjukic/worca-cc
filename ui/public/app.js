@@ -234,20 +234,21 @@ import { renderCatalogue, renderModelPanel } from './models/catalogue-view.mjs';
 import { buildJobs, jobsSaved, jobsSaveBody, jobsDirty } from './models/jobs-model.mjs';
 import { renderJobs, openOverrideMenu } from './models/jobs-view.mjs';
 import { openModelPicker } from './models/model-picker.mjs';
+import { modelTrigger, columnsValue } from './models/model-columns.mjs';
 import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields, collectAskWebFields, mountRoleSetting } from './chat-settings-view.mjs';
 import { renderCredentials } from './credentials-view.mjs';
 import { renderExtensionPairings, browserLabel, formatPairCode, renderExtensionInstall, selectInstallBrowser, detectBrowser } from './extension-settings-view.mjs';
 import { mountNetworkProxyCard } from './settings-network-proxy.mjs';
 import { openSetupAssistant, teamNotice, TEAM_SEEN_KEY } from './setup-assistant.mjs';
-import { loadCredentials, credentialSuffix } from './credential-badges.mjs';
+import { loadCredentials } from './credential-badges.mjs';
 import { freeRequestsSuffix, typicalFreeRun, newRunFreeWarning, providerFreeLine } from './openrouter-free-view.mjs';
 import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, SYNC_EXECUTION_ID } from '../../src/shared/graph/constants.mjs';
 import { FORM_ID_RE, validateFormDef, normalizeAskBlock } from '../../src/shared/forms/form-def.mjs';
 import { ASK_LIMITS } from '../../src/shared/forms/catalog.mjs';
 import { WORKSPACE_MAX_PROJECTS, workspaceSizeLevel } from '../../src/shared/workspace-size.mjs';
-import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, MODEL_ENGINE_NAMES, isBetaEngine, SIGN_IN_ENGINE_NAMES, SESSION_SUBAGENTS_VERIFIED } from '../../src/shared/engine-switch.mjs';
+import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, runCostKnown, runCostLabel, engineList, ENGINE_NAMES, MODEL_ENGINE_NAMES, isBetaEngine, SIGN_IN_ENGINE_NAMES, SESSION_SUBAGENTS_VERIFIED } from '../../src/shared/engine-switch.mjs';
 import { remoteRefusesDefault } from '../../src/shared/exec-env.mjs';
-import { runsOn, effortsOn, harnessesLabel, connectionKey, modelGroups, PROVIDER_LABELS, connectionOf } from '../../src/shared/connections.mjs';
+import { runsOn, effortsOn, pickEffortsOn, harnessesLabel, connectionKey, modelGroups, PROVIDER_LABELS, connectionOf } from '../../src/shared/connections.mjs';
 import {
   guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
   renderStartStep, collectStartStep, renderGuardrailReferences409, isReadOnlyGuardrailSet,
@@ -834,14 +835,17 @@ let newPipelinePrefill = null; // one-shot card → New Pipeline handoff (§10.2
 // 60 s. null until an answer with an `engines` array arrives — then usageLimitSwitches offers every other engine.
 // Every caller's onLoad runs when the answer lands (banner, history bar). A failed or engines-less answer is cached
 // for the same 60 s, so a repaint loop never turns into a request loop. Up here, above every painter: painters can
-// run before a later `let` line is reached (TDZ).
+// run before a later `let` line is reached (TDZ). Its second reader is the model pickers (models/model-columns.mjs):
+// their status words and broker locks read the raw rows through readyEngineRows, kept from the same answer.
 let engineReady = null; let engineReadyAt = 0; let engineReadyLoading = null; const engineReadyWaiters = new Set();
+let engineReadyRows = null;   // the raw GET /api/engines rows: null until an answer with an `engines` array
 function readyEngines(onLoad) {
   if (Date.now() - engineReadyAt < 60_000) return engineReady;
   if (typeof onLoad === 'function') engineReadyWaiters.add(onLoad);
   if (!engineReadyLoading) {
     engineReadyLoading = fetch('/api/engines').then((r) => (r.ok ? r.json() : null)).catch(() => null).then((d) => {
       engineReady = Array.isArray(d?.engines) ? d.engines.filter((e) => e.ready).map((e) => e.name) : null;   // null: offer all
+      engineReadyRows = Array.isArray(d?.engines) ? d.engines : null;
       engineReadyAt = Date.now();
       setEngineLocks(d?.engines); applyEngineLocks();
       const waiters = [...engineReadyWaiters]; engineReadyWaiters.clear();
@@ -849,6 +853,18 @@ function readyEngines(onLoad) {
     }).finally(() => { engineReadyLoading = null; });
   }
   return engineReady;
+}
+/** The readiness rows ({ name, label, ready, reason, broker? }) for the model pickers, in readyEngines' style: rows or
+ *  null, and onLoad runs when a fetch it started lands. */
+function readyEngineRows(onLoad) {
+  readyEngines(onLoad);
+  return engineReadyRows;
+}
+/** The Models view with Add model on `engine`'s sign-in. OpenCode lists its own models, so it opens at that list;
+ *  every other sign-in opens at step 1 with the harness picked. */
+function addModelOn(engine) {
+  mvState.openEditorOnLoad = engine === 'opencode' ? { step: 2, where: 'signin', engine } : { where: 'signin', engine };
+  showView('models');
 }
 /** Readiness only matters to a usage-limit pause an engine hit: any other run never asks. */
 const readyFor = (pause, onLoad) => (pause?.reason === 'usage_limit' && pause?.limitEngine ? readyEngines(onLoad) : null);
@@ -2579,6 +2595,7 @@ function onHello(msg) {
       limitScope: r0.limitScope || null,
       limitModel: r0.limitModel || null,
       runEngine: r0.runEngine || undefined,
+      runEngines: Array.isArray(r0.runEngines) ? r0.runEngines : undefined,
       execEnv: r0.execEnv || undefined,
       execEnvWaiting: !!r0.execEnvWaiting,
       execEnvPreparing: r0.execEnvPreparing || undefined,
@@ -2748,7 +2765,7 @@ function nowHMS() {
 function makeRun({
   runId, title, projectDir, status = 'running', startedAt, local = false,
   pendingQuestion = null, kind = 'run', pipelineId = null, pauseReason = null,
-  pauseDetail = null, limitEngine = null, limitResetAt = null, modelConfirm = null, limitScope = null, limitModel = null, runEngine = undefined,
+  pauseDetail = null, limitEngine = null, limitResetAt = null, modelConfirm = null, limitScope = null, limitModel = null, runEngine = undefined, runEngines = undefined,
   execEnv = undefined, execEnvWaiting = false, execEnvPreparing = undefined, execEnvWaitUntil = undefined, execEnvReview = undefined, startedBy = null, lastAction = null,
   workspaceId = undefined, workspaceName = undefined, projectNames = null, night = undefined, tags = [], labels = [],
   shaping = null, networkWait = null, workMode = undefined,
@@ -2772,6 +2789,7 @@ function makeRun({
     limitScope,           // 'usage_limit': 'model' (a Fable limit) | 'connection', or null
     limitModel,           // 'usage_limit': the model the limit was spent on, or null
     runEngine,            // the engine the run runs on (state frames carry it too); undefined = not known yet
+    runEngines,           // every harness its steps use, only on a run that uses more than one
     execEnv,              // the backend name ('e2b') when its agents run in a remote sandbox (docs/e2b.md); undefined = local
     execEnvWaiting,       // remote: still queued for a sandbox slot
     execEnvPreparing,     // remote: 'image-build' while the backend builds its sandbox image on first use
@@ -3375,6 +3393,9 @@ function onState(r, msg) {
   if (typeof msg.prompt === 'string' && msg.prompt) r.prompt = msg.prompt;
   // The run's engine (§4.2): the step pills show only what that engine ran.
   if (typeof msg.runEngine === 'string' && msg.runEngine) r.runEngine = msg.runEngine;
+  // Every harness its steps use (a mixed run only): a frame without it drops the copy (a resume that moved every step).
+  if (Array.isArray(msg.runEngines) && msg.runEngines.every((e) => typeof e === 'string')) r.runEngines = msg.runEngines;
+  else delete r.runEngines;
   // Where it executes (e2b only) and whether it still waits for a sandbox slot.
   if (typeof msg.execEnv === 'string') r.execEnv = msg.execEnv;
   r.execEnvWaiting = !!msg.execEnvWaiting;
@@ -3671,7 +3692,14 @@ const gvApi = {
     const d = await safeJson(res);
     return Array.isArray(d) ? d : (d && d.agents) || [];
   },
-  config: async () => { const res = await fetch('/api/config'); const d = await safeJson(res); return { models: d.models || [], efforts: d.efforts || [], subagentModels: d.subagentModels || [] }; },
+  // defaultEngine: the harness a run starts on when nothing else names one (GET /api/run-defaults, no project), where
+  // the Workflows picker's inherit and soft picks run.
+  config: async () => {
+    const [res, def] = await Promise.all([fetch('/api/config'), fetch('/api/run-defaults').then((r) => (r.ok ? safeJson(r) : null)).catch(() => null)]);
+    const d = await safeJson(res);
+    const defaultEngine = (def && def.engine && typeof def.engine.value === 'string' && def.engine.value) || 'claude';
+    return { models: d.models || [], efforts: d.efforts || [], subagentModels: d.subagentModels || [], defaultEngine };
+  },
   listWorkflows: async () => listWorkflows(),
   listArchived: async () => {
     try {
@@ -3890,6 +3918,9 @@ const wfvTests = createWorkflowTests({ doc: document, win: window, fetch: (...a)
 
 function wfvShellActions() {
   return {
+    // The model picker's readiness (status words, broker locks) and its Add model on a harness.
+    engines: (onLoad) => readyEngineRows(onLoad),
+    addModel: (engine) => addModelOn(engine),
     pinState: () => { const t = gvComposer.template(); return t && t.id ? { id: t.id, pinned: homePinned(t.id) } : null; },
     togglePin: () => { const t = gvComposer.template(); if (t && t.id) void toggleHomePin(t); },
     back: () => { location.hash = wfvReturn || 'chat'; },
@@ -4354,6 +4385,8 @@ function agentSummaryText(row) {
     const m = modelById(row.model);
     parts.push(m ? m.label : row.model, row.effort || 'default effort');
   }
+  // A pick pinned to its harness says which: it runs there whatever the run's default harness.
+  if (row.engine) parts.push(`on ${engineLabel(row.engine)}`);
   if (row.fanOut) parts.push('fan-out');
   // A stored policy shows whether or not fan-out is currently on: the value
   // persists across a fan-out toggle, and hiding it while the modified dot
@@ -4404,7 +4437,7 @@ if (typeof window !== 'undefined') {
     resolveNodeTunables,
     buildFeedbackRows,
     defaultEffortFor,
-    renderModelEffortPair,
+    renderEffortSelect,
     renderAgentRows,
     renderFeedbackRows,
     renderWorkflowConfig,
@@ -4533,51 +4566,26 @@ if (typeof window !== 'undefined') {
   });
 }
 
-// Paint one model+effort select pair (and its caption) from a saved selection
-// {model,effort}. Shared by the legacy default-stage rows and the dynamic
-// per-node rows so the dropdown contents + effort filtering live in one place.
-function renderModelEffortPair(modelSel, effortSel, caption, sel = {}) {
-  // Model dropdown: "(default model)", then the models grouped by connection (model-options.mjs, the grouping every
-  // picker shares) — then "+ Add model…". An option names who added it (team policy, a plugin), and the observed §4.6
-  // "cost not verified" flag still marks it.
-  modelSel.innerHTML = '';
-  modelSel.appendChild(option('', '(default model)'));
-  // D10: New pipeline offers the models the run's harness can run only (src/shared/connections.mjs) — any
-  // other would be skipped at run time. `sel.engine` names another engine for a caller that has one.
-  const engine = sel.engine || state.engine || 'claude';
-  const ofEngine = (m) => runsOn(m, engine);
-  // A bridged model whose provider is not usable (model-bridge-design.md §8.5)
-  // leaves the list — unless it is THIS selection, which is then labelled so.
-  const usable = (m) => ofEngine(m) && (!m.needsSignIn || m.id === sel.model);
-  // "Hide built-in models" (#422): a hidden built-in leaves the list — unless
-  // it is THIS selection, which still resolves and must stay visible.
-  appendModelGroups(modelSel, state.models.filter((m) => usable(m) && (m.custom || !m.hidden || m.id === sel.model)), {
-    engine, text: (m) => modelOptionText(m) + (m.costUnreliable ? ' ⚠cost' : '') + (m.needsSignIn ? ' (needs sign-in)' : '') + credentialSuffix(m.id) });
-  modelSel.appendChild(option('__add__', 'Add model…'));
-  modelSel.value = sel.model || '';
-
-  // Effort dropdown: filtered to the selected model's supported efforts. With no
-  // model there is no list to offer — which efforts are valid is a property of
-  // the model — so the control is disabled. It SAYS so rather than just greying
-  // out, because a dead dropdown next to a live one reads as a broken UI.
-  const model = modelById(modelSel.value);
+// Paint one Agents row's effort select from its pick {model, effort, engine}. The model itself is the row's columns
+// picker trigger (renderAgentRows); `engine` is the harness a pinned pick names, absent for a soft pick or inherit.
+function renderEffortSelect(effortSel, { model = '', effort = '', engine = '' } = {}) {
+  // Filtered to the model's supported efforts. With no model (or one the catalog lost) there is no list to offer —
+  // which efforts are valid is a property of the model — so the control is disabled. It SAYS so rather than just
+  // greying out, because a dead dropdown next to a live one reads as a broken UI. A model the catalog lost keeps its
+  // stored effort as the one option instead, so a save of another tunable sends the pick back unchanged (the server
+  // keeps that pick unchecked).
+  const m = modelById(model);
+  const lostEffort = !m && model && effort ? effort : '';
   effortSel.innerHTML = '';
-  effortSel.appendChild(option('', model ? '(default effort)' : '(pick a model first)'));
-  // A model on two harnesses keeps its own efforts; this run's harness offers them mapped (effortsOn).
-  const offeredEfforts = model ? effortsOn(model, engine) : [];
-  offeredEfforts.forEach((e) => effortSel.appendChild(option(e, e)));
-  effortSel.value = sel.effort && offeredEfforts.includes(sel.effort) ? sel.effort : '';
-
-  modelSel.disabled = false;
-  effortSel.disabled = !model;
-  effortSel.title = model ? '' : 'Pick a model first. The effort levels on offer are that model’s own.';
-
-  if (caption) {
-    const mLabel = model ? model.label : 'default model';
-    caption.textContent = `${mLabel} · ${effortSel.value || 'default effort'}`
-      + (model && model.needsSignIn ? ' (needs sign-in under Models › Providers)' : '');
-    caption.classList.toggle('err', !!(model && model.needsSignIn));
-  }
+  effortSel.appendChild(lostEffort ? option(lostEffort, lostEffort) : option('', m ? '(default effort)' : '(pick a model first)'));
+  // A model on two harnesses keeps its own efforts; a soft pick offers them mapped onto the run's harness (effortsOn).
+  // A pinned pick offers its own efforts and the ones its harness maps (pickEffortsOn), so a stored own-only effort
+  // still shows.
+  const offered = m ? (engine ? pickEffortsOn(m, engine) : effortsOn(m, state.engine || 'claude')) : [];
+  offered.forEach((e) => effortSel.appendChild(option(e, e)));
+  effortSel.value = lostEffort || (effort && offered.includes(effort) ? effort : '');
+  effortSel.disabled = !m;
+  effortSel.title = m ? '' : 'Pick a model first. The effort levels on offer are that model’s own.';
 }
 
 // The built-in Default workflow, client-side. Two jobs: (1) it is the topology
@@ -5003,8 +5011,11 @@ function paintHiddenSettings() {
 // Build the agents accordion into #agents-rows: one collapsed .agent-row per node
 // (accent + name + effective-config caption + modified dot), whose body holds the
 // same model/effort/fan-out/questions controls the old always-open .stage-cfg card
-// did — same classes and data-node-id, so the delegated change handler and
-// renderModelEffortPair are unchanged (newpipeline-ux-design.md §4.2).
+// did — same classes and data-node-id, so the one delegated change handler serves
+// them (newpipeline-ux-design.md §4.2). The model is the columns picker's trigger
+// (models/model-columns.mjs), a button the handler reads in its own branch: it offers
+// every harness, opens on the run's default harness, and a pick names the harness it
+// was picked on.
 function renderAgentRows(rows) {
   const host = el.agentRows;
   if (!host) return;
@@ -5078,14 +5089,16 @@ function renderAgentRows(rows) {
 
     const picks = document.createElement('div');
     picks.className = 'picks';
+    // The model: the columns picker's trigger, with a <select>'s contract (`value`, `disabled`, one bubbling
+    // `change` per pick) and `data-engine`, the harness a pick names ('' = soft or inherit).
     const mWrap = document.createElement('div');
-    mWrap.className = 'select-wrap';
-    const modelSel = document.createElement('select');
-    modelSel.className = 'step-model select';
-    modelSel.dataset.nodeId = row.nodeId;
-    if (row.role) modelSel.dataset.role = row.role;
-    modelSel.setAttribute('aria-label', `${row.label} model`);
-    mWrap.appendChild(modelSel);
+    mWrap.className = 'agent-model';
+    const trigger = modelTrigger({ doc: document, win: window, value: columnsValue({ model: row.model, engine: row.engine }),
+      catalog: state.models, label: `Model for ${row.label}`, cls: 'step-model', defaultEngine: state.engine || 'claude',
+      engines: readyEngineRows, inheritHint: 'workflow default', onAddModel: addModelOn, refocus: () => agentTriggerOf(row.nodeId) });
+    trigger.dataset.nodeId = row.nodeId;
+    if (row.role) trigger.dataset.role = row.role;
+    mWrap.appendChild(trigger);
     const eWrap = document.createElement('div');
     eWrap.className = 'select-wrap';
     const effortSel = document.createElement('select');
@@ -5116,9 +5129,10 @@ function renderAgentRows(rows) {
     const rowDef = row.def || {};
     keepVisible(tagLevel(fanWrap, 'expert'), !!row.fanOut !== !!rowDef.fanOut);
     keepVisible(tagLevel(sWrap, 'expert'), (row.subagentModel || '') !== (rowDef.subagentModel || ''));
-    // Only a Claude run has a sub-agent model to pick: Codex has its own spawn_agent, Copilot's sub-agents run on the
+    // Only a step on Claude Code has a sub-agent model to pick: Codex has its own spawn_agent, Copilot's sub-agents run on the
     // node's own model, OpenCode's investigator runs on the node's model, and Cursor, Gemini CLI, Goose and Qwen Code have none.
-    if (state.engine !== 'claude') sWrap.hidden = true;
+    // A row pinned to a harness runs there whatever the run's; a pick made here hides or shows it with the save's re-render.
+    if ((row.engine || state.engine) !== 'claude') sWrap.hidden = true;
     if (row.askQuestions !== null && row.askQuestions !== undefined) {
       const lockWhy = row.questionsLocked ? (row.askQuestions ? 'Always on for this agent' : 'Always off for this agent') : null;
       const q = makeSwitch(document, { label: 'Questions', ariaLabel: `${row.label} questions`, checked: !!row.askQuestions,
@@ -5152,10 +5166,9 @@ function renderAgentRows(rows) {
 
     card.appendChild(body);
     // The collapsed head IS this row's caption (`sum` above), so the controls get
-    // no second one — renderModelEffortPair's caption slot stays empty and
-    // paintRowSummary keeps the head in step with the live selects.
-    renderModelEffortPair(modelSel, effortSel, null, { model: row.model, effort: row.effort });
-    if (row.pinned) lockPinnedPair(modelSel, effortSel);
+    // no second one — paintRowSummary keeps the head in step with the live controls.
+    renderEffortSelect(effortSel, { model: row.model, effort: row.effort, engine: row.engine });
+    if (row.pinned) lockPinnedPair(trigger, effortSel);
     host.appendChild(card);
   });
   applyFreeDailyToNewView();   // a :free model among the rows may need the allowance warning
@@ -5182,11 +5195,18 @@ function paintRowSummary(row, body) {
   head.textContent = agentSummaryText({ ...row, ...liveRowValues(row, body) });
 }
 
-// Settings › Memory owns a Memory defragment run's model + effort (node-tunables.mjs `pinned`):
-// shown, never edited here. `data-locked` keeps setAgentRowsEnabled from re-enabling them.
+/** The model trigger (button.mdl-pick.step-model) of the Agents row for `nodeId`, looked up again after a repaint. */
+function agentTriggerOf(nodeId) {
+  if (!el.agentRows) return null;
+  return [...el.agentRows.querySelectorAll('.step-model')].find((b) => b.dataset.nodeId === nodeId) || null;
+}
+
+// Settings › Memory owns a Memory defragment run's model + effort (node-tunables.mjs `pinned`): shown, never edited
+// here, and the trigger opens nothing. A row pinned to another harness is not locked: its trigger picks a model on
+// any harness. `data-locked` keeps setAgentRowsEnabled from re-enabling them and liveRowValues from reading them back.
 const PINNED_PAIR_TEXT = 'Set in Settings › Memory. Every Memory defragment run uses this model, whatever this project picked.';
-function lockPinnedPair(modelSel, effortSel) {
-  for (const s of [modelSel, effortSel]) {
+function lockPinnedPair(trigger, effortSel) {
+  for (const s of [trigger, effortSel]) {
     s.disabled = true;
     s.dataset.locked = '1';
     s.title = 'Set in Settings › Memory';
@@ -5199,7 +5219,8 @@ function defaultOriginText(row) {
   if (!row.def.model) { const t = emptyStepText(row); return t ? `${t}.` : 'No model set for this workflow. It falls back to the CLI’s own default.'; }
   const m = modelById(row.def.model);
   const label = m ? m.label : row.def.model;
-  return `This workflow’s default: ${label}${row.def.effort ? ` · ${row.def.effort}` : ''}.`;
+  const on = row.def.engine ? ` on ${engineLabel(row.def.engine)}` : '';   // the workflow's own pin names its harness
+  return `This workflow’s default: ${label}${row.def.effort ? ` · ${row.def.effort}` : ''}${on}.`;
 }
 
 // Build the feedback-loop cycle counts as the accordion's LAST row (§4.2, D4):
@@ -5317,8 +5338,9 @@ function setRunEngine(engine) {
   paintSessionNotes();
   paintRunExecEnv();
   showEngineRefusal(null);
-  // D10: the agent rows offer the run engine's models only — repaint them for the new engine. The Sets
-  // picker too: another engine names set skills as its .agents/skills mount would.
+  // D10: the run's engine is the Agents rows' default harness: what their inherit and soft picks run on, where their
+  // pickers open, and what heals a soft pick it cannot run — repaint them for the new engine. The Sets picker too:
+  // another engine names set skills as its .agents/skills mount would.
   if (prev !== state.engine) {
     void renderWorkflowConfig(state.workflowId);
     if (currentView() === 'new') schedulePolicyLine();
@@ -5589,14 +5611,14 @@ if (el.guardrailsSelect) {
   });
 }
 
-async function saveStep(role, model, effort, fanOut, askQuestions, subagentModel) {
+async function saveStep(role, model, effort, fanOut, askQuestions, subagentModel, engine) {
   const projectDir = selectedProjectPath();
   if (!projectDir) return;
   try {
     const res = await fetch('/api/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectDir, step: role, model, effort, fanOut, askQuestions, subagentModel }),
+      body: JSON.stringify({ projectDir, step: role, model, effort, fanOut, askQuestions, subagentModel, engine }),
     });
     const data = await safeJson(res);
     if (!res.ok) {
@@ -5613,7 +5635,9 @@ async function saveStep(role, model, effort, fanOut, askQuestions, subagentModel
 // What a row's controls CURRENTLY show. The visible state is the truth: reading
 // it back (rather than the last-rendered row data, or state.config, which lags an
 // in-flight save) is what keeps a toggle from reverting a model picked a moment
-// earlier. A disabled questions box is the agent's locked value, never the user's.
+// earlier. A disabled questions box is the agent's locked value, never the user's, and a locked model + effort pair
+// (data-locked) is left out, so a save of another tunable re-sends the row's own pick. The model trigger's harness
+// (data-engine) rides with its model, so a save of another tunable never drops or changes it.
 function liveRowValues(row, body) {
   const host = body || (el.agentRows
     && el.agentRows.querySelector(`.agent-row[data-node-id="${row.nodeId}"] .agent-row-body`));
@@ -5624,8 +5648,11 @@ function liveRowValues(row, body) {
   const f = host.querySelector('.step-fanout');
   const q = host.querySelector('.step-questions');
   const sa = host.querySelector('.step-subagent');
-  if (m) out.model = m.value === '__add__' ? row.model : m.value;
-  if (e) out.effort = e.value;
+  if (m && !m.dataset.locked) {
+    out.model = m.value;
+    out.engine = m.dataset.engine || '';
+  }
+  if (e && !e.dataset.locked) out.effort = e.value;
   if (f) out.fanOut = f.checked;
   if (q && !q.disabled) out.askQuestions = q.checked;
   if (sa) out.subagentModel = sa.value;
@@ -5657,7 +5684,7 @@ async function saveAgentRow(row, next, body) {
     const patch = pruneNodeSelection(row, { ...liveRowValues(row, body), ...next });
     s.overlay = s.overlay || {};
     s.overlay.nodes = { ...(s.overlay.nodes || {}), [row.nodeId]: presetNodePick(patch, row.def) };
-  })) { renderWorkflowConfig(state.workflowId); return; }
+  })) { await renderWorkflowConfig(state.workflowId); return; }
   // Defence in depth: the controls are disabled without a project, but if one
   // is ever reached anyway, say so rather than letting the save no-op and the
   // re-render quietly undo the edit. Same wording as the submit guard.
@@ -5668,24 +5695,24 @@ async function saveAgentRow(row, next, body) {
   }
   const patch = pruneNodeSelection(row, { ...liveRowValues(row, body), ...next });
   if (row.role) {
-    await saveStep(row.role, patch.model, patch.effort, patch.fanOut, patch.askQuestions, patch.subagentModel);
+    await saveStep(row.role, patch.model, patch.effort, patch.fanOut, patch.askQuestions, patch.subagentModel, patch.engine);
   } else {
     await saveNode(state.workflowId, row.nodeId, patch.model, patch.effort, patch.fanOut, patch.askQuestions,
-      patch.subagentModel);
+      patch.subagentModel, patch.engine);
   }
   await renderWorkflowConfig(state.workflowId); // repaint captions, dots + header
 }
 
 // Persist one node's model/effort to the per-project run-config for the active
 // workflow (CONV-2): PATCH /api/config { projectDir, workflowId, nodes:{ [nodeId]:{model,effort} } }.
-async function saveNode(workflowId, nodeId, model, effort, fanOut, askQuestions, subagentModel) {
+async function saveNode(workflowId, nodeId, model, effort, fanOut, askQuestions, subagentModel, engine) {
   const projectDir = selectedProjectPath();
   if (!projectDir) return;
   try {
     const res = await fetch('/api/config', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectDir, workflowId, nodes: { [nodeId]: { model, effort, fanOut, askQuestions, subagentModel } } }),
+      body: JSON.stringify({ projectDir, workflowId, nodes: { [nodeId]: { model, effort, fanOut, askQuestions, subagentModel, engine } } }),
     });
     const data = await safeJson(res);
     if (!res.ok) {
@@ -5780,19 +5807,6 @@ async function saveHumanInLoop(on) {
 }
 if (el.humanInLoop) el.humanInLoop.addEventListener('change', () => saveHumanInLoop(el.humanInLoop.checked));
 
-// "+ Add model…" in any model dropdown: restore the selection and jump to the
-// global Models view with Add model open (models are added GLOBALLY —
-// configurable-models-design.md §4.9; the old per-project window.prompt flow
-// is gone).
-function goAddModel(restore) {
-  if (typeof restore === 'function') restore();
-  mvState.editing = null;
-  mvState.prefill = null;
-  // Step 1 opens on a sign-in with the run's harness picked (D10): a Codex run adds a Codex model.
-  mvState.openEditorOnLoad = { where: 'signin', engine: state.engine };   // survives the view switch: readModelsView opens it
-  showView('models');
-}
-
 // Delegated change handler for every config control inside #pipeline-config.
 // Each control carries the node id of its accordion row; agentRowsById supplies
 // that row's resolved defaults, so saveAgentRow can prune a redundant selection
@@ -5823,19 +5837,28 @@ el.pipelineConfig.addEventListener('change', (e) => {
       : { askQuestions: !!t.checked }, body);
   }
 
-  if (!(t instanceof HTMLSelectElement)) return;
-
-  if (t.classList.contains('step-model')) {
-    if (t.value === '__add__') return goAddModel(() => renderWorkflowConfig(state.workflowId));
-    // A new model invalidates the old effort (the dropdown is filtered by it), so
-    // the effort resets and the row's options are repainted immediately — the
-    // save's own re-render lands a moment later.
-    saveAgentRow(row, { model: t.value, effort: '' }, body);
+  // The model trigger (a button, models/model-columns.mjs): a pick sets its value and the harness it names
+  // (data-engine, '' = soft or inherit). A new model invalidates the old effort (the effort select is filtered by
+  // it), so the effort resets and its options are repainted immediately — the save's own re-render lands a moment
+  // later and replaces the trigger, so the focus goes to the row's new one unless it has moved elsewhere meanwhile.
+  if (t.classList && t.classList.contains('step-model')) {
+    const engine = t.dataset.engine || '';
+    const saved = saveAgentRow(row, { model: t.value, effort: '', engine }, body);
     const effortSel = body && body.querySelector('.step-effort');
-    if (effortSel) renderModelEffortPair(t, effortSel, null, { model: t.value, effort: '' });
+    if (effortSel) renderEffortSelect(effortSel, { model: t.value, effort: '', engine });
     paintRowSummary(row, body);
     schedulePolicyLine();                      // an off-list model is a team-policy note (board 8)
-  } else if (t.classList.contains('step-effort')) {
+    void saved.then(() => {
+      if (document.activeElement !== document.body) return;
+      const next = agentTriggerOf(row.nodeId);
+      if (next) next.focus();
+    });
+    return;
+  }
+
+  if (!(t instanceof HTMLSelectElement)) return;
+
+  if (t.classList.contains('step-effort')) {
     saveAgentRow(row, { effort: t.value }, body);
     paintRowSummary(row, body);
   } else if (t.classList.contains('step-subagent')) {
@@ -5924,12 +5947,13 @@ if (el.agentsPromote) {
 
 // One row's effective settings as a workflow-defaults block: only what deviates
 // from the agent registry is worth storing, and a locked/absent questions toggle
-// is never the user's to promote.
+// is never the user's to promote. A row's harness (`engine`) goes beside its model.
 function effectiveDefaultsOf(row) {
   const out = {};
   if (row.model) {
     out.model = row.model;
     if (row.effort) out.effort = row.effort;
+    if (row.engine) out.engine = row.engine;
   }
   out.fanOut = !!row.fanOut;
   if (row.askQuestions !== null && !row.questionsLocked) out.askQuestions = !!row.askQuestions;
@@ -16356,7 +16380,9 @@ function buildRunBody() {
     // to be Claude (a failed or stale defaults read must not let the server pick a Codex default).
     engine: state.engine !== 'claude' ? state.engine : (state.runDefaults?.engine?.value === 'claude' ? undefined : 'claude'),
     pr: runPrFields().body(),   // only a value the person changed from the setting
-    allowUnguardedEngine: state.engine !== 'claude' && el.engineAllowUnguarded && el.engineAllowUnguarded.checked ? true : undefined,
+    // Whatever the run's own engine: a step may be pinned to a harness that needs the consent (the box shows only beside
+    // an overridable refusal and is cleared per attempt).
+    allowUnguardedEngine: el.engineAllowUnguarded && el.engineAllowUnguarded.checked ? true : undefined,
     // Run tags (#718): omitted when empty, so a legacy body stays byte-identical. A slot wins its key.
     tags: (() => {
       const all = normaliseTags([...runTagInput.get(), ...runTagDims.get()]).tags;
@@ -16596,7 +16622,7 @@ el.form.addEventListener('submit', async (e) => {
       if (!res.ok && data && data.code === 'engine-refused') {
         startSubmitInFlight = false;
         showEngineRefusal(data);
-        return notStarted(data.overridable ? 'Tick Allow unguarded to run anyway, or pick Claude.' : (data.error || 'The engine cannot run this.'));
+        return notStarted(data.overridable ? (state.engine !== 'claude' ? 'Tick Allow unguarded to run anyway, or pick Claude.' : 'Tick Allow unguarded to run anyway.') : (data.error || 'The engine cannot run this.'));
       }
       // Signed out with nothing else to run on: the sign-in steps, not a paused run.
       if (res.status === 409 && data && data.code === 'claude-signed-out') {
@@ -23940,9 +23966,9 @@ async function paintMcpjsonHint() {
   const link = Object.assign(document.createElement('a'), { href: `#projects/${encodeURIComponent(key)}/mcp`, textContent: `Approve ${names.length === 1 ? 'it' : 'them'} on the project’s Sets tab` });
   el.engineMcpjsonHint.replaceChildren(`${names.length === 1 ? '1 server' : `${names.length} servers`} from the repository’s .mcp.json won’t start (${names.join(', ')}). `, link);
 }
-/** The models the run will pick: the Agents accordion's selects, else the legacy per-role config. */
+/** The models the run will pick: the Agents accordion's model triggers, else the legacy per-role config. */
 function selectedRunModels() {
-  const picked = [...document.querySelectorAll('#agents-rows select.step-model')].map((s) => s.value).filter((v) => v && v !== '__add__');
+  const picked = [...document.querySelectorAll('#agents-rows .step-model')].map((s) => s.value).filter(Boolean);
   const models = picked.length ? picked
     : Object.values((state.config && state.config.steps) || {}).map((s) => s && s.model).filter((m) => typeof m === 'string' && m);
   return [...new Set(models)];
@@ -24096,7 +24122,9 @@ function paintResumeEngineItems(menu, runEngine, pause) {
   const saved = runEngine || 'claude';
   const offers = usageLimitSwitches(pause || {});
   const confirm = pause?.reason === 'model_confirm' && pause.modelConfirm?.model ? pause.modelConfirm.model : '';
-  const sig = `${saved}|${offers.join(',')}|${pause?.reason || ''}|${confirm}|${pause?.limitScope || ''}`;
+  // A run whose steps use several harnesses: Resume keeps each on its own; an offer moves every step.
+  const mixed = !!pause?.mixed;
+  const sig = `${saved}|${offers.join(',')}|${pause?.reason || ''}|${confirm}|${pause?.limitScope || ''}|${mixed ? 'mixed' : ''}`;
   if (menu.dataset.engineSig === sig) return;
   menu.dataset.engineSig = sig;
   // Any usage limit — the sign-in's or a provider's: a model on another connection has its own allowance. A
@@ -24117,7 +24145,7 @@ function paintResumeEngineItems(menu, runEngine, pause) {
   menu.dataset.limitScope = pause?.limitScope || '';
   menu.dataset.limitModel = pause?.limitModel || '';
   const savedItem = menu.querySelector('.resume-on-saved');
-  if (savedItem) savedItem.querySelector('b').textContent = `Resume on ${engineLabel(saved)}`;
+  if (savedItem) savedItem.querySelector('b').textContent = mixed ? 'Resume' : `Resume on ${engineLabel(saved)}`;
   const tpl = menu.querySelector('.resume-on-other[data-template]') || menu.querySelector('.resume-on-other');
   if (!tpl) return;
   tpl.dataset.template = '1'; tpl.hidden = true;
@@ -24126,7 +24154,7 @@ function paintResumeEngineItems(menu, runEngine, pause) {
     const item = tpl.cloneNode(true);
     delete item.dataset.template; item.hidden = false; item.dataset.engine = e;
     item.querySelector('b').textContent = `Resume on ${engineLabel(e)}`;
-    item.querySelector('small').textContent = engineSwitchNote(e);
+    item.querySelector('small').textContent = engineSwitchNote(e, { mixed });
     tpl.before(item);
   }
 }
@@ -24172,9 +24200,9 @@ async function pickResumeModel(engine, pause) {
 }
 
 /** Before a paused run moves to another engine: what that does. true = go. */
-async function confirmEngineSwitch(engine) {
+async function confirmEngineSwitch(engine, { mixed = false } = {}) {
   const name = engineLabel(engine);
-  return !!(await confirmModal({ title: `Resume on ${name}?`, message: engineSwitchNote(engine), confirmLabel: `Resume on ${name}`, cancelLabel: 'Cancel' }));
+  return !!(await confirmModal({ title: `Resume on ${name}?`, message: engineSwitchNote(engine, { mixed }), confirmLabel: `Resume on ${name}`, cancelLabel: 'Cancel' }));
 }
 
 /** A resume the engine gate refused (409 engine-refused). */
@@ -24182,7 +24210,8 @@ const isEngineRefusal = (data, status) => status === 409 && !!data && data.code 
 /** Show the gate's reason; when the consent lifts it, offer it. true = resend with allowUnguardedEngine. */
 async function engineRefusalRetry(data, status, engine) {
   if (!isEngineRefusal(data, status)) return false;
-  const name = engineLabel(data.engine || engine);
+  // The harness the refusal is about (a step pinned to another one included), else the run's.
+  const name = engineLabel(data.engines?.[0] || data.engine || engine);
   const res = await confirmModal({
     title: `Not resumed on ${name}`,
     message: data.error || 'The engine refused this run.',
@@ -24194,20 +24223,22 @@ async function engineRefusalRetry(data, status, engine) {
   return !!(data.overridable && res && res.ok && res.checked);
 }
 
-/** Resume a live paused run on `engine`: its own engine is the plain Resume, another asks first. */
-async function resumeRunOnEngine(runId, btn, engine) {
+/** Resume a live paused run on `engine`: its own engine is the plain Resume, another asks first. On a run whose steps
+ *  use several harnesses an offer (`offer`) of its own engine is a switch too: every step moves there. */
+async function resumeRunOnEngine(runId, btn, engine, { offer = false } = {}) {
   const r = runs.get(runId);
   if (!r || !engine) return;
-  if (engine === (r.runEngine || 'claude')) return resumeRunFromCard(runId, btn);
-  if (!(await confirmEngineSwitch(engine))) return;
+  const mixed = Array.isArray(r.runEngines);
+  if (engine === (r.runEngine || 'claude') && !(offer && mixed)) return resumeRunFromCard(runId, btn);
+  if (!(await confirmEngineSwitch(engine, { mixed }))) return;
   return resumeRunFromCard(runId, btn, { engine });
 }
 
 /** The saved run's resume on `engine` (History detail), as resumeRunOnEngine. */
-async function resumePipelineOnEngine(p, runEngine, btn, engine) {
+async function resumePipelineOnEngine(p, runEngine, btn, engine, { offer = false, mixed = false } = {}) {
   if (!engine) return;
-  if (engine === (runEngine || 'claude')) return resumePipeline(p, p.projectDir || null, btn);
-  if (!(await confirmEngineSwitch(engine))) return;
+  if (engine === (runEngine || 'claude') && !(offer && mixed)) return resumePipeline(p, p.projectDir || null, btn);
+  if (!(await confirmEngineSwitch(engine, { mixed }))) return;
   return resumePipeline(p, p.projectDir || null, btn, { engine });
 }
 
@@ -28015,11 +28046,12 @@ function hdPauseOf(live, screen, data, record) {
   const st = data?.state || {};
   return live
     ? { reason: live.pauseReason, limitEngine: live.limitEngine, limitResetAt: live.limitResetAt,
-      modelConfirm: live.modelConfirm || null, limitScope: live.limitScope || null, limitModel: live.limitModel || null }
+      modelConfirm: live.modelConfirm || null, limitScope: live.limitScope || null, limitModel: live.limitModel || null,
+      mixed: Array.isArray(live.runEngines) }
     : { reason: screen.dataset.pauseReason || st.pauseReason, limitEngine: st.limitEngine ?? record.limitEngine,
         limitResetAt: st.limitResetAt ?? record.limitResetAt ?? null,
         modelConfirm: st.modelConfirm ?? record.modelConfirm ?? null, limitScope: st.limitScope ?? record.limitScope ?? null,
-        limitModel: st.limitModel ?? record.limitModel ?? null };
+        limitModel: st.limitModel ?? record.limitModel ?? null, mixed: Array.isArray(st.runEngines) };
 }
 /** A usage limit the run's own engine hit offers "Resume on <engine>" in the Resume split's menu
  *  (paintResumeEngineItems), never as buttons of its own. The caret is Advanced and up; while the menu holds
@@ -28507,8 +28539,8 @@ function paintHdFacts(screen, record, data) {
   // The run time is the saved elapsed clock (an old run: its summed time); the sum itself is agent time.
   const activeMs = runHeadlineMs(st) ?? liveTotalMs(st.steps, 0);
   const tags = costTagsFact(st.tags, record && record.projectDir, () => { if (screen.isConnected) paintHdGlance(screen, record, data); }, record && record.target);
-  paintGlanceFacts(glance, { summary: folder ? null : (s || null), changes: fc, diffHref: `#${hdHash({ projectKey: record.projectKey, id: record.id }, 'details', 'diff')}`, activeMs, agentMs: st.totalActiveMs, cost: engineReportsCost(st.runEngine) ? (st.totalCostUsd || 0) : null,
-    costNote: costSummaryText(runCostBreakdown(st.steps, st.totalCostUsd), fmtUsd),
+  paintGlanceFacts(glance, { summary: folder ? null : (s || null), changes: fc, diffHref: `#${hdHash({ projectKey: record.projectKey, id: record.id }, 'details', 'diff')}`, activeMs, agentMs: st.totalActiveMs, cost: runCostKnown(st.runEngine, st.runEngines) !== 'none' ? (st.totalCostUsd || 0) : null,
+    costNote: glanceCostNote(st, costSummaryText(runCostBreakdown(st.steps, st.totalCostUsd), fmtUsd)),
     // D16: a finished run always has the row, so "Add cost tags" stays reachable.
     costTags: tags || { tags: [], missing: [] } });
   // Only when the row was rebuilt (its control is gone): re-appending on every glance repaint would move an open
@@ -28614,8 +28646,15 @@ function paintHdHeaderMeta(screen, record, data) {
   meta.appendChild(hdDot());
   const eng = document.createElement('span');
   eng.className = 'hd-engine';
-  eng.textContent = engineLabel(engine);
-  eng.title = `Engine: ${engineLabel(engine)}${isBetaEngine(engine) ? ' (beta)' : ''} runs this run's agents`;
+  // A run whose steps used several harnesses names the default one and the others.
+  const others = Array.isArray(st.runEngines) ? st.runEngines.filter((e) => e !== engine) : [];
+  if (others.length) {
+    eng.textContent = [engine, ...others].map(engineLabel).join(' + ');
+    eng.title = `Default harness: ${engineLabel(engine)}. Other steps run on ${others.map(engineLabel).join(', ')}.`;
+  } else {
+    eng.textContent = engineLabel(engine);
+    eng.title = `Engine: ${engineLabel(engine)}${isBetaEngine(engine) ? ' (beta)' : ''} runs this run's agents`;
+  }
   meta.appendChild(eng);
   if (st.execEnv && st.execEnv !== 'local') {
     meta.appendChild(hdDot());
@@ -28642,7 +28681,7 @@ function paintHdHeaderMeta(screen, record, data) {
     meta.appendChild(seg);
   }
   paintCostBreakdown(screen.querySelector('.hd-header'), meta.querySelector('.hd-cost'), runCostBreakdown(st.steps, st.totalCostUsd), costFocus,
-    { agentsUnknown: !engineReportsCost(st.runEngine) });
+    { agentsUnknown: runCostKnown(st.runEngine, st.runEngines) !== 'all' });
   // Scheduled runs: say HOW this run started — "by schedule" links to the Schedules view.
   if (st.scheduledFor) {
     meta.appendChild(hdDot());
@@ -28964,7 +29003,8 @@ async function scheduleResumeAt({ pipelineId, title, projectDir = null, workspac
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         pipelineId, ...when,
-        ...(res.engine ? { engine: res.engine } : {}),
+        // Only a switch names an engine: a scheduled plain resume of a mixed run keeps each step on its own harness.
+        ...(res.engine && res.engine !== saved ? { engine: res.engine } : {}),
       }),
     });
     const data = await safeJson(r);
@@ -29482,7 +29522,8 @@ function setupHdActions(screen, record, data) {
           .then((model) => { if (model) resumePipeline(r, r.projectDir || null, resumeBtn, { model }); });
         return;
       }
-      resumePipelineOnEngine(r, saved, resumeBtn, item.classList.contains('resume-on-other') ? item.dataset.engine : saved);
+      resumePipelineOnEngine(r, saved, resumeBtn, item.classList.contains('resume-on-other') ? item.dataset.engine : saved,
+        { offer: item.classList.contains('resume-on-other'), mixed: Array.isArray(data?.state?.runEngines) });
     });
     const resumeLimitItem = screen.querySelector('.hd-resume-limit-item');
     resumeLimitItem.addEventListener('click', (e) => {
@@ -29682,11 +29723,22 @@ function placeCostPop(header, btn, pop) {
   pop.style.left = `${Math.round(Math.max(8, Math.min(bb.left - hb.left, hb.width - w - 8)))}px`;
 }
 
+/** The glance tile's cost caption: today's share summary, else on a run whose cost is partly unknown, that. */
+function glanceCostNote(r, note) {
+  return note || (runCostKnown(r?.runEngine, r?.runEngines) === 'part' ? 'cost partly unknown' : note);
+}
+
 /** A run on an engine that reports no cost (Cursor): its cost is unknown, never a $0.00 (fmtUsd(null) prints $0.00).
  *  `fallback`: what the site shows today when the total is not a number ('' or '—'); a reporting engine is unchanged. */
 function runCostText(r, total, fallback = null) {
-  if (!engineReportsCost(r?.runEngine)) return { text: 'cost unknown', title: `${engineLabel(r.runEngine)} reports no cost${Number(total) > 0 ? ` (worca's own calls so far: ${fmtUsd(total)})` : ''}` };
+  const known = runCostKnown(r?.runEngine, r?.runEngines);
+  if (known === 'none') return { text: 'cost unknown', title: `${engineLabel(r.runEngine)} reports no cost${Number(total) > 0 ? ` (worca's own calls so far: ${fmtUsd(total)})` : ''}` };
   if (fallback !== null && typeof total !== 'number') return { text: fallback, title: '' };
+  // A run whose steps used a harness that reports no cost beside one that does: the known part, said so.
+  if (known === 'part') {
+    return { text: `${fmtUsd(Number(total) || 0)} (cost partly unknown)`,
+      title: `Steps on ${engineList(r.runEngines.filter((e) => !engineReportsCost(e)))} report no cost, so this total leaves them out` };
+  }
   return { text: fmtUsd(Number(total) || 0), title: '' };
 }
 
@@ -33272,12 +33324,12 @@ function rdOvStateBanner(host, r) {
     btn.className = 'btn btn-sm rd-ov-switch';
     btn.dataset.engine = other;
     btn.textContent = `Resume on ${engineLabel(other)}`;
-    btn.title = engineSwitchNote(other);
+    btn.title = engineSwitchNote(other, { mixed: Array.isArray(r.runEngines) });
     btn.addEventListener('click', () => {
       // The toggle carries the busy state (the banner repaints on every frame).
       const pauseBtn = rdOpenPauseBtn();
       if (pauseBtn && pauseBtn.disabled) return;
-      resumeRunOnEngine(r.runId, pauseBtn || btn, other);
+      resumeRunOnEngine(r.runId, pauseBtn || btn, other, { offer: true });
     });
     host.append(btn);
   }
@@ -34392,7 +34444,7 @@ function askRunSnapshot(r) {
     ...(isGitRun(r) ? {} : { workMode: workModeOf(r), changes: null }),
     live: isLive(r), terminal: !!r._finished || isTerminalStatus(r.status),
     startedAt: r.startedAt || null, elapsedMs: rdElapsedMs(r),
-    costUsd: engineReportsCost(r.runEngine) ? (r.totalCostUsd || 0) : null,   // null: cost unknown (Cursor), never $0.00
+    costUsd: runCostKnown(r.runEngine, r.runEngines) !== 'none' ? (r.totalCostUsd || 0) : null,   // null: cost unknown (Cursor), never $0.00
     // Chat P3 (U10): activeNodes' model + effort, named through the catalog, plus the execution's cycle.
     progress: decor ? decor.progress : null, active: graph ? activeAgents(decor, r.stepper, { modelLabel: graphModelLabel }) : [],
     stageProgress: decor ? decor.stageProgress : null,
@@ -35033,8 +35085,10 @@ function stepModelByNode(stepper, runEngine = 'claude', steps = null) {
       else if (Object.hasOwn(n, 'modelSource')) out[n.id] = { model: '', effort: '', decides: true, tool };
       continue;
     }
+    // A node is judged on its own harness (a step pinned to another one), else the run's.
+    const onEngine = typeof n.engine === 'string' && n.engine ? n.engine : runEngine;
     const entry = modelById(n.model);
-    if (entry && !runsOn(entry, runEngine)) continue;
+    if (entry && !runsOn(entry, onEngine)) continue;
     // A node that ran the model the run's own overlay set (the Ask run card's per-agent picks, manifest.runOverlay) says
     // so on its pill — not when another model ran (a pinned Memory pair or the run's engine won), and never for an entry
     // naming only fan-out or questions.
@@ -35043,7 +35097,8 @@ function stepModelByNode(stepper, runEngine = 'claude', steps = null) {
     const perRun = !!(ov && typeof ov.model === 'string' && ov.model && typeof n.model === 'string' && ov.model.toLowerCase() === n.model.toLowerCase());
     const ran = used[n.id] && sameModelId(used[n.id], n.model) ? null : used[n.id] || null;
     out[n.id] = { model: n.model, effort: typeof n.effort === 'string' ? n.effort : '', ...(perRun ? { perRun: true } : {}),
-      ...(n.modelSource === 'worca-default' ? { worcaDefault: true } : {}), ...(ran ? { ranOn: ran } : {}) };
+      ...(n.modelSource === 'worca-default' ? { worcaDefault: true } : {}), ...(ran ? { ranOn: ran } : {}),
+      ...(onEngine !== (runEngine || 'claude') ? { engine: onEngine } : {}) };
   }
   return out;
 }
@@ -35065,7 +35120,7 @@ function stepModelPillHtml(sel) {
   // bridge — the catalog knows, the manifest does not.
   // " · this run": the model came from the run's own per-run picks (manifest.runOverlay) — said in the text, like
   // " · bridged", because a title is hover-only (touch, keyboard and screen-reader users never get it).
-  const text = (m ? m.label : sel.model) + (sel.effort ? ` · ${sel.effort}` : '') + (m && m.bridged ? ' · bridged' : '') + (sel.perRun ? ' · this run' : '')
+  const text = (m ? m.label : sel.model) + (sel.effort ? ` · ${sel.effort}` : '') + (sel.engine ? ` · on ${engineLabel(sel.engine)}` : '') + (m && m.bridged ? ' · bridged' : '') + (sel.perRun ? ' · this run' : '')
     + (sel.observed ? ` · ${sel.tool || 'Claude Code'}'s pick` : '') + (sel.worcaDefault ? ' · Worca default' : '');
   // #1450: the session started another model than the one asked for.
   const ran = sel.ranOn ? (modelById(sel.ranOn)?.label || sel.ranOn) : '';
@@ -36343,8 +36398,9 @@ const requirementsView = createRequirementsView({
   // who: the signed-in person on a shared deployment (the start-before-Ready dialog's "Recorded as"), else nobody
   // openRun: a started run is where the person goes next (the run page, #running/<runId>)
   // confirm: the model switch asks it (9c board 4), in the shared confirm modal
+  // engineRows: the run setup's model picker reads each harness's readiness through it
   deps: { route: (p) => { location.hash = p ? `#requirements/${p}` : '#requirements'; }, who: () => viewer.name, openRun: (runId) => { location.hash = `#running/${runId}`; },
-    confirm: (o) => confirmModal(o) },
+    confirm: (o) => confirmModal(o), engineRows: readyEngineRows },
 });
 // Turning the flag off while the page is open leaves it for Chat (a hidden page must not stay up).
 onFlagChange('requirements', (on) => { if (!on && currentView() === 'requirements') showView('chat', ''); });
@@ -36545,7 +36601,7 @@ function runsLiveItem(r) {
     // run takes its History row's PR (rdModelRun), so it reads In review here as on the run page.
     run: rdModelRun(r), memo: memoFor(r.pipelineId || r.runId),
     // D32: "Cost unknown" for an engine with none. D5: a finished run still live at 0 takes its History row's cost.
-    cost: engineReportsCost(r.runEngine) ? memberCostUsd(r.totalCostUsd, rec && rec.totalCostUsd) : null,
+    cost: runCostKnown(r.runEngine, r.runEngines) !== 'none' ? memberCostUsd(r.totalCostUsd, rec && rec.totalCostUsd) : null,
   };
 }
 /** A Run-after chain member (scheduler.mjs runChains) has `state` done|current|waiting|failed and `prUrl`, never a
@@ -37213,7 +37269,7 @@ function runsHistItem(p) {
     tags: p.tags || [],
     labels: flagOn('runLabels') ? (p.labels || []) : [],
     run: histRun(p),
-    cost: engineReportsCost(p.runEngine) ? (p.totalCostUsd ?? null) : null,
+    cost: runCostKnown(p.runEngine, p.runEngines) !== 'none' ? (p.totalCostUsd ?? null) : null,
   };
 }
 /** D11: an after-ticket's predecessor inside a /api/run-groups group, worded "Complete Design Language Rollout · run 3". */
@@ -38434,7 +38490,7 @@ function openRunDetail(runId, { instant = false, host: where = 'page' } = {}) {
       return;
     }
     const engine = item.classList.contains('resume-on-other') ? item.dataset.engine : (r.runEngine || 'claude');
-    resumeRunOnEngine(r.runId, pauseBtn, engine);
+    resumeRunOnEngine(r.runId, pauseBtn, engine, { offer: item.classList.contains('resume-on-other') });
   });
   rdResumeLimit.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -39629,8 +39685,8 @@ function paintRdGlance(screen, r) {
   const liveDiff = terminal ? null : rdDiffBadge(live);
   paintGlanceFacts(glance, {
     summary: folder ? null : summary, changes: terminal ? fc : null, diffHref: `#${rdHash(r.runId, 'details', 'diff')}`, liveFiles: liveDiff != null && liveDiff !== '' ? Number(liveDiff) : null,
-    activeMs: rdElapsedMs(r), agentMs: rdAgentMs(r), cost: engineReportsCost(r.runEngine) ? (r.totalCostUsd || 0) : null,
-    costNote: costSummaryText(runCostBreakdown(r.steps, r.totalCostUsd), fmtUsd),
+    activeMs: rdElapsedMs(r), agentMs: rdAgentMs(r), cost: runCostKnown(r.runEngine, r.runEngines) !== 'none' ? (r.totalCostUsd || 0) : null,
+    costNote: glanceCostNote(r, costSummaryText(runCostBreakdown(r.steps, r.totalCostUsd), fmtUsd)),
     ticking: (r.status === 'running' || r.status === 'starting') && r.pendingQuestion == null,
     costTags: costTagsFact(r.tags, r.projectDir, () => rdRepaintOpenGlance(r.pipelineId), r.workspaceId ? 'workspace' : 'project'),
   });
@@ -41154,11 +41210,11 @@ function paintRdHeader(screen, r) {
     seg.textContent = txt;
     if (cls === 'rd-cost' && freeRequestsSuffix(r.steps)) seg.title = estTitle(r.totalCostUsd || 0) + ' Free requests: calls this run made to OpenRouter :free models (every call, tool-loop continuations too), out of the day\'s free allowance.';
     else if (cls === 'rd-cost') seg.title = estTitle(r.totalCostUsd || 0) + (bridgeRequestsSuffix(r.steps) ? ' Requests: calls this run initiated through the model bridge (Copilot bills premium requests, not tokens); tool-loop continuations are not counted.' : '');
-    if (cls === 'rd-cost' && !engineReportsCost(r.runEngine)) seg.title = runCostText(r, r.totalCostUsd).title;   // the unknown cost wins
+    if (cls === 'rd-cost' && runCostKnown(r.runEngine, r.runEngines) !== 'all') seg.title = runCostText(r, r.totalCostUsd).title;   // the unknown cost wins
     meta.appendChild(seg);
   });
   paintCostBreakdown(screen.querySelector('.rd-header'), meta.querySelector('.rd-cost'), runCostBreakdown(r.steps, r.totalCostUsd), costFocus,
-    { agentsUnknown: !engineReportsCost(r.runEngine) });
+    { agentsUnknown: runCostKnown(r.runEngine, r.runEngines) !== 'all' });
 
   // Branch row.
   if (gitOn() && isGitRun(r)) {
@@ -41286,7 +41342,7 @@ function paintRdHeader(screen, r) {
     resumeAt.title = refused ? 'This run paused on a cost cap. Continuing past it is a live decision and cannot be scheduled.' : '';
   }
   paintResumeEngineItems(screen.querySelector('.rd-resume-menu'), r.runEngine, { reason: r.pauseReason, limitEngine: r.limitEngine,
-    modelConfirm: r.modelConfirm, limitScope: r.limitScope, limitModel: r.limitModel });
+    modelConfirm: r.modelConfirm, limitScope: r.limitScope, limitModel: r.limitModel, mixed: Array.isArray(r.runEngines) });
   paintRdLimitItem(screen, r);
 
   // Away mode switch: any run that is not over (a paused run stores it in its resume point).
@@ -42861,7 +42917,7 @@ function paintSearchPlaceholder() {
 }
 // Paint one Settings tab and run its loader. Called from showView ONLY, so every
 // entry point (tab click, hash, deep link, legacy redirect, boot, a direct
-// showView call such as goAddModel) goes through exactly one render.
+// showView call such as addModelOn) goes through exactly one render.
 // `param` is already canonical: '' | '<tab>' | 'guardrails/<id>'.
 function showSettingsTab(param = '') {
   const [tab, sub] = parseSettingsParam(param);
@@ -44872,7 +44928,7 @@ function chatHomeHistTile(p) {
     // Bundle QA 2: what runModel reads to say why a finished run needs you — its PR, a stopped Watch PR, member PRs.
     pr: p.pr && typeof p.pr === 'object' ? p.pr : null, watch: p.watch || null, memberPrs: memberPrsOf(p),
     elapsedMs: runHeadlineMs(p) || 0,
-    costUsd: engineReportsCost(p.runEngine) && Number.isFinite(Number(p.totalCostUsd)) ? Number(p.totalCostUsd) : null,   // null: cost unknown (Cursor), as askRunSnapshot
+    costUsd: runCostKnown(p.runEngine, p.runEngines) !== 'none' && Number.isFinite(Number(p.totalCostUsd)) ? Number(p.totalCostUsd) : null,   // null: cost unknown (Cursor), as askRunSnapshot
     progress: null, active: [], stepper: null, decor: null,
   };
 }
@@ -44952,7 +45008,9 @@ askPanel = createAskPanel({
   openEngineSetup: (engine) => { openEngineSetup(engine); },
   // The picker's "More harnesses": the Models view with Add model on that harness. OpenCode lists its own models, so
   // it opens at that list; every other sign-in opens at step 1 with the harness picked.
-  openAddModel: (engine) => { askSide?.uncover(); mvState.openEditorOnLoad = engine === 'opencode' ? { step: 2, where: 'signin', engine } : { where: 'signin', engine }; showView('models'); },
+  openAddModel: (engine) => { askSide?.uncover(); addModelOn(engine); },
+  // The run card's model pickers read readiness (status words, broker locks) from the same cache as the resume menus.
+  engineRows: readyEngineRows,
   loadMarkdown: loadAskMarkdown,
   hljsLoader: diffHljsLoader,
   storage: localStorage,

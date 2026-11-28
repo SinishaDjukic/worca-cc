@@ -16,7 +16,7 @@ const MID = 'askm_00000001';
 const THREAD = { id: TID, title: 'T', createdAt: 't', updatedAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {} };
 const settle = async (n = 6) => { for (let i = 0; i < n; i += 1) await new Promise((r) => setTimeout(r, 0)); };
 
-async function boot({ hash = '', askDown = false, stored = null, onboarding = null } = {}) {
+async function boot({ hash = '', askDown = false, stored = null, onboarding = null, fetchHandler = null } = {}) {
   const dom = trackDom(new JSDOM(readIndexHtml(), { url: `http://localhost:4317/${hash}` }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
@@ -34,6 +34,7 @@ async function boot({ hash = '', askDown = false, stored = null, onboarding = nu
     const url = String(u);
     const method = ((opts && opts.method) || 'GET').toUpperCase();
     calls.push({ url, opts: opts || {} });
+    if (fetchHandler) { const r = fetchHandler(url); if (r) return r; }   // a test's own answers first
     const ok = (body, status = 200) => Promise.resolve({ ok: true, status, json: async () => body });
     if (askDown && url.includes('/api/ask/')) return Promise.reject(new TypeError('Failed to fetch'));
     if (onboarding && url.startsWith('/api/onboarding')) return ok(onboarding);   // the welcome's status (getting started)
@@ -357,4 +358,48 @@ test('the worca logo on Chat home adds no Back step (it is home already); from a
   await settle();
   assert.equal(window.location.hash, '#chat');
   assert.equal(doc.querySelector('.chat-page').dataset.view, 'home');
+});
+
+// A run card's model picker in the real app (spec 2026-11-26 "The surfaces"): app.js hands the Chat panel the
+// readiness rows (GET /api/engines) and Add model on a harness.
+const CARD_WF = { id: 'wf_default', name: 'Default', version: 2,
+  nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} }, { id: 'n_plan', kind: 'agent', key: 'planner', x: 300, y: 0, config: {} }, { id: 'n_end', kind: 'end', x: 600, y: 0, config: {} }],
+  wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } }, { id: 'w2', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_end', port: 'result' } }] };
+const CARD_AGENTS = [{ key: 'planner', displayName: 'Plan', color: 'violet', metaVersion: 2, fanOut: false, asksQuestions: false,
+  inputs: [{ id: 'task', type: 'md', required: true }], outputs: [{ id: 'plan', type: 'md', when: 'always' }] }];
+const RUN_CARD = { target: 'project', projectKey: 'proj-00000001', projectName: 'proj', projectDir: '/repos/proj', workspaceId: null, workspaceName: null, members: null,
+  workflowId: 'wf_default', workflowName: 'Default', guardrailsId: 'normal', brief: 'Fix the login bug', title: 'Fix login', sourceBranch: '',
+  featureBranch: 'worca/fix-login', sourceBranchByKey: null, note: '', attachments: [] };
+const cardApi = (url) => {
+  const ok = (v) => Promise.resolve({ ok: true, status: 200, json: async () => v });
+  const p = url.split('?')[0];
+  if (p === '/api/workflows/wf_default') return ok(CARD_WF);
+  if (p === '/api/agents') return ok({ agents: CARD_AGENTS, mockWriterRoles: [] });
+  if (p === '/api/config') return ok({ config: { steps: {}, customModels: [], workflows: {} }, models: [{ id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['medium', 'high', 'xhigh', 'max'] }],
+    steps: [], efforts: ['medium', 'high', 'xhigh', 'max'], subagentModels: ['sonnet', 'opus', 'auto'] });
+  if (p === '/api/run-defaults') return ok({ engine: { value: 'claude', source: 'default' }, chatSourceBranch: { mode: 'current', source: 'default', needs: [] } });
+  if (p === '/api/engines') return ok({ engines: [{ name: 'claude', label: 'Claude Code', ready: false, reason: 'not signed in' }] });
+  if (p === '/api/projects') return ok({ projects: [{ name: 'proj', path: '/repos/proj', exists: true }] });
+  if (p === '/api/workflows') return ok({ workflows: [{ id: 'wf_default', name: 'Default' }] });
+  if (p === '/api/guardrails') return ok({ guardrails: [{ id: 'normal', name: 'Normal' }] });
+  if (p === '/api/workspaces') return ok({ workspaces: [] });
+  if (p.startsWith('/api/branches')) return ok({ branches: ['main'] });
+  return null;
+};
+test('in the real app a run card\'s model picker reads /api/engines, and its Add model opens Add model on #models for that harness', async () => {
+  const { window, doc, recv } = await boot({ hash: `#chat/${TID}`, fetchHandler: cardApi });
+  await settle(8);
+  recv({ type: 'ask-start', threadId: TID, messageId: MID, userMessageId: 'askm_u0000001', model: 'm', effort: 'high', startedAt: 't', seq: 1 });
+  recv({ type: 'ask-card', threadId: TID, messageId: MID, seq: 2, block: { kind: 'card', id: 'card_00000001', state: 'proposed', card: RUN_CARD } });
+  await settle(12);
+  doc.querySelector('.ask-rp-tile[data-node-id="n_plan"] button.ask-rp-model').click();
+  await settle(4);
+  const pop = doc.querySelector('.mdl-cols-pop');
+  assert.deepEqual([...pop.querySelectorAll('.mdl-st')].map((e) => [e.textContent, e.title]), [['Not ready', 'not signed in']]);
+  [...pop.querySelectorAll('[data-col="harness"] [role="option"]')].find((b) => b.dataset.key === 'cursor').click();
+  await settle();
+  pop.querySelector('.mdl-cols-add').click();
+  await settle(10);
+  assert.deepEqual([window.location.hash, !!doc.querySelector('#model-editor-modal:not(.hidden)'), [...doc.querySelectorAll('.mdl-hx-t[aria-pressed="true"]')].map((e) => e.dataset.engine)],
+    ['#models', true, ['cursor']]);
 });

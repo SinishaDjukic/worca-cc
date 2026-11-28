@@ -15,16 +15,34 @@ function catalogEntryOf(catalog, id) {
   return catalog.find((m) => m && typeof m.id === 'string' && m.id.toLowerCase() === lc) || null;
 }
 
+const withoutEngine = ({ engine: _e, ...rest }) => rest;
+
 export function healForEngine(t, { models, engine } = {}) {
   const catalog = Array.isArray(models) && models.length ? models : null;
-  if (!engine || !catalog) return { t, enginePair: null };
-  // A pick the run's harness cannot run (its connection reaches other harnesses only) — src/shared/connections.mjs.
-  const foreign = (id) => { const hit = catalogEntryOf(catalog, id); return !!hit && !runsOn(hit, engine); };
-  const def = foreign(t.def.model) ? { ...t.def, model: '', effort: '' } : t.def;
-  if (!foreign(t.model)) return { t: { ...t, def }, enginePair: null };
-  const stored = t.override.model !== undefined && foreign(t.override.model)
-    ? { model: t.override.model, effort: t.override.effort || '' } : null;
-  return { t: { ...t, def, model: def.model, effort: def.effort }, enginePair: stored };
+  if (!catalog) return { t, enginePair: null };
+  // A pick its harness cannot run (its connection reaches other harnesses only) — src/shared/connections.mjs. A pinned
+  // pick (`engine`) is judged against its own harness, a soft one against the run's; neither known heals nothing.
+  const foreign = (id, own) => {
+    const on = own || engine;
+    if (!on) return false;
+    const hit = catalogEntryOf(catalog, id);
+    return !!hit && !runsOn(hit, on);
+  };
+  const def = foreign(t.def.model, t.def.engine) ? { ...withoutEngine(t.def), model: '', effort: '' } : t.def;
+  if (!foreign(t.model, t.engine)) return { t: { ...t, def }, enginePair: null };
+  const stored = t.override.model !== undefined && foreign(t.override.model, t.override.engine)
+    ? { model: t.override.model, effort: t.override.effort || '', ...(t.override.engine ? { engine: t.override.engine } : {}) } : null;
+  return { t: { ...withoutEngine(t), def, model: def.model, effort: def.effort, ...(def.engine ? { engine: def.engine } : {}) }, enginePair: stored };
+}
+
+/** The project's pick for a node: the node entry over the legacy per-role step key by key, except `engine`, which
+ *  travels with its model: taken from whichever of the two names the winning model (else none). */
+function projectPick(legacy, entry) {
+  const out = { ...(legacy || {}), ...(entry || {}) };
+  delete out.engine;
+  const winner = entry && entry.model !== undefined ? entry : legacy;
+  if (winner && typeof winner.model === 'string' && winner.model && typeof winner.engine === 'string' && winner.engine) out.engine = winner.engine;
+  return out;
 }
 
 // Flatten workflow.steps[][] into an ordered list of node rows, joining each
@@ -36,6 +54,8 @@ export function healForEngine(t, { models, engine } = {}) {
 //   3. the agent-registry sidecar (fanOut / questionsDefault);
 //   4. nothing configured — the CLI default.
 // Order = outer (sequential) then inner (parallel) — exactly the dispatch order.
+// An `engine` (the harness a pick names) travels with its model through every layer: the layer whose model wins
+// gives the row its engine, or none (the run's default harness).
 //
 // model/effort/fanOut/askQuestions on the returned row are the EFFECTIVE values
 // (what the run will use). `def` carries the same four resolved WITHOUT layer 1,
@@ -57,7 +77,7 @@ export function buildNodeConfigRows(workflow, registry, runConfig, opts = {}) {
       // workflow's under the node-instance id. Both can exist for wf_default
       // (a node write wins, mirroring resolveWorkflow's firstDefined order).
       const role = legacySteps ? node.key : null;
-      const saved = { ...(role ? legacySteps[role] : null), ...nodes[node.id] };
+      const saved = projectPick(role ? legacySteps[role] : null, nodes[node.id]);
       const wfDef = (node.defaults && typeof node.defaults === 'object') ? node.defaults : {};
       const metaFan = meta && typeof meta.fanOut === 'boolean' ? meta.fanOut : false;
       const metaAsks = !!(meta && meta.asksQuestions);
@@ -78,6 +98,7 @@ export function buildNodeConfigRows(workflow, registry, runConfig, opts = {}) {
         parallel: members.length > 1,
         model: t.model,
         effort: t.effort,
+        ...(t.engine ? { engine: t.engine } : {}),
         fanOut: t.fanOut,
         subagentModel: t.subagentModel,
         // null => the agent has no questions capability (no checkbox rendered).
@@ -109,6 +130,9 @@ export function resolveNodeTunables(saved, wfDef, caps = {}) {
   if (typeof saved.fanOut === 'boolean') override.fanOut = saved.fanOut;
   if (typeof saved.askQuestions === 'boolean') override.askQuestions = saved.askQuestions;
   if (typeof saved.subagentModel === 'string' && saved.subagentModel) override.subagentModel = saved.subagentModel;
+  // A harness is valid only beside a model.
+  if (override.model !== undefined && typeof saved.engine === 'string' && saved.engine) override.engine = saved.engine;
+  const defEngine = typeof wfDef.model === 'string' && wfDef.model && typeof wfDef.engine === 'string' && wfDef.engine ? wfDef.engine : '';
 
   // Layers 2-4 alone: what this row falls back to once its override is gone.
   const def = {
@@ -119,6 +143,7 @@ export function resolveNodeTunables(saved, wfDef, caps = {}) {
     // No sidecar layer: an agent manifest declares whether a node CAN fan out,
     // never what its children run on. '' = unset (the run resolves auto).
     subagentModel: typeof wfDef.subagentModel === 'string' ? wfDef.subagentModel : '',
+    ...(defEngine ? { engine: defEngine } : {}),
   };
 
   // An effort is only meaningful for the model that advertises it, so an
@@ -130,7 +155,9 @@ export function resolveNodeTunables(saved, wfDef, caps = {}) {
   const fanOut = override.fanOut !== undefined ? override.fanOut : def.fanOut;
   const askQuestions = override.askQuestions !== undefined ? override.askQuestions : def.askQuestions;
   const subagentModel = override.subagentModel !== undefined ? override.subagentModel : def.subagentModel;
-  return { override, def, model, effort, fanOut, askQuestions, subagentModel };
+  // The harness travels with the model that wins.
+  const engine = override.model !== undefined ? override.engine : def.engine;
+  return { override, def, model, effort, ...(engine ? { engine } : {}), fanOut, askQuestions, subagentModel };
 }
 
 // Which of the five settings deviate from the row's resolved default. Pure; the
@@ -139,6 +166,7 @@ export function modifiedFieldsOf(effective, def, caps = {}) {
   const out = [];
   if ((effective.model || '') !== (def.model || '')) out.push('model');
   if ((effective.effort || '') !== (def.effort || '')) out.push('effort');
+  if ((effective.engine || '') !== (def.engine || '')) out.push('engine');
   if (!!effective.fanOut !== !!def.fanOut) out.push('fanOut');
   if ((effective.subagentModel || '') !== (def.subagentModel || '')) out.push('subagentModel');
   if (caps.asksQuestions && !caps.questionsLocked && !!effective.askQuestions !== !!def.askQuestions) {
@@ -156,6 +184,7 @@ export function pruneNodeSelection(row, next = {}) {
   const eff = {
     model: next.model !== undefined ? next.model : row.model,
     effort: next.effort !== undefined ? next.effort : row.effort,
+    engine: next.engine ?? row.engine,
     fanOut: next.fanOut !== undefined ? next.fanOut : row.fanOut,
     askQuestions: next.askQuestions !== undefined ? next.askQuestions : row.askQuestions,
     subagentModel: next.subagentModel !== undefined ? next.subagentModel : row.subagentModel,
@@ -164,20 +193,27 @@ export function pruneNodeSelection(row, next = {}) {
   // model that advertises it, so storing one without the other is rejected by
   // the setters ("select a model before choosing an effort").
   const inheritPair = (eff.model || '') === (row.def.model || '')
-    && (eff.effort || '') === (row.def.effort || '');
+    && (eff.effort || '') === (row.def.effort || '')
+    && (eff.engine || '') === (row.def.engine || '');
   // A PINNED row (Settings › Memory owns the pair) never edits model/effort, and the setters
   // REPLACE both on every save: re-send the project's own stored pick untouched, so saving
   // another tunable cannot erase it — it applies again the moment the setting is cleared.
   // A pick of the other engine (healed off this run's rows) is re-sent the same way while the
   // row's model and effort are left as shown: the New pipeline save passes the live controls,
-  // so "untouched" is "equal to the healed row", not "absent".
+  // so "untouched" is "equal to the healed row", not "absent". A pinned pick (`engine`) rides the same way: the pair
+  // carries its harness, and a pick whose model left its harness goes back with it (the server keeps it unchecked).
   const untouched = (next.model === undefined || (next.model || '') === (row.model || ''))
-    && (next.effort === undefined || (next.effort || '') === (row.effort || ''));
+    && (next.effort === undefined || (next.effort || '') === (row.effort || ''))
+    && (next.engine === undefined || (next.engine || '') === (row.engine || ''));
   const kept = row.pinned && row.storedPair ? row.storedPair
     : (row.enginePair && untouched ? row.enginePair : null);
+  const engine = kept ? (kept.engine || '') : (inheritPair || !eff.model ? '' : (eff.engine || ''));
+  // `engine` goes only when there is one, or as '' to clear a stored one; else no key (the server keeps nothing).
+  const sendEngine = engine || (row.override && row.override.engine) || (row.storedPair && row.storedPair.engine);
   return {
     model: kept ? kept.model : (inheritPair ? '' : (eff.model || '')),
     effort: kept ? kept.effort : (inheritPair || !eff.model ? '' : eff.effort),
+    ...(sendEngine ? { engine } : {}),
     fanOut: !!eff.fanOut === !!row.def.fanOut ? null : !!eff.fanOut,
     askQuestions: row.askQuestions === null || row.questionsLocked
       ? undefined // no capability / locked: never persist a value for it
@@ -191,7 +227,8 @@ export function pruneNodeSelection(row, next = {}) {
 // v2: agent nodes only, in condensation-topo launch order (loop wires excluded
 // from the ranking, exactly as the scheduler orders launches). The four config
 // layers are the same as v1: run-config nodes[nodeId] -> template node.config ->
-// sidecar -> hard default.
+// sidecar -> hard default. A Settings step slot fills over a soft workflow pick as
+// today, and skips a pinned one (a pick with `engine` counts as set, the server's rule 6).
 export function buildGraphNodeRows(tpl, registry, runConfig, opts = {}) {
   const reg = registry || {};
   const nodes = (runConfig && runConfig.nodes) || {};
@@ -208,17 +245,18 @@ export function buildGraphNodeRows(tpl, registry, runConfig, opts = {}) {
   // an editable model the run ignores would be a control that lies.
   const pin = tpl && tpl.pinnedAgentModel && typeof tpl.pinnedAgentModel.model === 'string' && tpl.pinnedAgentModel.model
     ? tpl.pinnedAgentModel : null;
-  const withoutPair = ({ model: _m, effort: _e, ...rest }) => rest;
+  const withoutPair = ({ model: _m, effort: _e, engine: _g, ...rest }) => rest;
   // A pinned row re-sends the project's hidden pick on every save (pruneNodeSelection), and the
   // setter refuses a model that left the catalog or an effort it no longer offers — so heal the
   // pick against the catalog the caller holds (`opts.models`), dropping exactly what an unpinned
   // row's selects would drop. No catalog (not loaded yet) → the pick as stored.
   const catalog = Array.isArray(opts.models) && opts.models.length ? opts.models : null;
-  const healPair = (model, effort) => {
-    if (!model || !catalog) return { model: model || '', effort: (model && effort) || '' };
+  const healPair = (model, effort, engine) => {
+    const eng = model && typeof engine === 'string' && engine ? { engine } : {};
+    if (!model || !catalog) return { model: model || '', effort: (model && effort) || '', ...eng };
     const hit = catalog.find((m) => m && m.id === model);
     if (!hit) return { model: '', effort: '' };
-    return { model, effort: effort && Array.isArray(hit.efforts) && hit.efforts.includes(effort) ? effort : '' };
+    return { model, effort: effort && Array.isArray(hit.efforts) && hit.efforts.includes(effort) ? effort : '', ...eng };
   };
   const order = classifyLoops(tpl, portsFn).launchOrder;
   const byId = new Map(tpl.nodes.map((n) => [n.id, n]));
@@ -228,10 +266,11 @@ export function buildGraphNodeRows(tpl, registry, runConfig, opts = {}) {
   for (const node of agentNodes) {
     const meta = reg[node.key] || null;
     const role = legacySteps ? node.key : null;
-    const stored = { ...(role ? legacySteps[role] : null), ...nodes[node.id] };
+    const stored = projectPick(role ? legacySteps[role] : null, nodes[node.id]);
     const authored = (node.config && typeof node.config === 'object') ? node.config : {};
     const saved = pin ? withoutPair(stored) : stored;
-    const slot = !pin && opts.slotDefaults && node.key ? opts.slotDefaults[node.key] : null;
+    const authoredPinned = typeof authored.model === 'string' && !!authored.model && typeof authored.engine === 'string' && !!authored.engine;
+    const slot = !pin && !authoredPinned && opts.slotDefaults && node.key ? opts.slotDefaults[node.key] : null;
     const wfDef = pin
       ? { ...withoutPair(authored), model: pin.model, ...(typeof pin.effort === 'string' && pin.effort ? { effort: pin.effort } : {}) }
       : (slot && (slot.model || slot.effort) ? { ...withoutPair(authored), ...(slot.model ? { model: slot.model } : {}), ...(slot.effort ? { effort: slot.effort } : {}) } : authored);
@@ -247,14 +286,14 @@ export function buildGraphNodeRows(tpl, registry, runConfig, opts = {}) {
       color: (meta && meta.color) || '', description: (meta && meta.description) || '',
       stepIndex: rank.get(node.id) || 0,
       parallel: false,
-      model: t.model, effort: t.effort, fanOut: t.fanOut, subagentModel: t.subagentModel,
+      model: t.model, effort: t.effort, ...(t.engine ? { engine: t.engine } : {}), fanOut: t.fanOut, subagentModel: t.subagentModel,
       askQuestions: !metaAsks ? null : (metaLocked ? metaQDefault : t.askQuestions),
       questionsLocked: metaAsks && metaLocked,
       def: t.def, override: t.override,
       modified: modifiedFieldsOf(t, t.def,
         { asksQuestions: metaAsks, questionsLocked: metaLocked }).length > 0,
       // `storedPair`: the project's own pick the pin hides — pruneNodeSelection re-sends it.
-      ...(pin ? { pinned: 'settings', storedPair: healPair(stored.model, stored.effort) } : {}),
+      ...(pin ? { pinned: 'settings', storedPair: healPair(stored.model, stored.effort, stored.engine) } : {}),
       ...(healed.enginePair ? { enginePair: healed.enginePair } : {}),
     });
   }
@@ -275,8 +314,10 @@ export function buildRoleRows(workflow, nodeRows, runConfig) {
     const project = saved[nr.nodeId] && saved[nr.nodeId].roles && typeof saved[nr.nodeId].roles === 'object' ? saved[nr.nodeId].roles : {};
     for (const role of spec.roles) {
       const pick = layerPick([cleanPick(Object.hasOwn(project, role.key) ? project[role.key] : null), cleanPick(role)]);
-      const def = { model: pick.model || '', effort: pick.effort || '' };
-      rows.push({ nodeId: nr.nodeId, roleKey: role.key, label: `${nr.label} · ${role.label}`, model: def.model, effort: def.effort, def });
+      // layerPick keeps the engine of the layer whose model it chose.
+      const def = { model: pick.model || '', effort: pick.effort || '', ...(pick.engine ? { engine: pick.engine } : {}) };
+      rows.push({ nodeId: nr.nodeId, roleKey: role.key, label: `${nr.label} · ${role.label}`, model: def.model, effort: def.effort,
+        ...(def.engine ? { engine: def.engine } : {}), def });
     }
   }
   return rows;

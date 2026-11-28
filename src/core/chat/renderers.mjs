@@ -13,7 +13,7 @@ import { pauseConsequences, describePauseReason, giveUpOption } from '../failure
 import { projectForm } from '../../shared/forms/project.mjs';
 import { CHAT_PROJECTION_MAX } from '../ask-projection.mjs';
 import { awayAnswersSummary } from '../../shared/away-mode/labels.mjs';
-import { usageLimitSwitches, engineLabel, engineReportsCost, runCostLabel } from '../../shared/engine-switch.mjs';
+import { usageLimitSwitches, engineLabel, engineReportsCost, runCostLabel, runCostKnown } from '../../shared/engine-switch.mjs';
 import { readyEnginesCached } from '../engines/ready-cache.mjs';
 import { runHeadlineMs } from '../../shared/run-elapsed.mjs';
 import { GAP_KIND_WORDS, ANSWERED_BY_WORDS, GAP_REPLY_WORDS, gapKindOf, gapAnswerWords } from '../../shared/shape/verifier.mjs';
@@ -33,9 +33,10 @@ export function fmtUsd(usd) {
   return `$${Number(usd).toFixed(2)}`;
 }
 
-/** A run's cost: fmtUsd (null when unset), or "cost unknown" on an engine that reports no cost — never $0.00. */
-export function fmtRunCost(engine, usd) {
-  return engineReportsCost(engine) ? fmtUsd(usd) : runCostLabel(engine, usd, fmtUsd);
+/** A run's cost: fmtUsd (null when unset), or "cost unknown" on an engine that reports no cost — never $0.00; "cost
+ *  partly unknown" on a run whose steps (`engines`) used such a harness beside one that reports a cost. */
+export function fmtRunCost(engine, usd, engines = null) {
+  return runCostKnown(engine, engines) === 'all' ? fmtUsd(usd) : runCostLabel(engine, usd, fmtUsd, engines);
 }
 
 function mdMsg(text, severity) {
@@ -104,7 +105,7 @@ export function renderDone(meta, payload = {}) {
   parts.push('   **Status:** completed');
   const dur = fmtMs(runHeadlineMs(meta));
   if (dur) parts.push(`   **Duration:** ${dur}`);
-  const cost = fmtRunCost(meta.runEngine, meta.totalCostUsd);
+  const cost = fmtRunCost(meta.runEngine, meta.totalCostUsd, meta.runEngines);
   if (cost) parts.push(`   **Cost:** ${cost}`);
   pushPending(parts, meta);
   pushAway(parts, meta);

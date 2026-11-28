@@ -14,6 +14,7 @@ import { worcaHome } from '../projects.mjs';
 import { flagEnabled } from '../flags.mjs';
 import { resolveRunEngine } from '../settings-cascade.mjs';
 import { engineLabel } from '../../shared/engine-switch.mjs';
+import { pickEngine } from '../../shared/graph/role-slots.mjs';
 import { CLAUDE_AI_RE, plainName, serverName } from '../../shared/workflow-tests/connector-name.mjs';
 import { selectRunEngine } from '../engines/index.mjs';
 import { guardCall } from './guard-calls.mjs';
@@ -110,9 +111,9 @@ export async function pretendServers({ servers = {}, copies = [] } = {}, { pipel
 export const plainClaudeAiName = (name) => (plainName(name) ? serverName(name) : String(name));
 
 /**
- * The engines a workflow's agent steps run on, as engine ids. A run has ONE engine for every step (workflows.mjs
- * resolveGraph `engine`, the run's `claude.engine`), so this is `runEngine` — by default what a run without a project
- * resolves (settings `run.engine`) — when the graph has an agent step, and [] for scripts and flow cards only.
+ * The engines a workflow's agent steps run on, as engine ids, sorted. A run's steps run on its engine (`runEngine` — by
+ * default what a run without a project resolves, settings `run.engine`) unless a step pins another: an agent node's
+ * `config.engine` or a review role's `engine`, each beside its model. [] for scripts and flow cards only.
  * @param {{nodes?: Array<{kind?: string}>}} graph
  * @param {{runEngine?: string|null}} [o]
  */
@@ -125,7 +126,16 @@ export function stepEngines(graph, { runEngine = null } = {}) {
   try {
     engine = selectRunEngine(typeof runEngine === 'string' && runEngine ? runEngine : (resolveRunEngine({}).engine || 'claude'));
   } catch { engine = 'claude'; }
-  return [engine];
+  const out = new Set([engine]);
+  for (const n of nodes) {
+    if (!n || n.kind !== 'agent') continue;
+    const cfg = n.config && typeof n.config === 'object' ? n.config : {};
+    const own = pickEngine(cfg);
+    if (own) out.add(own);
+    const roles = cfg.roleReview && typeof cfg.roleReview === 'object' && Array.isArray(cfg.roleReview.roles) ? cfg.roleReview.roles : [];
+    for (const r of roles) { const e = pickEngine(r); if (e) out.add(e); }
+  }
+  return [...out].sort();
 }
 
 /**

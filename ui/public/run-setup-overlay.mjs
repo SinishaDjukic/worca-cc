@@ -2,12 +2,14 @@
 // on a saved workflow, the person applies a saved run preset and changes each agent's model and effort and each loop's
 // cycle budget — for this run only. The result is the run's per-run `overlay` (POST /api/run); nothing here writes the
 // project's config or a preset. New Run's own rows live in app.js; this module presents the same controls over the same
-// pure helpers (node-tunables, loop-rows, run-presets-picker, model-options). Names are set with textContent only.
+// pure helpers (node-tunables, loop-rows, run-presets-picker), and each agent's model is the columns picker's trigger
+// (models/model-columns.mjs: harness › provider › model), so a step can run on another harness than the run's.
+// Names are set with textContent only.
 import { buildNodeConfigRows } from './node-tunables.mjs';
 import { buildFeedbackRows } from './loop-rows.mjs';
 import { configWithPreset, presetMenuGroups } from './run-presets-picker.mjs';
-import { appendModelGroups } from './model-options.mjs';
-import { effortsOn } from '../../src/shared/connections.mjs';
+import { modelTrigger, columnsValue } from './models/model-columns.mjs';
+import { effortsOn, pickEffortsOn } from '../../src/shared/connections.mjs';
 import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { indexByKey } from '../../src/shared/graph/agent-meta.mjs';
 
@@ -36,10 +38,11 @@ export function presetsFor(presets, workflowId, scopeRef) {
 }
 
 /**
- * The run's overlay from what the overlay shows: every agent row with a model sends `{ model, effort }` (exact whatever the
+ * The run's overlay from what the overlay shows: every agent row with a model sends `{ model, effort }`, plus `engine` when the
+ * row's pick names a harness (exact whatever the
  * project config holds when the run starts), carrying its toggles and role picks from the applied preset's overlay verbatim;
  * every editable loop row sends `{ maxCycles }`. Nothing to send → null. Pure.
- * @param {Array<{nodeId:string, model?:string, effort?:string}>} shownRows
+ * @param {Array<{nodeId:string, model?:string, effort?:string, engine?:string}>} shownRows
  * @param {Array<{fbId:string, maxCycles:number, editable?:boolean}>} shownLoops
  * @param {{nodes?:object}|null} presetOverlay
  */
@@ -50,7 +53,8 @@ export function computeOverlay(shownRows, shownLoops, presetOverlay = null) {
     const picked = presetOverlay && presetOverlay.nodes && Object.hasOwn(presetOverlay.nodes, r.nodeId) ? presetOverlay.nodes[r.nodeId] : null;
     const extras = {};
     for (const k of PRESET_TOGGLES) if (picked && picked[k] !== undefined) extras[k] = structuredClone(picked[k]);
-    const entry = { ...(model ? { model, effort: String(r.effort || '') } : {}), ...extras };
+    const engine = model ? String(r.engine || '') : '';
+    const entry = { ...(model ? { model, effort: String(r.effort || ''), ...(engine ? { engine } : {}) } : {}), ...extras };
     if (Object.keys(entry).length) nodes[r.nodeId] = entry;
   }
   const wires = {};
@@ -103,10 +107,11 @@ const catalogEntry = (models, id) => (id ? (models || []).find((m) => m && Strin
  * Options: `note` adds an empty, never-stored note box; `checkNote(note, signal)` → `{ conflicts:[{quote,why}] }` (or `{ skipped }`,
  * or a throw: both start the run) is asked before Start when the note is not blank, and a conflict offers Edit note / Start anyway
  * (`onConfirm(overlay, { note, noteOverrides })`); `copy` overrides `{ title, otherWorkflowText }`. `workflowId === 'wf_auto'` shows the
- * note and Start only, and confirms with a null overlay. @returns {{ close():void }}
+ * note and Start only, and confirms with a null overlay. `engines` is the model picker's readiness getter (app.js's
+ * readyEngineRows: (onLoad) => rows | null). @returns {{ close():void }}
  */
 export function openRunSetupOverlay({ modal, workflowId, workflowName, projectDir = null, scopeRef, fetchers = null, trigger = null,
-  onConfirm, onCancel, document: docArg = null, note: withNote = false, checkNote = null, copy = null }) {
+  onConfirm, onCancel, document: docArg = null, note: withNote = false, checkNote = null, copy = null, engines = () => null }) {
   const auto = workflowId === AUTO_WORKFLOW_ID;
   const showNote = auto || !!withNote;
   const doc = docArg || globalThis.document;
@@ -119,7 +124,7 @@ export function openRunSetupOverlay({ modal, workflowId, workflowName, projectDi
   let checking = null;     // the AbortController of a note check in flight
   let data = null;         // { workflow, registry, scripts, portsFn, config, models, engine, slotDefaults, presets|null }
   let presetId = '';
-  let shown = [];          // [{ nodeId, label, model, effort }] — the rows as edited
+  let shown = [];          // [{ nodeId, label, model, effort, engine }] — the rows as edited
   let loops = [];          // [{ fbId, label, maxCycles (null while the input holds no valid number), editable }]
 
   const workflowLabel = h(doc, 'b', { 'data-ui': 'runsetup-workflow', text: workflowName || workflowId });
@@ -164,17 +169,23 @@ export function openRunSetupOverlay({ modal, workflowId, workflowName, projectDi
     // A preset's model without an effort means that model's default effort, not the project's saved effort for the node.
     const presetNodes = (preset && preset.setup && preset.setup.overlay && preset.setup.overlay.nodes) || {};
     const defaultEffort = (nodeId) => Object.hasOwn(presetNodes, nodeId) && presetNodes[nodeId].model && !presetNodes[nodeId].effort;
-    shown = rows.map((r) => ({ nodeId: r.nodeId, label: r.label, model: r.model || '', effort: defaultEffort(r.nodeId) ? '' : r.effort || '' }));
+    // A row's pick keeps the harness it names (`engine`, '' = the run's), changed in the picker and sent back with it.
+    shown = rows.map((r) => ({ nodeId: r.nodeId, label: r.label, model: r.model || '', effort: defaultEffort(r.nodeId) ? '' : r.effort || '',
+      engine: r.engine || '' }));
     const v2 = data.workflow.version === 2;
     loops = buildFeedbackRows(data.workflow, data.registry, wfCfg, data.scripts, data.portsFn)
       .map((l) => ({ fbId: l.fbId, label: l.label, shownValue: String(l.maxCycles), maxCycles: validCycles(l.maxCycles) ? l.maxCycles : null, editable: v2 }));
   }
 
+  /** The efforts a model offers where it runs: a pick that names a harness takes that harness's (pickEffortsOn), a soft
+   *  one the run's. */
+  const effortsFor = (entry, engine) => (engine ? pickEffortsOn(entry, engine) : effortsOn(entry, data.engine));
+
   function effortSelect(row) {
     const entry = catalogEntry(data.models, row.model);
     const sel = h(doc, 'select', { class: 'req-runsetup-effort', 'data-ui': `effort-${row.nodeId}`, 'aria-label': `${row.label} effort`, disabled: !row.model });
     sel.append(h(doc, 'option', { value: '', text: 'Default effort' }));
-    const efforts = effortsOn(entry, data.engine);
+    const efforts = effortsFor(entry, row.engine);
     if (row.effort && !efforts.includes(row.effort)) efforts.push(row.effort);
     for (const e of efforts) sel.append(h(doc, 'option', { value: e, text: e }));
     sel.value = row.effort || '';
@@ -182,19 +193,20 @@ export function openRunSetupOverlay({ modal, workflowId, workflowName, projectDi
   }
 
   function agentRow(row) {
-    const model = h(doc, 'select', { class: 'req-runsetup-model', 'data-ui': `model-${row.nodeId}`, 'aria-label': `${row.label} model` });
-    model.append(h(doc, 'option', { value: '', text: 'Default model' }));
-    appendModelGroups(model, data.models, { engine: data.engine });
-    const unknown = !!row.model && !catalogEntry(data.models, row.model);
-    if (unknown) { model.append(h(doc, 'option', { value: row.model, text: `${row.model} (not in the model list)` })); model.setAttribute('aria-invalid', 'true'); }
-    model.value = row.model || '';
+    const model = modelTrigger({ doc, win: doc.defaultView, value: columnsValue(row), catalog: data.models, label: `Model for ${row.label}`,
+      cls: 'req-runsetup-model', defaultEngine: data.engine, engines, inheritHint: 'project or workflow default', onAddModel: null });
+    model.setAttribute('data-ui', `model-${row.nodeId}`);
+    if (row.model && !catalogEntry(data.models, row.model)) model.setAttribute('aria-invalid', 'true');
     let effortWrap = h(doc, 'div', { class: 'select-wrap' }, effortSelect(row));
     const setRow = (patch) => { shown = shown.map((r) => (r.nodeId === row.nodeId ? { ...r, ...patch } : r)); return shown.find((r) => r.nodeId === row.nodeId); };
+    // A pick sets the row's model and harness; its effort stays when the picked model offers it on that harness.
     model.addEventListener('change', () => {
       model.removeAttribute('aria-invalid');
+      const engine = model.dataset.engine || '';
       const entry = catalogEntry(data.models, model.value);
-      const keep = entry && effortsOn(entry, data.engine).includes(shown.find((r) => r.nodeId === row.nodeId).effort);
-      const next = setRow({ model: model.value, effort: keep ? shown.find((r) => r.nodeId === row.nodeId).effort : '' });
+      const effort = shown.find((r) => r.nodeId === row.nodeId).effort;
+      const keep = entry && effortsFor(entry, engine).includes(effort);
+      const next = setRow({ model: model.value, engine, effort: keep ? effort : '' });
       const fresh = h(doc, 'div', { class: 'select-wrap' }, effortSelect(next));
       effortWrap.replaceWith(fresh); effortWrap = fresh;
       bindEffort(fresh.firstChild, row.nodeId);
@@ -202,7 +214,7 @@ export function openRunSetupOverlay({ modal, workflowId, workflowName, projectDi
     const bindEffort = (sel, nodeId) => sel.addEventListener('change', () => { shown = shown.map((r) => (r.nodeId === nodeId ? { ...r, effort: sel.value } : r)); });
     bindEffort(effortWrap.firstChild, row.nodeId);
     return h(doc, 'div', { class: 'req-runsetup-row', 'data-node-id': row.nodeId },
-      h(doc, 'span', { class: 'req-runsetup-name', text: row.label }), h(doc, 'div', { class: 'select-wrap' }, model), effortWrap);
+      h(doc, 'span', { class: 'req-runsetup-name', text: row.label }), h(doc, 'div', {}, model), effortWrap);
   }
 
   function loopRow(loop) {
@@ -284,7 +296,7 @@ export function openRunSetupOverlay({ modal, workflowId, workflowName, projectDi
   /** Disable the note box and every setup control while a start is under way, so what is sent is what the person last saw. */
   function lockForm(on) {
     if (noteInput) noteInput.disabled = on;
-    for (const c of body.querySelectorAll('select, input')) {
+    for (const c of body.querySelectorAll('select, input, button.mdl-pick')) {
       if (on) { if (!c.disabled) { c.disabled = true; c.setAttribute('data-form-locked', ''); } }
       else if (c.hasAttribute('data-form-locked')) { c.disabled = false; c.removeAttribute('data-form-locked'); }
     }

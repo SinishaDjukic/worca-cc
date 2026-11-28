@@ -1148,3 +1148,13 @@ test('DELETE: a job clear that fails after the entry is gone still answers 200, 
   const reset = await post('/api/settings', { modelRoles: { claude: { everyday: null } } });
   assert.equal(reset.status, 200, JSON.stringify(reset.body));
 });
+
+test('PATCH /api/config: a node\'s engine sets, an absent one keeps, a bad one is a 400; POST takes it for a step', async () => {
+  const at = (r) => r.body.config.workflows.wf_x.nodes.s9_0;
+  assert.equal(at(await patch('/api/config', { projectDir: proj, workflowId: 'wf_x', nodes: { s9_0: { model: 'gpt-5.5', engine: 'codex' } } })).engine, 'codex');
+  assert.equal(at(await patch('/api/config', { projectDir: proj, workflowId: 'wf_x', nodes: { s9_0: { model: 'gpt-5.5', effort: 'low' } } })).engine, 'codex');
+  const bad = await patch('/api/config', { projectDir: proj, workflowId: 'wf_x', nodes: { s9_0: { model: 'gpt-5.5', engine: 'codx' } } });
+  assert.deepEqual([bad.status, bad.body.error], [400, 'unknown harness "codx"']);
+  const step = await post('/api/config', { projectDir: proj, step: 'planner', model: 'gpt-5.5', engine: 'codex' });
+  assert.equal(step.body.config.steps.planner.engine, 'codex');
+});

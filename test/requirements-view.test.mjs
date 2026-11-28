@@ -51,10 +51,10 @@ function fakeApi(routes) {
   };
   return calls;
 }
-const make = () => {
+const make = (deps = {}) => {
   const host = document.createElement('div'); const msgEl = document.createElement('p'); const subEl = document.createElement('div');
   const routed = []; const opened = [];
-  const view = createRequirementsView({ host, subEl, msgEl, deps: { route: (p) => routed.push(p), openRun: (id) => opened.push(id) } });
+  const view = createRequirementsView({ host, subEl, msgEl, deps: { route: (p) => routed.push(p), openRun: (id) => opened.push(id), ...deps } });
   return { host, msgEl, view, routed, opened };
 };
 
@@ -1079,6 +1079,28 @@ async function chooseCareful(host) {
 }
 const startedReply = (over = {}) => ({ __status: 201, body: { runId: 'r9', version: 1, feature: startedFeature(), turns: [], ...over } });
 
+test('a start refused for a step\'s harness on a chosen workflow: Allow unguarded resends the overlay as sent, with the consent', async () => {
+  const refusal = { error: 'Plan runs on OpenAI Codex, which cannot enforce the Normal rules.', code: 'engine-refused', overridable: true, engines: ['codex'] };
+  const asked = [];
+  let n = 0;   // this rig's routes take no call: the first start is refused, the second (with the consent) starts
+  const calls = fakeApi({ ...BASE, ...BUILD, ...SETUP, 'GET /api/requirements/4': () => ({ feature: readyFeature(), turns: [] }),
+    'POST /api/requirements/4/start': () => (n++ ? startedReply() : { __status: 409, body: refusal }) });
+  const { host, view, opened } = make({ confirm: async (p) => { asked.push(p.confirmLabel); return true; } });
+  document.body.append(host);
+  await view.show('feature/4');
+  await chooseCareful(host);
+  host.querySelector('[data-ui="start-go"]').click();
+  for (let i = 0; i < 6; i++) await tick();
+  change(setupDlg().querySelector('[data-ui="model-n_plan"]'), 'claude-opus-5-5');
+  change(setupDlg().querySelector('[data-ui="effort-n_plan"]'), 'high');
+  setupGo().click();
+  for (let i = 0; i < 8; i++) await tick();
+  const sent = calls.filter((c) => c.method === 'POST' && c.url === '/api/requirements/4/start').map((c) => c.body);
+  assert.deepEqual(sent, [{ workflowId: 'wf_x', sourceBranch: 'dev', overlay: EDITED_OVERLAY }, { workflowId: 'wf_x', sourceBranch: 'dev', overlay: EDITED_OVERLAY, allowUnguardedEngine: true }]);
+  assert.deepEqual([asked, opened, setupDlg()], [['Allow unguarded'], ['r9'], null]);
+  host.remove();
+});
+
 test('Start with a workflow: the setup overlay opens first (nothing posted), its confirm posts the choices and its overlay once, then the run opens', async () => {
   let release;
   const gate = new Promise((r) => { release = r; });
@@ -1146,6 +1168,27 @@ test('Start with a workflow: Cancel and Escape send nothing and leave the choice
   assert.equal(calls.filter((c) => c.method === 'POST').length, 0);
   assert.deepEqual(opened, []);
   assert.deepEqual(chipsOf(host.querySelector('.req-build')), ['Workflow · Careful', 'Branch from · dev'], 'the choices are untouched');
+  host.remove();
+});
+
+test('Review Focus 4: in the setup dialog the picker keeps its own Tab and Escape', async () => {
+  fakeApi({ ...BASE, ...BUILD, ...SETUP, 'GET /api/requirements/4': () => ({ feature: readyFeature(), turns: [] }) });
+  const { host, view } = make();
+  document.body.append(host);
+  await view.show('feature/4');
+  await chooseCareful(host);
+  host.querySelector('[data-ui="start-go"]').click();
+  for (let i = 0; i < 6; i++) await tick();
+  setupDlg().querySelector('[data-ui="model-n_plan"]').click();
+  assert.ok(document.querySelector('.mdl-cols-pop'));
+  const tab = new window.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+  document.activeElement.dispatchEvent(tab);
+  assert.equal(tab.defaultPrevented, false, 'the dialog\'s trap lets Tab through');
+  assert.ok(document.querySelector('.mdl-cols-pop'));
+  document.activeElement.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  assert.equal(document.querySelector('.mdl-cols-pop'), null);
+  assert.ok(setupDlg(), 'the dialog stays open');
+  setupDlg().querySelector('[data-ui="runsetup-cancel"]').click();
   host.remove();
 });
 

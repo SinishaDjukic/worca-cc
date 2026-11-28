@@ -66,7 +66,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 107;
+export const SCHEMA_VERSION = 108;
 
 /** store_meta row holding the install's default guardrail set id (JSON string). */
 export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
@@ -898,7 +898,8 @@ const INCREMENTAL_COLUMNS = {
                             setup: 'TEXT', changes: 'TEXT' },              // v104: its setup run (JSON) and its change list (JSON)
   ...WORKFLOW_TEST_CRITERIA_COLUMNS,   // v105 (workflow tests Part 4): wf_test_examples.criteria, .judge
   config_workflow_nodes:  { ask_questions: 'INTEGER', subagent_model: 'TEXT',   // v25: sub-agent model policy
-                            roles: 'TEXT' },   // v84: JSON { roleKey: { model?, effort? } }, a role-review node's per-role picks; NULL = none
+                            roles: 'TEXT',     // v84: JSON { roleKey: { model?, effort?, engine? } }, a role-review node's per-role picks; NULL = none
+                            engine: 'TEXT' },  // v108 (per-step harness): the harness the node's pick pins; NULL = none (the run's)
   ask_run_links:          { comment_ids: 'TEXT' },        // v22: JSON array of dc_ ids pending at launch
   artifacts:              { step_key: 'TEXT', node_id: 'TEXT', cycle: 'INTEGER', created_at: 'TEXT' }, // per-step attribution
   ask_attachments:        { kind: "TEXT NOT NULL DEFAULT 'text'",  // v27: text | image | binary (#398)
@@ -3016,6 +3017,7 @@ export function migrate(db) {
     // v106 (Shaper small runs A2): shape_features.care, care_chosen_by, care_worca_pick, requirement_kinds — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     // v107 (Shaper small runs A4): shape_feature_figures, one row per finished feature
     if (current < 107) db.exec(SHAPE_FIGURES_DDL);
+    // v108 (per-step harness): config_workflow_nodes.engine — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

@@ -2,6 +2,7 @@
 // fetches; this module renders and computes. Names are set with textContent only (a name is user input).
 import { PRESET_LIMITS, checkPresetName } from '../../src/shared/run-presets.mjs';
 import { presetEngineName, UNKNOWN_ENGINE_LABEL } from './run-presets-names.mjs';
+import { overPick } from '../../src/shared/graph/role-slots.mjs';
 
 export const BROKEN_SCOPE_HINT = 'Edit the preset\'s scope in Settings › Presets';
 // Below Advanced the Presets tab is hidden (docs/ui-levels.md): point at New run's ⋯ menu instead.
@@ -20,12 +21,19 @@ export function presetMenuGroups(presets, names = {}) {
 
 /**
  * One Agents-row edit as a preset pick: pruneNodeSelection's "inherit" values ('' model, null toggle) become the row's
- * default, since the overlay takes only real values (a null toggle is refused) and a preset holds full picks.
+ * default, since the overlay takes only real values (a null toggle is refused) and a preset holds full picks. A
+ * pick's harness (`engine`) travels with the model it is written beside: the patch's when the patch names the model,
+ * else the default's.
  */
 export function presetNodePick(patch, def = {}) {
   const pick = {};
   const model = patch.model || def.model || '';
-  if (model) { pick.model = model; pick.effort = patch.model ? (patch.effort || '') : (def.effort || ''); }
+  if (model) {
+    pick.model = model;
+    pick.effort = patch.model ? (patch.effort || '') : (def.effort || '');
+    const engine = patch.model ? patch.engine : def.engine;
+    if (typeof engine === 'string' && engine) pick.engine = engine;
+  }
   for (const k of ['fanOut', 'askQuestions']) {
     if (typeof patch[k] === 'boolean') pick[k] = patch[k];
     else if (patch[k] === null) pick[k] = !!def[k];
@@ -97,14 +105,23 @@ export function resetItem(setup, item, { projectWorkflowId = 'wf_default', defau
   return next;
 }
 
-/** The run config the Agents rows render in preset mode: the project's config with the preset's picks merged over it per node and per wire. Never mutates `config`. */
+/** The run config the Agents rows render in preset mode: the project's config with the preset's picks merged over it per node and per wire. Never mutates `config`.
+ *  A node's model, effort and engine come from overPick (a preset model without an engine leaves none of the stored one). */
 export function configWithPreset(config, workflowId, setup) {
   const out = structuredClone(config || {});
   const wf = workflowId || 'wf_default';
   out.workflows = out.workflows || {};
   const cur = out.workflows[wf] || { nodes: {}, feedbacks: {} };
   const nodes = { ...(cur.nodes || {}) };
-  for (const [id, pick] of Object.entries(setup?.overlay?.nodes || {})) nodes[id] = { ...(nodes[id] || {}), ...pick };
+  for (const [id, pick] of Object.entries(setup?.overlay?.nodes || {})) {
+    const merged = { ...(nodes[id] || {}), ...pick };
+    const paired = overPick(nodes[id] || {}, pick);
+    for (const k of ['model', 'effort', 'engine']) {
+      if (Object.hasOwn(paired, k)) merged[k] = paired[k];
+      else delete merged[k];
+    }
+    nodes[id] = merged;
+  }
   const wires = { ...(cur.wires || {}) };
   for (const [id, w] of Object.entries(setup?.overlay?.wires || {})) wires[id] = { ...(wires[id] || {}), ...w };
   out.workflows[wf] = { ...cur, nodes, wires };

@@ -132,7 +132,7 @@ function fixRows(parent, deps, known, { cost }) {
     known.add(f.runId);
     if (snap?.runId) known.add(snap.runId);
     const ident = { runId: f.runId, pipelineId: f.pipelineId };
-    const own = cost ? runCostLabel(f.runEngine, snap ? snap.costUsd : f.costUsd, fmtUsd) : '';
+    const own = cost ? runCostLabel(f.runEngine, snap ? snap.costUsd : f.costUsd, fmtUsd, f.runEngines) : '';
     return { key: `run:${f.pipelineId}`, child: true, dot: runModel(snap?.run || { status: f.status }), text: `Auto-fix ${f.n}`,
       meta: [statusText(snap, f), own].filter(Boolean).join(' · '), title: `PR auto-fix run ${f.pipelineId}`,
       open: () => deps.go(snap ? progressRoute(ident, snap) : (f.href || progressRoute(ident, null))) };
@@ -208,7 +208,7 @@ export function chatOverviewSections(threadId, deps) {
         if (snap?.runId) known.add(snap.runId);
         const pill = runPill(snap || { status: r.status, source: 'rest' });
         const cost = snap ? snap.costUsd : r.costUsd;
-        const costText = runCostLabel(r.runEngine, cost, fmtUsd);   // "cost unknown" on an engine that reports none
+        const costText = runCostLabel(r.runEngine, cost, fmtUsd, r.runEngines);   // "cost unknown" on an engine that reports none
         const ident = { runId: r.runId, pipelineId: r.pipelineId };
         return [{ key: `run:${r.pipelineId}`, icon: 'run', dot: runModel(snap?.run || { status: r.status, title: r.title }),
           text: snap?.title || r.title, meta: [pill.text, costText].filter(Boolean).join(' · '), title: r.branch ? `Branch ${r.branch}` : undefined,

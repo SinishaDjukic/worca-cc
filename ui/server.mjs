@@ -1484,6 +1484,7 @@ function summarizeRuns() {
     limitEngine: r.limitEngine || null,
     limitResetAt: r.limitResetAt || null, modelConfirm: r.orch?.state?.modelConfirm || null, limitScope: r.orch?.state?.limitScope || null, limitModel: r.orch?.state?.limitModel || null,   // #1450
     runEngine: r.orch?.state?.runEngine || null,
+    ...(Array.isArray(r.orch?.state?.runEngines) ? { runEngines: r.orch.state.runEngines } : {}),
     // Where the run executes (e2b mode only) and whether it still waits for a sandbox slot.
     ...(r.orch?.state?.execEnv ? { execEnv: r.orch.state.execEnv, execEnvWaiting: !!r.orch.state.execEnvWaiting, ...(r.orch.state.execEnvPreparing ? { execEnvPreparing: r.orch.state.execEnvPreparing } : {}),
       // While a question waits: when the parked sandbox is released (the run page's "Answer by" line).
@@ -2395,8 +2396,8 @@ function nestedInRepoRefusal(res, dir, enc, prefix = '') {
 /**
  * The run body's engine fields (harness bridge §10.4): `engine` names the harness for the
  * pipeline's agent nodes (the CLI's --engine), `allowUnguardedEngine` is the consent that
- * lifts the gate's rule refusals (--allow-unguarded-engine). Both are passed on only for an
- * engine other than Claude, so a default run's options stay exactly as they were.
+ * lifts the gate's rule refusals (--allow-unguarded-engine). `engine` is passed on only for a non-Claude engine; the
+ * consent rides whenever the body sends it (a Claude run's step can be pinned to a harness that needs it).
  * @returns {{ error: string } | { opts: { engine?: string, allowUnguardedEngine?: true } }}
  */
 function runEngineOpts(body, scope = {}) {
@@ -2406,8 +2407,7 @@ function runEngineOpts(body, scope = {}) {
   if (body.engine != null && body.engine !== '' && typeof body.engine !== 'string') return { error: 'engine must be a string' };
   let engine;
   try { engine = selectRunEngine(resolveRunEngine({ explicit: typeof body.engine === 'string' ? body.engine : null, ...scope }).engine); } catch (err) { return { error: err.message }; }
-  if (engine === 'claude') return { opts: {} };
-  return { opts: { engine, ...(body.allowUnguardedEngine === true ? { allowUnguardedEngine: true } : {}) } };
+  return { opts: { ...(engine === 'claude' ? {} : { engine }), ...(body.allowUnguardedEngine === true ? { allowUnguardedEngine: true } : {}) } };
 }
 
 // Single source of truth for path normalization lives in the core registry.
@@ -2761,12 +2761,12 @@ async function _folderSizeProblem(dir, { name } = {}) {
   return checkFolderSize(dir, { name: name ?? getProjectByPath(dir)?.name });
 }
 
-/** An engine refusal's message on a preset start names the preset (#712). */
-const presetEngineMessage = (presetRow, runEngine, msg) => (presetRow ? `Preset "${presetRow.name}" cannot start: Engine ${runEngine.engine}: ${msg}` : msg);
-/** A scheduled run's early refusals (engine gate, then the exec-env preflight): the 409 body, or null. */
+/** An engine refusal's message on a preset start names the preset (#712), with no second lead on `engine x (…): …`. */
+const presetEngineMessage = (presetRow, runEngine, msg) => (presetRow ? `Preset "${presetRow.name}" cannot start: ${/^engine /.test(msg) ? '' : `Engine ${runEngine.engine || 'claude'}: `}${msg}` : msg);
+/** A scheduled run's early refusals (engine gate on every harness, then the exec-env preflight): the 409 body, or null. */
 async function scheduledStartRefusal(probe, runEngine, presetRow) {
-  const refusal = runEngine.engine ? await probe.engineStartRefusal() : null;
-  if (refusal) return { error: presetEngineMessage(presetRow, runEngine, engineRefusalFor(refusal.error, 'ui')), code: 'engine-refused', overridable: refusal.overridable };
+  const refusal = await probe.engineStartRefusal();
+  if (refusal) return { error: presetEngineMessage(presetRow, runEngine, engineRefusalFor(refusal.error, 'ui')), code: 'engine-refused', overridable: refusal.overridable, engines: refusal.engines };
   const execRefusal = probe.execEnvStartRefusal();
   return execRefusal ? { error: execRefusal, code: 'exec-env-refused' } : null;
 }
@@ -3308,17 +3308,16 @@ const startRunHandler = async (req, res) => {
       if (await tagGate(res, body, { workspaceId: ws.id, startedBy, after: sched?.afterRef || null, exempt: tagExempt })) return;
       if (Array.isArray(body.tags)) tags = body.tags;
       if (sched) {
-        // The engine gate's early refusals answer when the run is scheduled, not hours later when it fires.
-        if (runEngine.engine || execEnvShape.opts.execEnv) {
-          const probe = await createOrchestratorFor({
-            workspace: { id: ws.id, key: ws.id, name: ws.name, description: ws.description, projects: buildWorkspaceMembers(projects, branch, sourceByKey) },
-            prompt: effectivePrompt, title, agentsDir: AGENTS_DIR, workflowId, template: workflowRow, guardrailsId,
-            mcpOptOut: await knownMcpOptOut(optOut.list, mcpWorkspaceTarget(ws)), claude: { mock, ...runEngine },
-            ...execEnvShape.opts,
-          });
-          const refused = await scheduledStartRefusal(probe, runEngine, presetRow);
-          if (refused) return res.status(409).json(refused);
-        }
+        // The engine gate's early refusals answer when the run is scheduled (whatever the default harness).
+        const probe = await createOrchestratorFor({
+          workspace: { id: ws.id, key: ws.id, name: ws.name, description: ws.description, projects: buildWorkspaceMembers(projects, branch, sourceByKey) },
+          prompt: effectivePrompt, title, agentsDir: AGENTS_DIR, workflowId, template: workflowRow, guardrailsId,
+          mcpOptOut: await knownMcpOptOut(optOut.list, mcpWorkspaceTarget(ws)), claude: { mock, ...runEngine },
+          ...(runOverlay ? { overlay: runOverlay } : {}),
+          ...execEnvShape.opts,
+        });
+        const refused = await scheduledStartRefusal(probe, runEngine, presetRow);
+        if (refused) return res.status(409).json(refused);
         return res.status(202).json(await scheduleRequest({ body: runOverlay ? { ...body, overlay: runOverlay } : body, sched, title, askLink, budget, workspaceId: ws.id, projectDir: projects[0].projectDir, startedBy,
           preset: presetRow ? { id: presetRow.id, name: presetRow.name, owner: presetOwner, overrides: overriddenKeys(body, presetRow.setup) } : null }));
       }
@@ -3488,18 +3487,17 @@ const startRunHandler = async (req, res) => {
       // …and the overlay as checked (the catalog's casing, each model with its effort): the ticket fires it verbatim.
       const storedBody = runOverlay ? { ...pairBody, overlay: runOverlay } : pairBody;
       if (sched) {
-        // The engine gate's early refusals answer when the run is scheduled, not hours later when it fires.
-        if (runEngine.engine || execEnvShape.opts.execEnv) {
-          const probe = await createOrchestratorFor({
-            projectDir, prompt: effectivePrompt, title, agentsDir: AGENTS_DIR, workflowId, template: workflowRow, guardrailsId,
-            workMode, ...(projectRow && workMode !== 'git' ? { projectKey: projectRow.key } : {}),
-            mcpOptOut: await knownMcpOptOut(optOut.list, { kind: 'project', key: runKey, name: path.basename(projectDir), rank: 0 }),
-            claude: { mock, ...runEngine },
-            ...execEnvShape.opts,
-          });
-          const refused = await scheduledStartRefusal(probe, runEngine, presetRow);
-          if (refused) return res.status(409).json(refused);
-        }
+        // The engine gate's early refusals answer when the run is scheduled (whatever the default harness).
+        const probe = await createOrchestratorFor({
+          projectDir, prompt: effectivePrompt, title, agentsDir: AGENTS_DIR, workflowId, template: workflowRow, guardrailsId,
+          workMode, ...(projectRow && workMode !== 'git' ? { projectKey: projectRow.key } : {}),
+          mcpOptOut: await knownMcpOptOut(optOut.list, { kind: 'project', key: runKey, name: path.basename(projectDir), rank: 0 }),
+          claude: { mock, ...runEngine }, ...(memoryScope ? { memoryScope } : {}),
+          ...(runOverlay ? { overlay: runOverlay } : {}),
+          ...execEnvShape.opts,
+        });
+        const refused = await scheduledStartRefusal(probe, runEngine, presetRow);
+        if (refused) return res.status(409).json(refused);
         return res.status(202).json(await scheduleRequest({ body: storedBody, sched, title, askLink, budget, projectDir, startedBy,
           preset: presetRow ? { id: presetRow.id, name: presetRow.name, owner: presetOwner, overrides: overriddenKeys(body, presetRow.setup) } : null }));
       }
@@ -3581,11 +3579,9 @@ const startRunHandler = async (req, res) => {
     // The engine gate's early refusals answer here, before the run is registered or
     // announced, so New pipeline can show them inline and offer the consent when it
     // lifts them. run() checks them all again, with the node-level ones, which still
-    // arrive as the run's error event.
-    if (runEngine.engine) {
-      const refusal = await orch.engineStartRefusal();
-      if (refusal) return res.status(409).json({ error: presetEngineMessage(presetRow, runEngine, engineRefusalFor(refusal.error, 'ui')), code: 'engine-refused', overridable: refusal.overridable });
-    }
+    // arrive as the run's error event. Every start, whatever the default harness: a step may be pinned to another one.
+    const refusal = await orch.engineStartRefusal();
+    if (refusal) return res.status(409).json({ error: presetEngineMessage(presetRow, runEngine, engineRefusalFor(refusal.error, 'ui')), code: 'engine-refused', overridable: refusal.overridable, engines: refusal.engines });
     // The e2b preflight (single-project, a remote engine and its sign-in, …): refused here, before anything is announced.
     const execRefusal = orch.execEnvStartRefusal();
     if (execRefusal) return res.status(409).json({ error: execRefusal, code: 'exec-env-refused' });
@@ -5590,10 +5586,8 @@ function resumeRun(pipelineId, opts = {}) { return heldStops.claimed(pipelineId,
   // The engine gate's refusals answer here, before the resume is committed, like POST
   // /api/run's: the run stays paused, and the UI can show why and offer the consent when
   // it lifts the refusal. resume() checks them all again.
-  if ((orch.claude?.engine || 'claude') !== 'claude') {
-    const refusal = await orch.engineResumeRefusal();
-    if (refusal) throw new ResumeError(409, { error: refusal.error, code: 'engine-refused', overridable: refusal.overridable, engine: orch.claude.engine });
-  }
+  const refusal = await orch.engineResumeRefusal();   // every resume: a frozen step may be pinned to another harness
+  if (refusal) throw new ResumeError(409, { error: refusal.error, code: 'engine-refused', overridable: refusal.overridable, engine: orch.claude.engine, engines: refusal.engines });
   // The e2b preflight, also before the resume is committed (the kind comes back from the resume point;
   // a local run answers null).
   const execRefusal = orch.execEnvStartRefusal();
@@ -8665,7 +8659,8 @@ async function presetScopeExists(scope) {
 
 /** The engine gate's early refusal for a setup on a target, without starting anything (pick-time check only). */
 async function presetEngineRefusal(setup, target, runEngine) {
-  const base = { prompt: 'probe', agentsDir: AGENTS_DIR, workflowId: setup.workflowId || 'wf_default', guardrailsId: setup.guardrailsId || defaultGuardrailSetId(), claude: { mock: !!setup.mock, ...runEngine } };
+  const overlay = setup.overlay && typeof setup.overlay === 'object' ? setup.overlay : null;
+  const base = { prompt: 'probe', agentsDir: AGENTS_DIR, workflowId: setup.workflowId || 'wf_default', guardrailsId: setup.guardrailsId || defaultGuardrailSetId(), claude: { mock: !!setup.mock, ...runEngine }, ...(overlay ? { overlay } : {}) };
   const probe = await createOrchestratorFor(target.workspaceId
     ? { ...base, workspace: { id: target.workspaceId, key: target.workspaceId, name: target.workspaceId, projects: [] } }
     : { ...base, projectDir: target.projectDir });
@@ -8687,8 +8682,8 @@ async function presetCheckCtx(scope, target, setup, { probeEngine }) {
     guardrailExists: async (id) => !!(await readGuardrailSet(id)),
     defaultGuardrailsId: defaultGuardrailSetId,
     engineRefusal: engineError ? async () => engineError
-      // Same rule as the start gate: only a non-Claude engine is probed, so a Claude preset's check builds no orchestrator.
-      : probeEngine && runEngine.engine && runEngine.engine !== 'claude' && (t.workspaceId || t.projectDir) ? () => presetEngineRefusal(setup, t, runEngine) : null,
+      // Same rule as the start gate: probed whatever the engine (a step may be pinned to another harness).
+      : probeEngine && (t.workspaceId || t.projectDir) ? () => presetEngineRefusal(setup, t, runEngine) : null,
   };
 }
 

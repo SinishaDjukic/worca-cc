@@ -177,13 +177,17 @@ Select text in a chat answer, a markdown artifact or the Diff tab. You can then 
 
 ## Per-agent models for one run
 
-On a run card for a saved workflow, Chat can pick a model and effort for each agent step from the catalog.
+On a run card for a saved workflow, Chat can pick a model and effort for each agent step from the models the run's
+default harness runs. A step the workflow or the project sets to another harness keeps it.
 Judgement steps get the top price tier, and mechanical steps the cheapest capable model, Anthropic first, then
 OpenAI. It picks a premium-tier model such as Fable 5.1 only when you name it.
 
 Each pick sits beside the project's own setting, with its reason on hover. Change or reset any of them before
-**Start run**. The picks apply to that run only. To keep them, turn on **Save as project defaults**. More in
-[Models](models.md#per-agent-models-for-one-run).
+**Start run**: a row's model opens the harness › provider › model picker, so a step can run on another harness than the
+run's (**inherit** keeps the workflow default). **Default harness**, under Advanced, is where every step set to inherit
+runs; changing it keeps the steps you pinned to a harness. When a step's harness cannot hold the guardrail rules, Start
+asks before it runs without them. The picks apply to that run only. To keep them, turn on **Save as project defaults**.
+More in [Models](models.md#per-agent-models-for-one-run).
 
 ## Files in the chat
 

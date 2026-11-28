@@ -129,14 +129,16 @@
                     <small class="hint" id="needsRepoNote" hidden>Some steps expect a code repository.</small>
                   </div>
 
-                  <!-- Engine (harness bridge §10.4): who runs the pipeline's agent nodes. Claude is
-                       the default and adds nothing to the run body; on Codex the run's titles, classifier,
-                       overview and PR description run on Codex too. Per run, never remembered. Advanced and up;
-                       Simple still shows it while the run is on another engine (a default, an Ask handoff). -->
+                  <!-- Default harness (harness bridge §10.4): who runs the pipeline's agent nodes that inherit
+                       or hold a soft pick; a step pinned to its own harness in Advanced › Agents runs there
+                       whatever this says. Claude is the default and adds nothing to the run body; on Codex the
+                       run's titles, classifier, overview and PR description run on Codex too. Per run, never
+                       remembered. Advanced and up; Simple still shows it while the run is on another engine
+                       (a default, an Ask handoff). -->
                   <div class="field field-compact" id="engine-row" data-min-level="advanced">
-                    <label for="engineSelect">Engine</label>
+                    <label for="engineSelect">Default harness</label>
                     <div class="select-wrap">
-                      <select id="engineSelect" class="select" aria-label="Engine">
+                      <select id="engineSelect" class="select" aria-label="Default harness" title="Steps set to inherit run here">
                         <option value="claude" selected>Claude</option>
                         <option value="codex">Codex</option>
                         <option value="copilot">Copilot</option>

@@ -3,23 +3,25 @@
 // In-process mock runs on test/helpers/loopback-backend.mjs (no e2b fake): the setup mirrors test/exec-env-pipeline.test.mjs.
 import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { templateRepo } from './helpers/git-dir.mjs';
 import { getDb } from '../src/core/db.mjs';
-import { worcaHome } from '../src/core/projects.mjs';
+import { worcaHome, addProject } from '../src/core/projects.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { autoChoice } from '../src/core/run-harness.mjs';
 import { _resetSlotsForTests } from '../src/core/exec-env/slots.mjs';
 import { _registerExecBackendForTests } from '../src/core/exec-env/registry.mjs';
-import { updateProjectExecEnv } from '../src/core/config.mjs';
+import { updateProjectExecEnv, setNodeModel } from '../src/core/config.mjs';
+import { markTerminal } from '../src/core/failure-policy.mjs';
 import { setProjectEnvSpec, recordProjectBuild } from '../src/core/exec-env/project-env.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { createLoopbackBackend } from './helpers/loopback-backend.mjs';
-import { writeProjectSettings } from '../src/core/settings-cascade.mjs';
+import { writeProjectSettings, runExecEnvOpts } from '../src/core/settings-cascade.mjs';
 import { DEFAULT_SECRET_PATHS } from '../src/core/secret-paths.mjs';
 
 const POSIX = { skip: process.platform === 'win32' ? 'remote execution is POSIX-only' : false, timeout: 180_000 };
@@ -191,4 +193,47 @@ test('the sandbox gets the project`s secretPaths on top of the defaults, and the
   assert.deepEqual(opts.secretPaths, [...DEFAULT_SECRET_PATHS, '*.tfvars']);
   assert.deepEqual(opts.network, network);
   assert.equal(orch._execEnvOpts({}, { name: null, rebuild: null }).network, null, 'a reconnect target has no network');
+});
+
+const PIN = { nodes: { n_plan: { model: 'gpt-5.5', engine: 'codex' } } };
+const mixedRemote = (overlay, extra = {}) => createOrchestrator({ projectDir: freshRepo(), workflowId: 'wf_default', prompt: 'x', guardrailsId: 'permissive',
+  claude: { mock: true }, execEnv: 'loopback', ...extra, ...(overlay ? { overlay } : {}) });
+
+test('a start that picks a remote environment while its steps use more than one harness is refused before it exists, naming the steps', async () => {
+  const mk = mixedRemote;
+  const mixed = mk(PIN);
+  assert.equal(await mixed.engineStartRefusal(), null);
+  assert.match(mixed.execEnvStartRefusal(), /Loopback execution runs every step on the run's harness \(Claude Code\), but this run sets Plan to OpenAI Codex\. Pick Local, or let those steps follow the run\./);
+  const one = mk(null);
+  assert.equal(await one.engineStartRefusal(), null);
+  assert.equal(one.execEnvStartRefusal(), null);
+});
+test('a saved remote default does not apply to a run whose steps use more than one harness: it runs locally and says why', async () => {
+  const o = mixedRemote(PIN, { execEnvDefault: true });
+  assert.equal(await o.engineStartRefusal(), null);
+  assert.equal(o.execEnvStartRefusal(), null);
+  assert.deepEqual([o.execEnvKind, 'execEnv' in o.getState(), o.opts.execEnvFallback],
+    ['local', false, 'the saved Loopback default does not apply to a run whose steps use more than one harness; it runs locally']);
+  const repo = freshRepo();
+  writeProjectSettings({ projectDir: repo }, { 'run.execEnv': 'loopback' });
+  assert.deepEqual(runExecEnvOpts({}, { projectDir: repo }, 'claude'), { opts: { execEnv: 'loopback', execEnvDefault: true } });
+  assert.deepEqual(runExecEnvOpts({ execEnv: 'loopback' }, { projectDir: repo }, 'claude'), { opts: { execEnv: 'loopback' } });
+});
+test('run() on its own: a saved remote default steps aside before the first frame, with no early check called', POSIX, async () => {
+  const o = mixedRemote(PIN, { execEnvDefault: true, auto: true });
+  let at = null;
+  o._noteRunEngines = () => { at = [o.execEnvKind, o.opts.execEnvFallback]; throw markTerminal(new Error('stop here')); };
+  const res = await o.run();
+  assert.equal(res.status, 'error');
+  assert.deepEqual(at, ['local', 'the saved Loopback default does not apply to a run whose steps use more than one harness; it runs locally']);
+});
+test('the CLI: a project\'s saved remote default does not apply to a run whose steps use more than one harness', POSIX, async () => {
+  const repo = freshRepo();
+  await addProject({ name: 'cli-mixed-remote', path: repo });
+  await setNodeModel(repo, 'wf_default', 'n_plan', { model: 'gpt-5.5', engine: 'codex' });
+  writeProjectSettings({ projectDir: repo }, { 'run.execEnv': 'docker' });
+  const r = spawnSync(process.execPath, [fileURLToPath(new URL('../src/cli/worca-cc.mjs', import.meta.url)), '--project', repo, '--mock', '--yes', '--guardrails', 'permissive', 'do x'],
+    { env: { ...process.env, WORCA_MOCK: '1' }, encoding: 'utf8', timeout: 150_000 });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /\[exec-env\] the saved Docker default does not apply to a run whose steps use more than one harness; it runs locally/);
 });

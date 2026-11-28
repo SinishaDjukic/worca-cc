@@ -68,7 +68,7 @@ const TERMINAL_STATUSES = new Set(['done', 'error', 'stopped', 'interrupted']);
 
 // The ONLY stepper node fields that ever ship. A whitelist, not a blacklist: when
 // buildGraphManifest grows a key, this fails closed instead of leaking it.
-const NODE_STRINGS = ['model', 'effort', 'subagentModel', 'subagentEffort'];
+const NODE_STRINGS = ['model', 'effort', 'subagentModel', 'subagentEffort', 'engine'];
 const NODE_BOOLS = ['fanOut', 'askQuestions', 'awaitAll'];
 
 // Every workflow id worca itself ships: wf_default, wf_auto and the seven V17 seed
@@ -503,7 +503,8 @@ export async function buildRunReport(pipelineId, opts = {}) {
   const workflow = workflowShape(parseJson(row.stepper), cyclesByNode(steps));
   const runEngine = (state && state.runEngine) || 'claude';
   for (const n of workflow?.nodes || []) {
-    if (n.model && !modelForEngine(n.model, runEngine, { projectDir: state?.projectDir })) { delete n.model; delete n.effort; }
+    // A node's model is judged on its own harness (a step pinned to another one), else the run's.
+    if (n.model && !modelForEngine(n.model, n.engine || runEngine, { projectDir: state?.projectDir })) { delete n.model; delete n.effort; delete n.engine; }
   }
   const tools = toolFacts(parseJson(row.tools));
   const review = reviewFacts(extras.reviews);
@@ -530,6 +531,7 @@ export async function buildRunReport(pipelineId, opts = {}) {
       sourceType: row.source_type || 'prompt',
       engine: state && state.engine === 2 ? 2 : 1,
       runEngine,
+      ...(Array.isArray(state?.runEngines) ? { runEngines: [...state.runEngines] } : {}),
       startedAt: row.started_at || null,
       updatedAt: row.updated_at || null,
       wallClockMs,

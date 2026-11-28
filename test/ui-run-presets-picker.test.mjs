@@ -94,3 +94,11 @@ test('renderBrokenCard: below Advanced the scope hint names the ⋯ menu and Adv
   assert.equal(BROKEN_SCOPE_HINT_SIMPLE, 'Delete the preset from the Preset menu, or switch to Advanced to edit its scope');
   assert.doesNotMatch(simple.textContent, /Settings › Presets/);
 });
+test('presetNodePick and configWithPreset keep a pick\'s harness with its model, and never under another model', () => {
+  assert.deepEqual(presetNodePick({ model: 'gpt-5.5', effort: 'low', engine: 'codex', fanOut: null }, { fanOut: false }), { model: 'gpt-5.5', effort: 'low', engine: 'codex', fanOut: false });
+  assert.deepEqual(presetNodePick({ model: '', effort: '', fanOut: true }, { model: 'gpt-5.5', effort: 'low', engine: 'codex' }), { model: 'gpt-5.5', effort: 'low', engine: 'codex', fanOut: true });
+  assert.equal('engine' in presetNodePick({ model: 'claude-opus-5-5', effort: 'high' }, { model: 'gpt-5.5', engine: 'codex' }), false);
+  const cfg = { workflows: { wf: { nodes: { n1: { model: 'gpt-5.5', engine: 'codex', fanOut: true }, n2: { model: 'gpt-5.5', engine: 'codex' } } } } };
+  const out = configWithPreset(cfg, 'wf', { overlay: { nodes: { n1: { model: 'claude-opus-5-5', effort: 'high' }, n2: { fanOut: true } } } });
+  assert.deepEqual(out.workflows.wf.nodes, { n1: { model: 'claude-opus-5-5', effort: 'high', fanOut: true }, n2: { model: 'gpt-5.5', engine: 'codex', fanOut: true } });
+});

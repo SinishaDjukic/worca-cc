@@ -5,11 +5,13 @@
 // listener, routing on `data-field`. Capability rows are gated by META
 // BOOLEANS: a new agent's sidecar drives its panel with no UI change.
 import { resolveOrOutType } from '../../../src/shared/graph/ports.mjs';
-import { harnessesOf, modelGroups, modelSourceSuffix } from '../../../src/shared/connections.mjs';
+import { modelGroups, modelSourceSuffix, pickEffortsOn } from '../../../src/shared/connections.mjs';
 import { ENGINES, engineLabel, sessionSupport, SESSION_SUBAGENTS_VERIFIED } from '../../../src/shared/engine-switch.mjs';
 import { sessionCandidates, sessionNotes, SESSION_DEFAULT_LABEL, SESSION_SHARED_SELECTABLE } from '../../../src/shared/graph/sessions.mjs';
 import { SESSION_LABEL_MAX } from '../../../src/shared/graph/constants.mjs';
 import { icon } from '../icons.mjs';
+import { markTile } from '../models/brand-marks.mjs';
+import { columnsValue, columnsLabel, pickEfforts } from '../models/model-columns.mjs';
 import { subagentAliasLabel, subagentAliasTitle } from '../../../src/shared/model-roles.mjs';
 import { DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, wirableParams, hasParamsPort } from '../../../src/shared/graph/script-meta.mjs';
 // The DOM primitives and the two script forms live in ../script-forms.mjs so the
@@ -59,7 +61,7 @@ function portList(doc, ports) {
   zone('Outputs', ports.outputs, 'out');
   return wrap;
 }
-export function renderNodeInspector(node, { template, portsFn, meta = null, models = [], efforts = [], subagentModels = [], editorFor = null, session = null, doc = globalThis.document } = {}) {
+export function renderNodeInspector(node, { template, portsFn, meta = null, models = [], efforts = [], subagentModels = [], editorFor = null, session = null, defaultEngine = 'claude', doc = globalThis.document } = {}) {
   const ports = portsFn(node) || { inputs: [], outputs: [] };
   const root = h(doc, 'div', `ins-panel ins-${node.kind === 'agent' ? 'agent' : node.kind === 'script' ? 'script' : `flow ins-${node.kind}`}`);
   root.dataset.nodeId = node.id;
@@ -68,19 +70,14 @@ export function renderNodeInspector(node, { template, portsFn, meta = null, mode
   if (node.kind === 'agent') {
     root.appendChild(head(doc, (meta && meta.displayName) || node.key || node.id, `${node.key} · ${node.id}`));
     if (session) body.appendChild(memberRow(doc, node.id, session));
-    // Hidden built-ins (#422) leave the list unless one is THIS node's stored
-    // pick — it still resolves at run time and must stay visible here.
-    const offered = models.filter((m) => m && (!m.hidden || m.id === node.config.model));
-    // A node knows no run engine: with more than one provider in the catalog the list is grouped by provider
-    // (Claude sign-in, ChatGPT sign-in, OpenAI-compatible, …), each model naming the harnesses that run it when that
-    // is not Claude Code alone. A pick the run's harness cannot run is skipped at run time (§4.2).
-    const harnessNote = (m) => { const hs = harnessesOf(m); return hs.length === 1 && hs[0] === 'claude' ? '' : ` · ${hs.map(engineLabel).join(', ')}`; };
-    // Grouped by connection like every model picker (src/shared/connections.mjs modelGroups).
-    const modelItems = modelGroups(offered).map((g) => ({ group: g.label, items: g.models.map((m) => ({ value: m.id, text: (m.label || m.id) + modelSourceSuffix(m) + harnessNote(m) })) }));
-    body.appendChild(select(doc, 'ins-model', 'model', 'Model', [{ value: '', text: 'inherit' }, ...modelItems], node.config.model));
-    // Efforts are per engine: the picked model's own list, else the catalog-wide one.
-    const picked = node.config.model ? offered.find((m) => m.id === node.config.model) : null;
-    const effortList = picked && Array.isArray(picked.efforts) && picked.efforts.length ? picked.efforts : efforts;
+    // The Model field is the columns picker's trigger (models/model-columns.mjs): the shell opens the picker from it,
+    // and a pick sets its `value` and `data-engine` and fires `change` (the composer commits model and engine at once).
+    // A soft pick (no `engine`) runs on the default harness (`defaultEngine`, the run's), so only a pinned one draws
+    // its harness's mark.
+    body.appendChild(modelField(doc, node.config, models));
+    // Efforts are the picked model's on the harness it runs on (pickEffortsOn: its own and the mapped ones), else that
+    // harness's list.
+    const effortList = pickEfforts(columnsValue(node.config), { catalog: models, defaultEngine, effortsOf: pickEffortsOn });
     body.appendChild(select(doc, 'ins-effort', 'effort', 'Effort',
       [{ value: '', text: 'default' }, ...effortList.map((e) => ({ value: e, text: e }))], node.config.effort));
     if (meta && meta.fanOut) {
@@ -167,6 +164,25 @@ export function renderNodeInspector(node, { template, portsFn, meta = null, mode
   body.appendChild(lv(portList(doc, ports), 'expert'));
   root.appendChild(body);
   return root;
+}
+
+/** div.ins-f.ins-model: the label and the picker's trigger (button.mdl-pick, data-field=model). */
+function modelField(doc, config, models) {
+  const wrap = field(doc, 'ins-model', 'Model');
+  const value = columnsValue(config);
+  const lbl = columnsLabel(value, models);
+  const btn = h(doc, 'button', `mdl-pick${lbl.inherit ? ' inherit' : ''}`);
+  btn.type = 'button';
+  btn.dataset.field = 'model';
+  btn.value = value ? value.model : '';
+  btn.dataset.engine = lbl.engine;
+  btn.setAttribute('aria-haspopup', 'dialog');
+  btn.setAttribute('aria-expanded', 'false');
+  btn.setAttribute('aria-label', `Model: ${lbl.text}${lbl.engine ? `, on ${engineLabel(lbl.engine)}` : ''}`);
+  if (lbl.engine) btn.append(markTile(doc, { kind: 'harness', key: lbl.engine, size: 'sm', label: engineLabel(lbl.engine) }));
+  btn.append(h(doc, 'span', 'mdl-pick-text', lbl.text), icon(doc, 'chevron-down', 14));
+  wrap.appendChild(btn);
+  return wrap;
 }
 
 /** Loop wires carry the per-wire cycle budget; a plain wire must NOT expose one

@@ -103,3 +103,15 @@ test('applyPresetStart never lays the preset\'s model picks under the card\'s la
   const picked = applyPresetStart({ workflowId: 'wf_default', prompt: 'x', overlay: { nodes: { n_plan: { model: 'claude-sonnet-4-6', effort: 'high', fanOut: false } } } }, card);
   assert.deepEqual(picked.overlay.nodes.n_plan, { model: 'claude-sonnet-4-6', effort: 'high', fanOut: false });
 });
+
+test('overlayOver: an engine travels with its model', () => {
+  assert.deepEqual(overlayOver({ nodes: { n_plan: { model: 'gpt-5.5', engine: 'codex', fanOut: true } } }, { nodes: { n_plan: { model: 'claude-opus-5-5', effort: '' } } }).nodes.n_plan,
+    { model: 'claude-opus-5-5', effort: '', fanOut: true });
+  assert.deepEqual(overlayOver({ nodes: { n_plan: { model: 'gpt-5.5', engine: 'codex' } } }, { nodes: { n_plan: { fanOut: true } } }).nodes.n_plan,
+    { model: 'gpt-5.5', engine: 'codex', fanOut: true });
+});
+test('Review Focus 5: a preset\'s harness never rides under a card\'s own model', () => {
+  const preset = { id: 'p1', workflowId: 'wf_default', setup: { overlay: { nodes: { n_plan: { model: 'gpt-5.5', engine: 'codex', fanOut: true } } } } };
+  const body = applyPresetStart({ workflowId: 'wf_default', overlay: { nodes: { n_plan: { model: 'claude-opus-5-5', effort: '' } } } }, preset);
+  assert.deepEqual(body.overlay.nodes.n_plan, { fanOut: true, model: 'claude-opus-5-5', effort: '' });
+});

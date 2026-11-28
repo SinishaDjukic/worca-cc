@@ -246,6 +246,27 @@ a.tab.mdl-tab{text-decoration:none;}
    side-flyout.mjs: fixed, over the page, under #confirm-modal (60). Two classes, because chat/workflow-card.css (later
    in parts.json) sets .ask-pop{position:absolute} and .ask-pop-model's right and bottom; as design.css .ask-pop.dz-model-pop. */
 .ask-pop.mdl-pick-pop{position:fixed;right:auto;bottom:auto;z-index:58;max-height:min(420px,70vh);}
+/* The cascading-columns model picker (models/model-columns.mjs, spec 2026-11-26 "The picker"): the Menu skin, appended to
+   body and fixed like .mdl-pick-pop; inherit, then Harness, Provider and Model columns that scroll on their own. Below a
+   688px viewport it takes the width there is and scrolls sideways. Notes are --ink-2: the mock's grey has no token.
+   The grid is scoped to the popup: the catalogue's bare .mdl-cols (above) is a different grid, so the two must not share a rule. */
+.mdl-cols-pop{position:fixed;z-index:58;width:min(672px,calc(100vw - 16px));overflow-x:auto;overflow-y:hidden;}
+.mdl-cols-inherit{min-height:32px;}
+.mdl-cols-inherit-t{font-weight:500;}
+.mdl-cols-hint,.mdl-cols-note{color:var(--ink-2);font-size:var(--fs-meta);}
+.mdl-cols-pop .mdl-cols{display:grid;grid-template-columns:204px 214px minmax(238px,1fr);min-width:656px;align-items:stretch;column-gap:0;}
+.mdl-col{display:flex;flex-direction:column;min-height:0;}
+.mdl-col + .mdl-col{border-left:1px solid var(--line);padding-left:4px;}
+.mdl-col-h{padding:4px 9px 6px;font-size:var(--fs-caption);font-weight:600;color:var(--ink-2);}
+.mdl-col-list{display:flex;flex-direction:column;min-height:0;overflow-y:auto;}
+.mdl-cols-row{gap:8px;}
+.mdl-cols-row[aria-selected="true"]{background:var(--row-selected);}
+.mdl-cols-row > .ic{margin-left:auto;color:var(--ink-2);}
+.mdl-cols-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.mdl-cols-prov{min-height:44px;}
+.mdl-cols-two{display:flex;flex-direction:column;align-items:flex-start;min-width:0;}
+.mdl-cols-empty{padding:6px 9px;}
+.mdl-cols-add{align-self:flex-start;margin:0 9px;}
 
 /* Add model (models/add-model-dialog.mjs, DESIGN ADD-1…ADD-4; kit 250–258): each step is a section.card.mdl-add that
    app.js lays out (layoutDialog). Its head: the title, the step names and Close on one line; its foot carries

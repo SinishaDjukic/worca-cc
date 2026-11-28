@@ -1282,8 +1282,9 @@ export function generateClaudeMd({
  * @param {((taken:string[]) => Promise<{result:object, catalog:object[]}|null>)|null} [a.registry]
  *        the MCP registry layer (MCP registry design §6.1): called with the names the spawn
  *        already uses; null (or a null answer) adds nothing
- * @param {object[]} [a.setSkills]  another engine's set skills (assembleSkills `setSkills`); the record's
- *        `setSkillNames` maps each mounted one's key to the name it got
+ * @param {string[]} [a.engines]  every harness the run's steps use (U): skills are mounted where each reads them
+ * @param {object[]} [a.setSkills]  another engine's set skills (assembleSkills `setSkills`), mounted in `.agents/skills`
+ *        only; the record's `setSkillNames` maps each mounted one's key to the name it got
  * @param {((layer:{servers:object, copies:object[]}) => Promise<{servers:object, off:Array<{name:string, reason:string, why:string}>}>)|null} [a.mcpStandIn]
  *        workflow tests (D35): a pretend try's swap of every server it would load for a stand-in; null for every other run
  * @returns {Promise<object>} the run-context record (also persisted into run.json)
@@ -1292,6 +1293,7 @@ export async function assembleRunContext({
   runRoot, members = [], projectsRoot, projectsRootIsDefault = false, isWorkspace = false,
   requiredSkillResolutions, graphInstructions, homeDir, honorByKey = null,
   platform = process.platform, agentIsolated = false, registry = null, settingsScope = null, engine = 'claude',
+  engines = [engine],
   setSkills = [],
   mcpStandIn = null,
   gitEnv = null,   // workflow tests 3a (final review I2): a try's git env (no hook or fsmonitor of the copy, the guard)
@@ -1376,8 +1378,11 @@ export async function assembleRunContext({
   const previousRecords = (await readRunManifest(runRoot))?.injectedPaths || {};
 
   // ── 1) skills (§5.6) ─────────────────────────────────────────────────────
-  // Mounted where the run's engine reads skills from its cwd (skillsRelFor).
+  // Mounted where each harness the run's steps use reads skills from its cwd (skillsRelFor): the default harness's
+  // mount first; a run with steps on Claude Code and on another harness gets both.
   const skillsRel = skillsRelFor(engine);
+  const agentsRel = join('.agents', 'skills');
+  const skillRels = [...new Set([skillsRel, ...(Array.isArray(engines) ? engines : []).map(skillsRelFor)])];
   const injectedPaths = {};
   let skillMountDir = null;
   let skillsOut = { names: [], records: [], renames: {}, roster: [], warnings: [], setNames: {} };
@@ -1387,13 +1392,29 @@ export async function assembleRunContext({
   // and `~/.claude/skills` is never a writable root. Copies stay where a link would not serve: an engine without that
   // sandbox (Copilot's file tools would write through the link), agents under their own user (they cannot read the
   // server's home), and Windows (its links need a privilege, and its codex sandbox is not relied on).
-  const linkUserSkills = !copyMount && engine === 'codex' && !agentIsolated && platform !== 'win32';
+  const nonClaude = [...new Set([engine, ...(Array.isArray(engines) ? engines : [])])].filter((e) => e && e !== 'claude');
+  const linkUserSkills = !copyMount && nonClaude.length > 0 && nonClaude.every((e) => e === 'codex') && !agentIsolated && platform !== 'win32';
+  /** One assembleSkills pass per mount: the records join one scope (each keyed by its mount's rel path, so the second
+   *  pass over the same user skills neither prunes nor duplicates the first's); roster, renames and names are the
+   *  default harness's mount's, setNames the `.agents/skills` mount's. Set skills go into `.agents/skills` only. */
+  const assembleAll = async (base, perRel = () => ({})) => {
+    const out = { names: [], records: [], renames: {}, roster: [], warnings: [], setNames: {} };
+    for (const rel of skillRels) {
+      const one = await assembleSkills({
+        target: join(base, rel), members: liveMembers, projectsRoot: rootUsable ? projectsRoot : null,
+        resolutions: requiredSkillResolutions, homeDir, mount, skipRoot: rootIsHome, rel, linkUserSkills,
+        setSkills: skillRels.length === 1 || rel === agentsRel ? setSkills : [], ...perRel(rel),
+      });
+      out.records.push(...one.records);
+      for (const w of one.warnings) if (!out.warnings.includes(w)) out.warnings.push(w);
+      if (rel === skillsRel) Object.assign(out, { names: one.names, renames: one.renames, roster: one.roster });
+      if (skillRels.length === 1 || rel === agentsRel) out.setNames = one.setNames;
+    }
+    return out;
+  };
   if (isWorkspace) {
     skillMountDir = join(runRoot, skillsRel);
-    skillsOut = await assembleSkills({
-      target: skillMountDir, members: liveMembers, projectsRoot: rootUsable ? projectsRoot : null,
-      resolutions: requiredSkillResolutions, homeDir, mount, skipRoot: rootIsHome, rel: skillsRel, linkUserSkills, setSkills,
-    });
+    skillsOut = await assembleAll(runRoot);
     if (skillsOut.records.length) injectedPaths.runRoot = skillsOut.records;
   } else if (primary?.worktreeDir && primary.workMode === 'none' && !(await realDirsBelow(primary.worktreeDir, skillsRel))) {
     // P3-D19: a run without a project's work/ was the agents' cwd: a `.claude` (or `.agents`) swapped for a link is never
@@ -1403,11 +1424,10 @@ export async function assembleRunContext({
     // E4/P3b: the skills ancestor walk stops at a git repository root, so a run-root
     // mount would be invisible to a process whose cwd is the worktree.
     skillMountDir = join(primary.worktreeDir, skillsRel);
-    skillsOut = await assembleSkills({
-      target: skillMountDir, members: liveMembers, projectsRoot: rootUsable ? projectsRoot : null,
-      resolutions: requiredSkillResolutions, homeDir, mount, skipRoot: rootIsHome, rel: skillsRel, linkUserSkills, setSkills,
-      trackedNames: primary.workMode && primary.workMode !== 'git' ? shippedSkillNames(primary.shippedFiles, skillsRel) : trackedSkillNames(primary.worktreeDir, skillsRel, gitEnv),
-    });
+    // The tracked names are per mount: each rel's own folder in the checkout.
+    skillsOut = await assembleAll(primary.worktreeDir, (rel) => ({
+      trackedNames: primary.workMode && primary.workMode !== 'git' ? shippedSkillNames(primary.shippedFiles, rel) : trackedSkillNames(primary.worktreeDir, rel, gitEnv),
+    }));
     if (skillsOut.records.length) injectedPaths[primary.projectKey] = skillsOut.records;
   } else if (primary) {
     warnings.push(
@@ -1727,7 +1747,11 @@ export function renderSkillAudit(layer) {
   const k = layer.skipped?.length || 0;
   if (layer.blocked) return `${plural(n, 'set skill')} not loaded (${layer.blocked}; ${k} skipped)`;
   // Another engine: mounted under the names its `.agents/skills` gave them (`<set slug>-<name>` on a clash).
-  if (layer.rel) return `${plural(n, 'set skill')} in ${layer.rel} (${n ? `${(layer.names || []).join(', ')}; ` : ''}${k} skipped)`;
+  if (layer.rel) {
+    const mounted = `${plural(n, 'set skill')} in ${layer.rel} (${n ? `${(layer.names || []).join(', ')}; ` : ''}${k} skipped)`;
+    // A run whose steps use Claude Code too: its steps load the same skills through --plugin-dir.
+    return layer.pluginDirs?.length ? `${mounted} and in ${plural(layer.plugins?.length || 0, 'plugin')}` : mounted;
+  }
   return `${plural(n, 'set skill')} in ${plural(layer.plugins?.length || 0, 'plugin')} (${k} skipped)`;
 }
 

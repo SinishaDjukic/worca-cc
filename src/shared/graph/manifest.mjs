@@ -90,10 +90,11 @@ const isWire = (w) => Boolean(w) && typeof w === 'object' && !Array.isArray(w)
 /**
  * @param {object} tpl resolved v2 template
  * @param {Record<string,object>} agentsByKey merged registry metas
- * @param {{overlays?:{nodes?:object, wires?:object}, scripts?:Record<string,object>}} [opts] effective per-node config + per-wire budgets; the script registry slice
+ * @param {{overlays?:{nodes?:object, wires?:object}, scripts?:Record<string,object>, engine?:string}} [opts] effective per-node config + per-wire budgets; the script registry slice; the run's default harness (a cell names its own only when it differs)
  */
 export function buildGraphManifest(tpl, agentsByKey, opts = {}) {
   const overlays = opts.overlays || {};
+  const runEngine = typeof opts.engine === 'string' && opts.engine ? opts.engine : 'claude';
   const scripts = opts.scripts || {};
   const nodeOverlays = overlays.nodes || {};
   const wireOverlays = overlays.wires || {};
@@ -148,6 +149,10 @@ export function buildGraphManifest(tpl, agentsByKey, opts = {}) {
       // The resolver names an agent node's effort on purpose (undefined = none: an effort only travels with the model
       // that named it, workflows.mjs), so the template's own effort is a fallback only when no resolution was handed in.
       cell.effort = Object.hasOwn(over, 'effort') ? (over.effort ?? '') : (cfg.effort ?? '');
+      // The step's harness, only off the run's default harness (absent = the default), so a one-harness run's cells
+      // stay byte-equal. The template's own pin counts only beside its model. A role entry keeps its own (cell.roles).
+      const stepEngine = over.engine ?? (typeof cfg.model === 'string' && cfg.model ? cfg.engine : undefined);
+      if (typeof stepEngine === 'string' && stepEngine && stepEngine !== runEngine) cell.engine = stepEngine;
       cell.askQuestions = !!(over.askQuestions ?? cfg.askQuestions ?? meta?.questionsDefault ?? false);
       cell.awaitAll = !!(over.awaitAll ?? cfg.awaitAll ?? false);
       cell.fanOut = !!(over.fanOut ?? cfg.fanOut ?? meta?.fanOut ?? false);
@@ -288,4 +293,29 @@ export function manifestTemplate(manifest) {
     }),
     ...(sessions ? { sessions } : {}),
   };
+}
+
+/** Every harness a manifest's cells and role entries pin (`engine`), distinct and sorted; [] for none or junk. */
+export function manifestEngines(manifest) {
+  const out = new Set();
+  for (const n of Array.isArray(manifest?.graph?.nodes) ? manifest.graph.nodes : []) {
+    if (!n || typeof n !== 'object') continue;
+    if (typeof n.engine === 'string' && n.engine) out.add(n.engine);
+    for (const r of Object.values(n.roles && typeof n.roles === 'object' ? n.roles : {})) {
+      if (r && typeof r.engine === 'string' && r.engine) out.add(r.engine);
+    }
+  }
+  return [...out].sort();
+}
+
+/** A copy of a manifest with every cell's and role entry's `engine` removed (a resume that moved every step to one
+ *  harness keeps it so: a later plain resume does not bring the pins back). The input is not changed. */
+export function manifestWithoutEngines(manifest) {
+  const copy = structuredClone(manifest);
+  for (const n of Array.isArray(copy?.graph?.nodes) ? copy.graph.nodes : []) {
+    if (!n || typeof n !== 'object') continue;
+    delete n.engine;
+    for (const r of Object.values(n.roles && typeof n.roles === 'object' ? n.roles : {})) if (r && typeof r === 'object') delete r.engine;
+  }
+  return copy;
 }

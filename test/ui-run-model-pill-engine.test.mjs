@@ -82,3 +82,13 @@ test('#1450: an empty node shows the observed model as the tool\'s pick, a Worca
   assert.match(window.__np.stepModelPillHtml(by.p1), /title="Asked for Opus 5\.5, ran on Sonnet 5\.5"/);
   assert.equal(by.legacy, undefined, 'a pre-change node with nothing observed shows no pill');
 });
+
+test('a node pinned to another harness keeps its model; its pill names the harness', async () => {
+  const { window } = await boot();
+  window.__np._setModels([{ id: 'claude-opus-4-8', label: 'Opus 4.8', engine: 'claude' }, { id: 'gpt-5.5', label: 'GPT-5.5', engine: 'codex' }]);
+  const stepper = { version: 2, steps: [], graph: { wires: [], nodes: [{ id: 'n1', kind: 'agent', model: 'claude-opus-4-8', effort: 'max' }, { id: 'n2', kind: 'agent', model: 'gpt-5.5', effort: 'low', engine: 'codex' }] } };
+  const by = window.__np.stepModelByNode(stepper, 'claude');
+  assert.deepEqual(by.n2, { model: 'gpt-5.5', effort: 'low', engine: 'codex' });
+  assert.match(window.__np.stepModelPillHtml(by.n2), />GPT-5\.5 · low · on OpenAI Codex<\/span>$/);
+  assert.doesNotMatch(window.__np.stepModelPillHtml(by.n1), / · on /);
+});

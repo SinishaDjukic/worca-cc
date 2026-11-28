@@ -390,7 +390,8 @@ function handOffs(list) {
 
 function decorateExecutions(decor, ctx) {
   const { nodes, wires, grouped, activeList, rowFor, state, now, live, subsOf, lastLines, status, modelLabel } = ctx;
-  const unpriced = !engineReportsCost(state?.runEngine);   // Cursor: no $0.00 pill
+  // Per step: a node on a harness that reports no cost (its own pin, else the run's) shows no $0.00 pill (Cursor).
+  const unpricedOn = (node) => !engineReportsCost(node?.engine || state?.runEngine);
   // A session member's row says where it ran (Task 59): its exec row's tooltip. A row outside a host turn gets no key.
   const inSession = (row) => sessionRowLine(row, state && state.sessionHosts);
 
@@ -406,6 +407,7 @@ function decorateExecutions(decor, ctx) {
     const flow = !KEYED_KINDS.includes(node.kind);
     // A SCRIPT runs a child process: real duration, no cost pill — an exit code where an agent shows cost (S5).
     const script = node.kind === 'script';
+    const unpriced = unpricedOn(node);
     const rows = list.map((row) => {
       // A flow node executes instantly and for free: the NUMBERS are zeroed with
       // the pill texts, so `durMs`/`costUsd` never contradict `dur`/`cost` (a
@@ -553,7 +555,6 @@ function decorateSessions(decor, ctx) {
   const hosts = state.sessionHosts && typeof state.sessionHosts === 'object' ? state.sessionHosts : {};
   const engine = state.runEngine || 'claude';
   const engineText = engineLabel(engine);
-  const unpriced = !engineReportsCost(engine);
   const labelOf = (id) => { const n = nodeById(stepper, id); return (n && (n.label || n.id)) || id; };
   // A flow card (task/and/or/combine/end) is never the step a session waits for; a loop wire is followed through flow
   // cards (an OR valve) to the keyed cards it really joins.
@@ -573,6 +574,9 @@ function decorateSessions(decor, ctx) {
     const members = spec.members;
     const mine = new Set(members);
     const summary = hosts[sid] && typeof hosts[sid] === 'object' ? hosts[sid] : null;
+    // A session on a harness that reports no cost shows no dollars: its members' harness (their cells' pin, else the run's).
+    const first = nodeById(stepper, members[0]);
+    const sessionUnpriced = !engineReportsCost((first && first.engine) || engine);
     const label = (summary && summary.label) || spec.settings.label || SESSION_DEFAULT_LABEL;
     const mode = (summary && summary.mode) || spec.settings.mode || 'subagents';
     const ran = members.some((id) => (grouped.get(id) || []).length > 0);
@@ -643,7 +647,7 @@ function decorateSessions(decor, ctx) {
     const costUsd = priced ? round2(members.reduce((a, id) => a + ((decor.totals[id] && decor.totals[id].costUsd) || 0), 0))
       : (summary && finite(summary.costUsd) ? round2(summary.costUsd) : null);
     const overheadUsd = summary && finite(summary.hostOverheadUsd) ? round2(summary.hostOverheadUsd) : null;
-    const cost = unpriced || costUsd == null ? '' : fmtUsd(costUsd);
+    const cost = sessionUnpriced || costUsd == null ? '' : fmtUsd(costUsd);
     const dur = fmtDur(durMs);
     const restarts = summary && finite(summary.restarts) ? summary.restarts : 0;
     const rotations = summary && finite(summary.rotations) ? summary.rotations : 0;
@@ -656,7 +660,7 @@ function decorateSessions(decor, ctx) {
         : shared ? `One ${engineText} conversation` : `One ${engineText} session · main agent ${(summary && summary.hostModel) || 'default model'}`,
       ran ? `${turns > 0 ? `${count(turns, 'turn')} · ` : ''}runs: ${perMember}` : '',
       // One conversation has no main agent, so no hand-off to name (Task 66).
-      [dur, cost ? `${cost}${overheadUsd != null && !unpriced && !shared ? ` incl. ${fmtUsd(overheadUsd)} hand-offs` : ''}` : ''].filter(Boolean).join(' · '),
+      [dur, cost ? `${cost}${overheadUsd != null && !sessionUnpriced && !shared ? ` incl. ${fmtUsd(overheadUsd)} hand-offs` : ''}` : ''].filter(Boolean).join(' · '),
       restarts > 0 ? `restarted fresh ${times(restarts)}` : '',
       rotations > 0 ? `rotated ${times(rotations)}` : '',
     ].filter(Boolean).join('\n');
