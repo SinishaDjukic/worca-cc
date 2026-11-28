@@ -347,7 +347,28 @@ const SHAPER_TEXT = 'Uploads fail on large files';
 
 const GUIDE_READ = Object.freeze({ model: { id: 'claude-haiku-5-5', label: 'Haiku 5.5' }, on: true, offerSeen: false, rowsOpen: false });
 // The Guide switch and line (ui/public/chat/guide-line.mjs) are registered after the picker; their requests are recorded.
-async function composer(t, { lead = null, flag = true, picker = true, guide = picker, pin = 'shape' } = {}) {
+// The check (POST /api/shape/guide/check) answers CHECK_REPLY, or waits for ever once holdChecks() is called, and the
+// 2-second pause runs on a timer the test drives (wait).
+const CHECK_REPLY = Object.freeze({
+  register: 'technical', size: 'large', model: GUIDE_READ.model,
+  checks: ['who', 'what', 'trigger', 'limits', 'done'].map((id, i) => ({ id, label: id, covered: i < 2, question: i < 2 ? '' : 'q' })),
+});
+function manualTimers() {
+  let now = 0;
+  let ids = 0;
+  const queued = new Map();
+  return {
+    setTimeout(fn, ms = 0) { ids += 1; queued.set(ids, { fn, at: now + ms }); return ids; },
+    clearTimeout(id) { queued.delete(id); },
+    advance(ms) {
+      now += ms;
+      for (const [id, t] of [...queued].sort((a, b) => a[1].at - b[1].at)) {
+        if (t.at <= now && queued.delete(id)) t.fn();
+      }
+    },
+  };
+}
+async function composer(t, { lead = null, flag = true, picker = true, guide = picker, pin = 'shape', guideOn = true } = {}) {
   _resetChatExtensions();
   _resetAnswerer();
   const rec = {};
@@ -359,17 +380,31 @@ async function composer(t, { lead = null, flag = true, picker = true, guide = pi
   };
   t.after(() => { globalThis.fetch = realFetch; _resetAnswerer(); });
   const intent = installIntentAddon();
+  const timers = manualTimers();
+  const checks = [];       // the bodies of the check requests
+  let holding = false;
+  let roles = null;
   if (picker) {
     const { installRolePicker } = await import('../ui/public/chat/role-picker.mjs');
-    installRolePicker({ intent, flagOn: () => flag, onFlagChange: () => () => {} });
+    roles = installRolePicker({ intent, flagOn: () => flag, onFlagChange: () => () => {} });
   }
   if (guide) {
-    const { installGuideLine, loadGuide, saveGuidePrefs } = await import('../ui/public/chat/guide-line.mjs');
+    const { installGuideLine, loadGuide, saveGuidePrefs, checkGuide } = await import('../ui/public/chat/guide-line.mjs');
     const record = async (url, init) => {
       requests.push(`${init?.method || 'GET'} ${url}`);
-      return { ok: true, status: 200, json: async () => ({ ...GUIDE_READ }) };
+      if (url === '/api/shape/guide/check') {
+        checks.push(JSON.parse(init.body));
+        if (holding) {
+          return new Promise((_, reject) => init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))));
+        }
+        return { ok: true, status: 200, json: async () => CHECK_REPLY };
+      }
+      return { ok: true, status: 200, json: async () => ({ ...GUIDE_READ, on: guideOn }) };
     };
-    installGuideLine({ intent, flagOn: () => flag, onFlagChange: () => () => {}, load: () => loadGuide(record), save: (patch) => saveGuidePrefs(patch, record) });
+    installGuideLine({
+      intent, flagOn: () => flag, onFlagChange: () => () => {}, load: () => loadGuide(record), save: (patch) => saveGuidePrefs(patch, record),
+      timers, role: () => roles?.role() ?? null, check: (body, opts) => checkGuide(body, { ...opts, fetchFn: record }),
+    });
   }
   const panelApi = api(rec);
   const ctx = makePanel({
@@ -395,7 +430,17 @@ async function composer(t, { lead = null, flag = true, picker = true, guide = pi
     await settle();
     return leadHtml;
   };
-  return { ...ctx, rec, requests, intent, lead: lead0, send, settle };
+  /** The person types in the field. */
+  const type = (text) => {
+    const input = ctx.doc.querySelector('.ask-input');
+    input.value = text;
+    input.dispatchEvent(new ctx.window.Event('input', { bubbles: true }));
+  };
+  /** Let `ms` pass on Guide's timer, then let the panel settle. */
+  const wait = async (ms = 2000) => { timers.advance(ms); await settle(); };
+  const holdChecks = () => { holding = true; };
+  const line = () => ctx.doc.querySelector('.ask-guide');
+  return { ...ctx, rec, requests, intent, lead: lead0, send, settle, type, wait, checks, holdChecks, line };
 }
 
 for (const [row, saved, want] of [
@@ -484,3 +529,98 @@ test('R-arch-1: with the flag off the docked composer with the Shaper pin has no
   assert.equal(c.doc.querySelector('.ask-guide, .ask-guide-sw'), null);
   assert.deepEqual(c.requests.filter((r) => /guide/i.test(r)), []);
 });
+
+const GAPS = 'Prompt 2/5 · 3 gaps';
+const checkRequests = (c) => c.requests.filter((r) => r.includes('/api/shape/guide/check'));
+const foldText = (c) => c.doc.querySelector('.ask-guide .ask-guide-fold')?.textContent;
+
+for (const where of ['main', 'docked']) {
+  test(`R-po-2, the ${where} chat: 2 seconds after "Export runs as CSV" one check goes out with the saved role, and the line reads "${GAPS}"`, async (t) => {
+    const c = await composer(t, { lead: 'product' });
+    if (where === 'docked') await dock(c);
+    c.type('Export runs as CSV');
+    await c.wait(1999);
+    assert.deepEqual(checkRequests(c), []);
+    await c.wait(1);
+    assert.deepEqual(checkRequests(c), ['POST /api/shape/guide/check']);
+    assert.deepEqual(c.checks, [{ prompt: 'Export runs as CSV', role: 'product' }]);
+    assert.equal(foldText(c), GAPS);
+    await c.wait(3000);
+    assert.equal(c.checks.length, 1, 'renders after it ask nothing more');
+    assert.equal(foldText(c), GAPS);
+  });
+}
+
+test('with no role saved the check goes out with role null', async (t) => {
+  const c = await composer(t, { lead: null });
+  c.type('Export runs as CSV');
+  await c.wait();
+  assert.deepEqual(c.checks, [{ prompt: 'Export runs as CSV', role: null }]);
+});
+
+test('R-qa-2 example: 40 characters and 3 seconds ask for no check with the flag off, with no Shaper pin (main and docked), or with Guide off after a reload', async (t) => {
+  const forty = 'Uploads of large files fail with no word';
+  assert.equal(forty.length, 40);
+  for (const [row, opts, docked, wanted] of [
+    ['control: Guide on with the Shaper pin', {}, false, ['GET /api/shape/guide', 'PUT /api/shape/guide/prefs', 'POST /api/shape/guide/check']],
+    ['flag off, main', { flag: false }, false, []],
+    ['flag off, docked', { flag: false }, true, []],
+    ['no pin, main', { pin: null }, false, []],
+    ['no pin, docked', { pin: null }, true, []],
+    ['Guide off after a reload', { guideOn: false }, false, ['GET /api/shape/guide']],
+    ['Guide off after a reload, docked', { guideOn: false }, true, ['GET /api/shape/guide']],
+  ]) {
+    const c = await composer(t, opts);
+    if (docked) await dock(c);
+    c.type(forty);
+    await c.settle();       // the offer's save goes out before the pause ends
+    await c.wait(3000);
+    assert.deepEqual(c.requests.filter((r) => /guide/i.test(r)), wanted, row);
+  }
+});
+
+for (const [name, press] of [
+  ['the Send button', (c) => c.doc.querySelector('.ask-send').click()],
+  ['Enter', (c) => c.doc.querySelector('.ask-input').dispatchEvent(new c.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))],
+]) {
+  test(`R-arch-4, never on send: a send by ${name} before the pause ends makes no check`, async (t) => {
+    const c = await composer(t, {});
+    c.type(SHAPER_TEXT);
+    await c.wait(1000);
+    press(c);
+    await c.settle();
+    await c.wait(3000);
+    assert.equal(c.rec.messageBodies?.length, 1, 'sent');
+    assert.equal(c.rec.messageBodies[0].text, `${INTENT_LEADS.shape}\n\n${SHAPER_TEXT}`);
+    assert.deepEqual(c.checks, []);
+    // The control: the same text left alone for the pause is checked.
+    const quiet = await composer(t, {});
+    quiet.type(SHAPER_TEXT);
+    await quiet.wait(3000);
+    assert.equal(quiet.checks.length, 1);
+  });
+}
+
+// The Send table: every state the check can put the line in keeps Send on and sends the person's text.
+for (const [row, arrange, painted] of [
+  ['checking', async (c) => { c.holdChecks(); c.type(SHAPER_TEXT); await c.wait(); },
+    (c) => assert.equal(c.line().querySelector('.ask-guide-t')?.textContent, 'Checking your prompt…')],
+  ['re-checking', async (c) => { c.type('Uploads fail on big'); await c.wait(); c.holdChecks(); c.type(SHAPER_TEXT); await c.wait(); },
+    (c) => { assert.equal(foldText(c), GAPS); assert.equal(c.line().querySelector('.ask-guide-q')?.textContent, 'checking…'); }],
+  ['result', async (c) => { c.type(SHAPER_TEXT); await c.wait(); },
+    (c) => { assert.equal(foldText(c), GAPS); assert.equal(c.line().querySelector('.ask-guide-q'), null); }],
+]) {
+  test(`the Send table, ${row}: Send stays on, one message goes out with the person's words, and no check follows`, async (t) => {
+    const c = await composer(t, {});
+    await arrange(c);
+    painted(c);
+    const before = c.checks.length;
+    await c.send(SHAPER_TEXT);         // asserts Send is enabled
+    assert.equal(c.rec.messageBodies?.length, 1, 'exactly one message');
+    assert.equal(c.rec.messageBodies[0].text, `${INTENT_LEADS.shape}\n\n${SHAPER_TEXT}`);
+    assert.equal(c.doc.querySelector('.ask-user-bubble').textContent, SHAPER_TEXT);
+    await c.wait(3000);
+    assert.equal(c.checks.length, before);
+    assert.doesNotMatch(c.line()?.textContent ?? '', /Prompt|checking/i, 'nothing of the sent prompt stays on the line');
+  });
+}

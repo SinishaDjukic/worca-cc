@@ -44646,7 +44646,7 @@ registerFilesCard();
 // A send from the home arms the hero → dock glide (chatHome.armFlip). The home itself mounts right after the page
 // (mountChatHome, below P1's mount); every function it uses is a hoisted declaration in this block.
 let chatHome = null;
-// The home's and the intent chip's timers: app.js's own setInterval / setTimeout — the page's in a browser; Node's under
+// The home's, the intent chip's and the Guide check's timers: app.js's own setInterval / setTimeout — the page's in a browser; Node's under
 // the jsdom tests, unref'd like _timerTick, since a jsdom window's interval would keep a test process alive for ever.
 const chatHomeTimers = {
   setInterval: (fn, ms) => { const t = setInterval(fn, ms); if (t && typeof t.unref === 'function') t.unref(); return t; },
@@ -44656,7 +44656,7 @@ const chatHomeTimers = {
 };
 const chatIntent = installIntentAddon({ onSend: () => { chatHome?.armFlip(); } });
 const chatRole = installRolePicker({ intent: chatIntent });
-installGuideLine({ intent: chatIntent });
+installGuideLine({ intent: chatIntent, role: () => chatRole.role(), timers: chatHomeTimers });
 const chatRoleRow = mountRoleSetting(document.getElementById('chatRoleHost'), chatRole, { doc: document });
 
 // ── Chat home (worca Chat P6) ──────────────────────────────────────────────────────────────────────────────

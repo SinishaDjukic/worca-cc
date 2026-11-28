@@ -632,3 +632,36 @@ test('slice 4: the Guide paragraph of docs/models.md says what Guide is asked, w
   assert.deepEqual(missing(flat(doc.slice(at, end)), [/\bfive\b|\b5\b/i, /\bcovered\b/i, /\bquestion\b/i, /\bplain\b/i, /\btechnical\b/i,
     /\bsmall\b/i, /\bmedium\b/i, /\blarge\b/i, /\b8,?000\b/]), []);
 });
+
+// Shaper ask screens, slice 5: the check in the composer, and its result and size in the Guide line.
+const SIZE_PHRASES = ['Prompt 5/5 · Large: several runs', 'Prompt 5/5 · Medium: a few runs', 'Clear enough · Small: one run'];
+/** A home-directory path (a mock or scratch folder) never belongs in a doc. */
+const HOME_PATH = /(?:^|[\s("'`])(?:~\/|\/Users\/|\/home\/)/;
+
+test('slice 5: the guide\'s Guide checks paragraph, after Who is asking, says when the check runs, what the line reads and the size words', () => {
+  const small = section(read('shape-it-first.md'), 'Small runs (`shaperSmallRuns`)');
+  const paragraphs = small.split(/\n\s*\n/).map((p) => p.trim());
+  const at = paragraphs.findIndex((p) => p.startsWith('**Guide checks.**'));
+  assert.ok(at >= 0, 'a "**Guide checks.**" paragraph in the Small runs section');
+  assert.ok(at > paragraphs.findIndex((p) => p.startsWith('**Who is asking.**')), 'after **Who is asking.**');
+  const text = flat(paragraphs[at]);
+  assert.deepEqual(missing(text, ['2 seconds', '12 characters', 'Checking your prompt…', 'checking…', 'Prompt 2/5 · 3 gaps',
+    ...SIZE_PHRASES, /never on send/i, /dropped/i]), []);
+  assert.doesNotMatch(text, /small runs/i);
+  assert.doesNotMatch(text, HOME_PATH);
+});
+
+test('slice 5: chat-home\'s Ask worca beside the page says the docked composer checks and sizes under the same pin rule', () => {
+  const beside = section(read('chat-home.md'), 'Ask worca beside the page');
+  const bullet = flat(beside.split(/\n(?=- |\n|## )/).find((b) => b.startsWith('- **Guide.**')) || '');
+  assert.ok(bullet, 'a "- **Guide.**" bullet');
+  assert.deepEqual(missing(bullet, ['Guide', 'Shaper pin', '2 seconds', 'Clear enough · Small: one run']), []);
+  assert.doesNotMatch(bullet, /small runs/i);
+  assert.doesNotMatch(bullet, HOME_PATH);
+});
+
+test('slice 5: the design system\'s Composer bar part describes the result fold, and that the size words give way first', () => {
+  const bar = designPart('Composer bar');
+  assert.deepEqual(missing(bar, ['.ask-guide-fold', /give way first/i]), []);
+  assert.doesNotMatch(bar, HOME_PATH);
+});

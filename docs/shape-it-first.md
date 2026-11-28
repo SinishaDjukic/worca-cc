@@ -630,6 +630,17 @@ line after the Shaper lead, for the model only: the bubble and the chat title ne
 role, and with no role the message is sent as before. The Shaper card reads the role sent with the message (see
 [Requirements first](#requirements-first)), and Settings › Chat › Your role sets or clears it.
 
+**Guide checks.** With Guide on and the Shaper pinned, the composer checks the prompt 2 seconds after you stop typing,
+once it has 12 characters or more (spaces around it do not count) and has changed since the last check. The check
+carries the role you picked, so its wording is plain or technical. It is never on send: Enter, Send and the send
+itself stop a pending check, and at most one check is out at a time. An answer for text you have since changed is
+dropped. The Guide line reads "Checking your prompt…" while the first check runs, then the result: with a gap open a
+fold such as "Prompt 2/5 · 3 gaps", with none the size in words: "Prompt 5/5 · Large: several runs",
+"Prompt 5/5 · Medium: a few runs" or "Clear enough · Small: one run". A re-check keeps the last result with a quiet
+"checking…" after it. A check that fails leaves the line empty, and sending works as it is. The check sends the
+draft text to the Guide model set in Settings › Models before you press Send; switch Guide off to keep drafts local
+until Send.
+
 ### The card's steps
 
 The feature has one card, and its step heads read as the card shows them:

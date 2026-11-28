@@ -83,6 +83,7 @@ export function createIntentAddon({ onSend = null } = {}) {
   let pending = null;        // { count }: a send carried the intent; it is spent once the chat holds more than `count` messages
   const mounts = new Set();
   const subscribers = new Set();   // onChange: told after every set / clear repaint
+  const sendSubscribers = new Set();   // subscribeSend: told about every Ask send, with the sending composer's field
   const changed = () => {
     for (const fn of [...subscribers]) { try { fn(); } catch { /* a subscriber never breaks the chip */ } }
   };
@@ -210,6 +211,7 @@ export function createIntentAddon({ onSend = null } = {}) {
         if (typeof onSend === 'function') {
           try { onSend(); } catch { /* the home's animation never blocks a send */ }
         }
+        for (const fn of [...sendSubscribers]) { try { fn({ field: input }); } catch { /* a subscriber never blocks a send */ } }
         if (current == null) return text;
         if (!pending) pending = { count: messageCount(call('thread')) };
         return intentText(current, text, workflow);
@@ -233,7 +235,14 @@ export function createIntentAddon({ onSend = null } = {}) {
     return () => { subscribers.delete(fn); };
   }
 
-  return { addon: Object.freeze({ id: INTENT_ADDON_ID, mount }), set, clear, leave, onChange,
+  /** Call `fn({ field })` once per Ask send (every transformSend), after the onSend option; `field` is the sending
+   *  composer's `.ask-input`. Returns an unsubscribe. */
+  function subscribeSend(fn) {
+    sendSubscribers.add(fn);
+    return () => { sendSubscribers.delete(fn); };
+  }
+
+  return { addon: Object.freeze({ id: INTENT_ADDON_ID, mount }), set, clear, leave, onChange, onSend: subscribeSend,
     current: () => current, workflow: () => workflow };
 }
 

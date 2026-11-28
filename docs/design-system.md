@@ -514,6 +514,12 @@ Between the field and the bar sits one Guide line (`.ask-guide`, its words in `.
 in an ellipsis. Its title reads "Sending works as it is." The first time, while the prompt is empty, it reads "New: Guide
 checks your idea for gaps before you send. Switch it off any time."; otherwise it is empty and keeps its height. With
 Guide switched off there is no line at all.
+While the first check runs the line reads "Checking your prompt…". A result is the app's fold
+(`button.btn.plan-fold.ask-guide-fold`, built with `fold()`, shut by default): a bold `--ink` head (`.ask-guide-head`,
+"Prompt 2/5"), the rest (`.ask-guide-rest`, " · 3 gaps" or the size words) and a 12px `chevron-down` that turns on
+`aria-expanded="true"` with no transition. Small with no gap is plain words (`.ask-guide-sum`, "Clear enough · Small:
+one run"). A re-check adds a quiet `.ask-guide-q` "checking…" after it. On a narrow line the size words give way first:
+only `.ask-guide-rest` ends in an ellipsis; the head, the chevron and "checking…" never shrink.
 #### Lock tip
 A locked small-runs **Create N PRs** says why in `.rd-tip` (`role="tooltip"`, named by the button's
 `aria-describedby`), never a native `title`, which opens over the status line. It has the Composer bar tip's look

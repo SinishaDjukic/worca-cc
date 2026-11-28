@@ -13,6 +13,15 @@
 .chat-composer-lead > .ask-guide-sw .switch-label{font-size:var(--fs-meta);}
 .ask-guide{display:flex;align-items:center;gap:8px;box-sizing:border-box;height:33px;margin:0 6px;border-top:1px solid var(--line);font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;min-width:0;}
 .ask-guide-t{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;}
+/* The check's result: the app's fold (.plan-fold, from shape-it.css, which loads later: hence the child selector) or,
+   small with no gap, plain words. The size words give way first; the score, the chevron and "checking…" never shrink. */
+.ask-guide > .ask-guide-fold{align-self:center;flex:0 1 auto;min-width:0;overflow:hidden;}
+.ask-guide-fold .plan-fold-text,.ask-guide-sum{display:flex;min-width:0;overflow:hidden;}
+.ask-guide-head{flex:none;color:var(--ink);font-weight:600;}
+.ask-guide-rest{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:pre;}   /* pre: a flex item drops its leading space */
+.ask-guide-q{flex:none;color:var(--ink-2);}
+.ask-guide-chev{flex:none;}
+.ask-guide-fold[aria-expanded="true"] .ask-guide-chev{transform:rotate(180deg);}
 @media (pointer:coarse){.ask-guide{height:41px;}.chat-composer-lead > .ask-guide-sw{min-height:40px;}}
 /* The page (worca Chat P1): it fills the content column — .main stops scrolling and gives up its gutter, the section
    takes the rest, and the page is a row: history column · conversation · run panel slot (P4 sets its width). */
