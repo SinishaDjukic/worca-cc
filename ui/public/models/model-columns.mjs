@@ -37,15 +37,20 @@ function providerStatus(engine, name, models, rawRows, engines) {
   return { word: 'Ready', tone: 'ok', title: '' };
 }
 
-/** One entry per model harness (MODEL_ENGINE_NAMES order): its providers (modelGroups of the rows it runs, its own
- *  sign-in first when no group is), each provider's models and status word. → ColumnHarness[] */
+/** One entry per listed model harness (MODEL_ENGINE_NAMES order): its providers (modelGroups of the rows it runs, its
+ *  own sign-in first when no group is), each provider's models and status word. A harness whose readiness row says not
+ *  ready is left out, unless it is the default harness or the one `current` runs on; with no rows (not read yet), or no
+ *  row for it, nothing is known and it is listed. → ColumnHarness[] */
 export function harnessTree(catalog, { defaultEngine = 'claude', engines = null, current = null } = {}) {
   const rows = rowsOf(catalog);
   const curModel = modelOf(current);
   const lost = curModel && !rows.some((m) => m.id === curModel) ? curModel : '';
   const lostOn = (current && str(current.engine)) || defaultEngine;
-  return MODEL_ENGINE_NAMES.map((engine) => {
-    const rowOf = Array.isArray(engines) ? engines.find((e) => e && e.name === engine) : null;
+  const readiness = (engine) => (Array.isArray(engines) ? engines.find((e) => e && e.name === engine) || null : null);
+  const kept = new Set([defaultEngine, curModel ? pickHarness(current, { catalog: rows, defaultEngine }) : defaultEngine]);
+  const listed = (engine) => kept.has(engine) || !readiness(engine) || !!readiness(engine).ready;
+  return MODEL_ENGINE_NAMES.filter(listed).map((engine) => {
+    const rowOf = readiness(engine);
     const locked = rowOf && rowOf.broker ? str(rowOf.reason) : '';
     const runs = rows.filter((m) => runsOn(m, engine) && (!m.hidden || m.id === curModel));
     const groups = modelGroups(runs, { engine }).map((g) => ({ name: g.label, rows: g.models }));
@@ -301,6 +306,11 @@ export function openModelColumns({ doc, win, anchor, catalog, value, defaultEngi
   function onRows() {
     if (!root.isConnected) return;
     tree = build(engines());
+    // The shown harness turned out not ready and left the list: show the first one still listed.
+    if (tree.length && !tree.some((h) => h.engine === state.harness)) {
+      const next = tree.find((h) => !h.locked) || tree[0];
+      state = { ...selectColumn(tree, state, 'harness', next.engine), col: state.col === 'inherit' ? 'inherit' : 'harness' };
+    }
     draw();
   }
 

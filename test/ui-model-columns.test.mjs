@@ -51,12 +51,12 @@ test('the panel: a non-modal dialog on <body> with inherit and the host\'s hint,
   const heads = [...p.querySelectorAll('.mdl-col-h')].map((h) => h.textContent);
   assert.deepEqual(heads, ['Harness', 'Provider', 'Model · 1']);
   ['harness', 'provider', 'model'].forEach((c, i) => assert.equal(r.doc.getElementById(r.col(c).querySelector('[role="listbox"]').getAttribute('aria-labelledby')).textContent, heads[i]));
-  assert.deepEqual(r.names('harness'), ['Claude Code', 'OpenAI Codex', 'GitHub Copilot', 'Cursor', 'Gemini CLI', 'Goose', 'OpenCode', 'Qwen Code']);
+  assert.deepEqual(r.names('harness'), ['Claude Code', 'GitHub Copilot', 'Gemini CLI', 'Goose', 'OpenCode', 'Qwen Code'], 'Codex (signed out) and Cursor (behind the broker) are not listed');
   assert.deepEqual(r.rows('harness').filter((x) => x.querySelector('.badge')).map((x) => [x.dataset.key, x.querySelector('.badge').textContent]), [['claude', 'Default']]);
-  assert.ok(r.row('harness', 'codex').querySelector('.mdl-mark.sm img'));
+  assert.ok(r.row('harness', 'claude').querySelector('.mdl-mark.sm img'));
   assert.deepEqual(r.rows('provider').map((x) => { const s = x.querySelector('.mdl-st'); return `${s.className}:${s.textContent}`; }),
     ['mdl-st ok:Ready', 'mdl-st need:Needs key', 'mdl-st need:Needs sign-in', 'mdl-st ok:Ready']);
-  assert.deepEqual(r.rows('harness').map((x) => x.tabIndex), [0, -1, -1, -1, -1, -1, -1, -1], 'one Tab stop per column');
+  assert.deepEqual(r.rows('harness').map((x) => x.tabIndex), [0, -1, -1, -1, -1, -1], 'one Tab stop per column');
   assert.equal(r.doc.activeElement, inh, 'nothing picked: the focus is on inherit');
 });
 test('a model on two harnesses: listed under each with "also on …", ticked under the pick\'s harness only; a pick from the other names that harness', () => {
@@ -75,7 +75,7 @@ test('a model on two harnesses: listed under each with "also on …", ticked und
   assert.deepEqual(r.picks, [{ model: 'openai-gpt-6.1-sol', engine: 'claude' }]);
 });
 test('keys: Up/Down/Home/End in a column, Right/Enter into the next, Left back; Enter picks after the trigger has the focus; no key reaches the page', () => {
-  const r = rig(); let at = null; let leaked = 0;
+  const r = rig({ engines: () => null }); let at = null; let leaked = 0;   // no readiness known: every harness is listed
   r.open({ onPick: (v) => { at = { v, open: !!r.pop(), focus: r.doc.activeElement === r.anchor }; } });
   r.doc.addEventListener('keydown', () => { leaked += 1; });
   r.key('ArrowDown');
@@ -107,31 +107,58 @@ test('a harness with no models: No models yet on its sign-in, an empty Model col
   const none = rig({ onAddModel: null }); none.open(); none.row('harness', 'gemini').click();
   assert.equal(none.col('model').querySelector('.mdl-cols-add'), null);
 });
-test('a model that needs a key and a broker-locked harness are disabled with their reasons; neither picks; the keys pass the lock by', () => {
+test('a model that needs a key is disabled with its reason and does not pick', () => {
   const r = rig(); r.open();
   r.row('provider', 'OpenAI-compatible').click();
   const kimi = r.row('model', 'or-kimi-k3');
   assert.deepEqual([kimi.disabled, kimi.getAttribute('aria-disabled'), kimi.title], [true, 'true', 'Its provider is not set up yet. Set it up on the Providers tab.']);
   kimi.dispatchEvent(new r.win.MouseEvent('click', { bubbles: true }));
+  assert.deepEqual([r.picks, !!r.pop()], [[], true]);
+});
+test('a harness that is not ready is listed only as the default harness or the pick\'s own: Not ready with its reason; a broker-locked one is disabled and the keys pass it by', () => {
+  const pinned = rig({ value: { model: 'gpt-6.1-sol', engine: 'codex' } }); pinned.open();
+  assert.deepEqual(pinned.names('harness'), ['Claude Code', 'OpenAI Codex', 'GitHub Copilot', 'Gemini CLI', 'Goose', 'OpenCode', 'Qwen Code']);
+  const s = pinned.row('provider', 'ChatGPT sign-in').querySelector('.mdl-st');
+  assert.deepEqual([s.className, s.textContent, s.title], ['mdl-st off', 'Not ready', 'Codex is not signed in.']);
+  const dflt = rig(); dflt.open({ defaultEngine: 'codex' });
+  assert.deepEqual([dflt.names('harness').includes('OpenAI Codex'), dflt.row('harness', 'codex').querySelector('.badge').textContent, dflt.row('harness', 'cursor')], [true, 'Default', undefined]);
+  const r = rig({ value: { model: 'gone-1', engine: 'cursor' } }); r.open();
   const cursor = r.row('harness', 'cursor');
-  assert.deepEqual([cursor.disabled, cursor.title], [true, 'cursor is off while the credential broker is on']);
+  assert.deepEqual([cursor.disabled, cursor.title, r.row('harness', 'codex')], [true, 'cursor is off while the credential broker is on', undefined]);
+  r.row('harness', 'claude').click();
   cursor.dispatchEvent(new r.win.MouseEvent('click', { bubbles: true }));
   assert.equal(r.row('harness', 'claude').getAttribute('aria-selected'), 'true');
   r.row('harness', 'copilot').click(); r.key('ArrowDown');
-  assert.equal(r.doc.activeElement, r.row('harness', 'gemini'));
-  r.row('harness', 'codex').click();
-  const s = r.row('provider', 'ChatGPT sign-in').querySelector('.mdl-st');
-  assert.deepEqual([s.className, s.textContent, s.title, r.picks], ['mdl-st off', 'Not ready', 'Codex is not signed in.', []]);
+  assert.deepEqual([r.doc.activeElement, r.picks], [r.row('harness', 'gemini'), []]);
 });
-test('readiness that lands after the open fills the words and keeps the focus; rows that land after the close draw nothing', () => {
+test('readiness that lands after the open fills the words, drops the harnesses that are not ready and keeps the focus; rows that land after the close draw nothing', () => {
   const late = lateRows(); const r = rig({ engines: late.get }); r.open();
   assert.equal(r.row('provider', 'Claude sign-in').querySelector('.mdl-st'), null);
+  assert.equal(r.rows('harness').length, 8, 'nothing known yet: every harness');
   r.key('ArrowDown');
   late.land();
-  assert.deepEqual([r.row('provider', 'Claude sign-in').querySelector('.mdl-st').textContent, r.doc.activeElement.dataset.key, r.row('harness', 'cursor').disabled], ['Ready', 'claude', true]);
+  assert.deepEqual([r.row('provider', 'Claude sign-in').querySelector('.mdl-st').textContent, r.doc.activeElement.dataset.key, r.row('harness', 'cursor'), r.row('harness', 'codex')], ['Ready', 'claude', undefined, undefined]);
+  assert.deepEqual(r.names('harness'), ['Claude Code', 'GitHub Copilot', 'Gemini CLI', 'Goose', 'OpenCode', 'Qwen Code']);
   const gone = lateRows(); const g = rig({ engines: gone.get }); g.open();
   g.key('Escape'); gone.land();
   assert.equal(g.pop(), null);
+});
+test('the shown harness turns out not ready when readiness lands: the first listed harness is shown and takes the focus', () => {
+  const late = lateRows(); const r = rig({ engines: late.get }); r.open();
+  r.key('ArrowDown'); r.key('ArrowDown');
+  assert.equal(r.doc.activeElement, r.row('harness', 'codex'));
+  late.land();
+  assert.deepEqual([r.row('harness', 'codex'), r.row('harness', 'claude').getAttribute('aria-selected'), r.doc.activeElement, r.names('provider')[0]],
+    [undefined, 'true', r.row('harness', 'claude'), 'Claude sign-in']);
+  const deep = lateRows(); const d = rig({ engines: deep.get }); d.open();
+  d.row('harness', 'codex').click(); d.row('provider', 'ChatGPT sign-in').click(); d.key('ArrowRight');
+  assert.equal(d.doc.activeElement, d.row('model', 'gpt-6.1-sol'));
+  deep.land();
+  assert.deepEqual([d.doc.activeElement, d.rows('model').map((x) => x.dataset.key), d.picks], [d.row('harness', 'claude'), ['claude-opus-5-5'], []]);
+  const idle = lateRows(); const i = rig({ engines: idle.get }); i.open();
+  i.row('harness', 'codex').click(); i.pop().querySelector('.mdl-cols-inherit').focus();
+  idle.land();
+  assert.deepEqual([i.doc.activeElement.className, i.row('harness', 'claude').getAttribute('aria-selected')], ['menu-item mdl-cols-inherit', 'true'], 'the focus on inherit stays there');
 });
 test('placed below its trigger; the columns take the room there is, up to 420px', () => {
   const r = rig();

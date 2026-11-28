@@ -137,7 +137,9 @@ A model pick can name the harness it runs on: `engine` beside `model` (`claude`,
   and role picks (`PATCH /api/config`), the Default workflow's per-role steps (`POST /api/config`) and a run overlay
   (`overlay.nodes.<id>.engine`, `….roles.<key>.engine`). Presets, a run's saved setup and **Rerun** keep it.
 - **Where to pick.** The Workflows view, the Chat run card, New run › Advanced › Agents and Requirements › **Set up
-  this run** open the same harness › provider › model picker.
+  this run** open the same harness › provider › model picker. It lists the harnesses that are ready (installed and
+  signed in, and not turned off by the [credential broker](credential-broker.md)), plus the run's default harness and
+  the harness of the step's current pick, ready or not. Until the readiness is read, it lists every harness.
 - **It travels with its model.** A layer that names another model leaves the lower layer's `engine` behind. A `PATCH`
   without `engine` keeps it while the model stays the same and clears it when the model changes or is cleared; `null`
   or `''` clears it.

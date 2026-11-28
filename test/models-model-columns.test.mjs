@@ -21,10 +21,21 @@ const of = (t, engine) => t.find((h) => h.engine === engine);
 const provs = (t, engine) => of(t, engine).providers.map((p) => [p.name, p.status ? `${p.status.tone}:${p.status.word}` : null,
   p.models.map((m) => `${m.id}|${m.name}|${m.note}|${m.blocked}`)]);
 
-test('harnessTree: every model harness in order; providers are modelGroups of what it runs plus its own sign-in; a two-harness model on both', () => {
-  const t = tree();
-  assert.deepEqual(t.map((h) => [h.engine, h.name, h.isDefault]), [['claude', 'Claude Code', true], ['codex', 'OpenAI Codex', false], ['copilot', 'GitHub Copilot', false],
-    ['cursor', 'Cursor', false], ['gemini', 'Gemini CLI', false], ['goose', 'Goose', false], ['opencode', 'OpenCode', false], ['qwen', 'Qwen Code', false]]);
+test('harnessTree: a harness whose readiness row says not ready is left out; the default harness and the pick\'s own stay; no rows, or no row, lists it', () => {
+  const names = (t) => t.map((h) => h.engine);
+  const READY = ['claude', 'copilot', 'gemini', 'goose', 'opencode', 'qwen'];   // Codex is signed out, Cursor is behind the broker
+  assert.deepEqual(names(tree()), READY);
+  assert.deepEqual(names(harnessTree(CAT, { engines: null })), ['claude', 'codex', 'copilot', 'cursor', 'gemini', 'goose', 'opencode', 'qwen'], 'readiness not known yet: nothing is left out');
+  assert.deepEqual(names(tree({ defaultEngine: 'codex' })), ['claude', 'codex', 'copilot', 'gemini', 'goose', 'opencode', 'qwen'], 'the default harness stays');
+  assert.deepEqual(names(tree({ current: { model: 'openai-gpt-6.1-sol', engine: 'codex' } })), ['claude', 'codex', 'copilot', 'gemini', 'goose', 'opencode', 'qwen'], 'a pinned pick\'s harness stays');
+  assert.deepEqual(names(tree({ current: { model: 'gpt-6.1-sol' } })), ['claude', 'codex', 'copilot', 'gemini', 'goose', 'opencode', 'qwen'], 'a soft pick that runs on Codex alone keeps Codex');
+  assert.deepEqual(names(tree({ current: { model: 'openai-gpt-6.1-sol' } })), READY, 'a soft pick that runs on the default harness keeps nothing else');
+  assert.deepEqual(names(tree({ current: { model: 'gone-1', engine: 'cursor' } })), ['claude', 'copilot', 'cursor', 'gemini', 'goose', 'opencode', 'qwen'], 'a lost pick\'s harness stays');
+});
+test('harnessTree: the listed harnesses in order; providers are modelGroups of what it runs plus its own sign-in; a two-harness model on both', () => {
+  const t = tree({ defaultEngine: 'codex' });
+  assert.deepEqual(t.map((h) => [h.engine, h.name, h.isDefault]), [['claude', 'Claude Code', false], ['codex', 'OpenAI Codex', true], ['copilot', 'GitHub Copilot', false],
+    ['gemini', 'Gemini CLI', false], ['goose', 'Goose', false], ['opencode', 'OpenCode', false], ['qwen', 'Qwen Code', false]]);
   assert.deepEqual(provs(t, 'claude'), [
     ['Claude sign-in', 'ok:Ready', ['claude-opus-5-5|Opus 5.5||false']],
     ['Anthropic-compatible', 'need:Needs key', ['ant-sonnet|Sonnet via gateway|Needs key|true']],
@@ -38,7 +49,7 @@ test('harnessTree: every model harness in order; providers are modelGroups of wh
   assert.equal(of(t, 'claude').providers[3].models[1].title, 'Its provider is not set up yet. Set it up on the Providers tab.');
 });
 test('harnessTree: a broker-locked harness blocks its models with the reason; no readiness, no sign-in word; hidden only when picked; a lost pick listed first', () => {
-  const t = harnessTree([...CAT, { id: 'cur-1', label: 'Cur One', engine: 'cursor', connection: sign('cursor'), harnesses: ['cursor'] }], { engines: ENGINES });
+  const t = harnessTree([...CAT, { id: 'cur-1', label: 'Cur One', engine: 'cursor', connection: sign('cursor'), harnesses: ['cursor'] }], { engines: ENGINES, current: { model: 'cur-1', engine: 'cursor' } });
   assert.equal(of(t, 'cursor').locked, 'cursor is off while the credential broker is on');
   assert.deepEqual(of(t, 'cursor').providers[0].models.map((m) => [m.blocked, m.title]), [[true, 'cursor is off while the credential broker is on']]);
   assert.equal(harnessTree(CAT, { engines: null })[0].providers[0].status, null);
@@ -58,21 +69,25 @@ test('initialColumns: a pinned pick on its harness, a soft one on the default ha
   assert.deepEqual(st({ model: 'gone-1', engine: 'codex' }), { col: 'model', harness: 'codex', provider: 'ChatGPT sign-in', model: 'gone-1', tick: { engine: 'codex', model: 'gone-1' } });
 });
 test('selectColumn: a shown harness opens on the tick\'s provider or its first with models; a provider stops on its tick or first open model', () => {
-  const t = tree();
+  const t = tree({ current: { model: 'openai-gpt-6.1-sol', engine: 'codex' } });
   const s = { col: 'model', harness: 'claude', provider: 'Claude sign-in', model: 'claude-opus-5-5', tick: { engine: 'codex', model: 'openai-gpt-6.1-sol' } };
   assert.deepEqual(selectColumn(t, s, 'harness', 'codex'), { ...s, col: 'harness', harness: 'codex', provider: 'OpenAI-compatible', model: 'openai-gpt-6.1-sol' });
   assert.deepEqual(selectColumn(t, s, 'provider', 'Anthropic-compatible'), { ...s, col: 'provider', provider: 'Anthropic-compatible', model: '' });
   assert.deepEqual(selectColumn(t, s, 'model', 'claude-opus-5-5'), { ...s, col: 'model' });
 });
 test('stepColumns: the keys as the table says', () => {
-  const t = tree();
+  const t = tree({ current: { model: 'gpt-6.1-sol', engine: 'codex' } });   // Codex listed as the pick's own harness
   const at = (s) => ({ tick: null, ...s });
   const go = (s, key) => stepColumns(t, at(s), key);
   const h = { col: 'harness', harness: 'claude', provider: 'Claude sign-in', model: 'claude-opus-5-5' };
   assert.equal(go({ ...h, col: 'inherit' }, 'ArrowDown').state.col, 'harness');
   assert.deepEqual([go({ ...h, col: 'inherit' }, 'Enter').picked, go({ ...h, col: 'inherit' }, ' ').value], [true, null]);
   assert.deepEqual(go(h, 'ArrowDown').state, at({ col: 'harness', harness: 'codex', provider: 'ChatGPT sign-in', model: 'gpt-6.1-sol' }));
-  assert.equal(go({ ...h, harness: 'copilot', provider: 'Copilot sign-in', model: 'copilot/claude-sonnet-5-5' }, 'ArrowDown').state.harness, 'gemini', 'the locked Cursor is passed by');
+  const cop = { ...h, harness: 'copilot', provider: 'Copilot sign-in', model: 'copilot/claude-sonnet-5-5' };
+  assert.equal(go(cop, 'ArrowDown').state.harness, 'gemini', 'Cursor, behind the broker, is not listed');
+  const locked = tree({ current: { model: 'gone-1', engine: 'cursor' } });   // listed as the pick's own harness, and locked
+  assert.equal(stepColumns(locked, at(cop), 'ArrowDown').state.harness, 'gemini', 'the locked Cursor is passed by');
+  assert.equal(stepColumns(locked, at({ ...h, col: 'inherit', harness: 'cursor', provider: 'Cursor sign-in', model: '' }), 'ArrowDown').state.harness, 'claude', 'from inherit, past a locked shown harness');
   assert.deepEqual([go(h, 'ArrowUp').state.harness, go(h, 'End').state.harness], ['claude', 'qwen']);
   assert.deepEqual([go(h, 'ArrowRight').state.col, go(h, 'Enter').state.col, go(h, 'ArrowLeft').state.col, go(h, ' ').state.col], ['provider', 'provider', 'harness', 'harness']);
   const p = { ...h, col: 'provider' };

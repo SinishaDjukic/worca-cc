@@ -3236,8 +3236,14 @@ test('in the real app the run\'s default harness decides an inherit step\'s effo
     assert.deepEqual([...doc.querySelectorAll('.wfv-menu .wfv-menu-item')].map((b) => b.textContent).slice(1).sort(), efforts, engine);
     doc.querySelector('.wfv-tb [data-tb="model"]').click(); await tick(4);
     assert.equal(pickerOpt(doc, 'harness', engine).querySelector('.badge')?.textContent, 'Default', engine);
-    pickerOpt(doc, 'harness', 'codex').click(); await tick();
-    assert.deepEqual([...doc.querySelectorAll('.mdl-cols-pop .mdl-st')].map((e) => [e.textContent, e.title]), [['Not ready', 'not signed in']], engine);
+    // Codex is not ready: listed only where it is the run's default harness, with the reason on its sign-in.
+    if (engine === 'codex') {
+      pickerOpt(doc, 'harness', 'codex').click(); await tick();
+      assert.deepEqual([...doc.querySelectorAll('.mdl-cols-pop .mdl-st')].map((e) => [e.textContent, e.title]), [['Not ready', 'not signed in']], engine);
+    } else {
+      assert.equal(pickerOpt(doc, 'harness', 'codex'), undefined, 'a harness that is not ready is not listed');
+      assert.ok(pickerOpt(doc, 'harness', 'copilot'), 'one with no readiness row is');
+    }
   }
 });
 test('in the real app Add model under a harness with no models opens Add model on #models for that harness', async () => {
