@@ -622,3 +622,13 @@ test('ask screens s3: the design system\'s Composer bar part describes the Guide
   assert.deepEqual(missing(bar, ['Guide', '.ask-guide', '.ask-guide-t', 'Sending works as it is.',
     'New: Guide checks your idea for gaps before you send. Switch it off any time.', /ellipsis/i, /never wraps/i, /32px/, /40px/, /coarse/i]), []);
 });
+
+// Shaper ask screens, slice 4: what the Guide job is asked and what it returns.
+test('slice 4: the Guide paragraph of docs/models.md says what Guide is asked, what it returns and the 8000 limit', () => {
+  const doc = read('models.md');
+  const at = doc.indexOf('\n*Guide* is ');
+  const end = doc.indexOf('\nThe *Requirements interview* helper', at);
+  assert.ok(at >= 0 && end > at, 'the Guide paragraph, before the Requirements interview one');
+  assert.deepEqual(missing(flat(doc.slice(at, end)), [/\bfive\b|\b5\b/i, /\bcovered\b/i, /\bquestion\b/i, /\bplain\b/i, /\btechnical\b/i,
+    /\bsmall\b/i, /\bmedium\b/i, /\blarge\b/i, /\b8,?000\b/]), []);
+});

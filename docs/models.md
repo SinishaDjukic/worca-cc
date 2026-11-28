@@ -800,7 +800,12 @@ commands within a minute, while lines already written stay until a restart.
 while the shaperSmallRuns flag is on (`shaperSmallRuns`). It takes a model and an effort, on the
 Claude Code tile only (`guideModel`, user-level); unset, it runs on the cheapest ready Claude model
 at its lowest effort. Change it at Models › Jobs › Helper jobs › Guide: the composer's Guide switch
-names the model in its tooltip and follows a save without a reload.
+names the model in its tooltip and follows a save without a reload. Guide is asked the prompt
+alone: no chat, no files, no role name and no tools, from an empty folder. It checks five things in
+the asker's wording, plain for Product, UX and Compliance and technical otherwise: who it is for,
+what they get, what starts it, its limits and how you know it worked. For each check it returns
+covered or one open question, plus a size of small, medium or large. A prompt over 8000 characters
+is not sent, and with the Guide switch off nothing is sent.
 
 The *Requirements interview* helper (the Requirements page's product briefs, code looks and interview
 rounds) runs on Claude only and is set per user. Unlike Memory defragment, it takes an effort without a
