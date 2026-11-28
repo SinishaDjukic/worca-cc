@@ -362,7 +362,7 @@ inside the view.
 | Runs tab: the filter box above its cards | S |
 | Runs tab: Network proxy | S — timeouts and the local port under More; in a container a line says the egress sidecar holds the login (no local port), and a login the operator manages shows status only (a rejected one says the operator must replace the login file); when the egress sidecar cannot be reached the line says so, its buttons are off and Retry checks again |
 | Labs tab (feature flags) | S — flags are independent of levels (docs/feature-flags.md) |
-| General: root folders; Runs tab: Scheduled runs defaults, Workspaces (scan models), chat notifications; Chat tab (limits, tools, web access, chat history) | A |
+| General: root folders; Runs tab: Scheduled runs defaults, Workspaces (scan models), chat notifications; Chat tab (limits, tools, web access, chat history, checkouts) | A |
 | Runs tab: Actions (keep policy, port range, editor/terminal, cap) | A |
 | Runs tab › Actions: Preview ports (All local ports / Actions range only; locked to the range on a hosted Worca) | A — with its card |
 | Runs tab: Wait for the network | A |

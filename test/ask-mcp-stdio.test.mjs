@@ -5,13 +5,18 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, realpathSync, existsSync, rmSync, utimesSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
+import { templateRepo } from './helpers/git-dir.mjs';
+import { prepare } from '../src/core/db.mjs';
+import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
+import { openAskWorktree, removeThreadWorktrees } from '../src/core/ask/worktrees.mjs';
+import { freeIdleAskWorktrees } from '../src/core/ask/worktree-idle.mjs';
 import { addProject } from '../src/core/projects.mjs';
 import { createThread, appendMessage, addAttachment, updateThread, getAttachment, attachmentPath, attachmentSourcePath, askOutDir, attachmentsDir } from '../src/core/ask/store.mjs';
 import { createRpcServer, parseArgv, main } from '../src/core/ask/mcp-stdio.mjs';
@@ -252,4 +257,43 @@ test('real child: show_files snapshots a $WORCA_ASK_OUT file into this thread\'s
   assert.equal(attachmentSourcePath(thread.id, att.id), realpathSync(join(out, 'a.png')), 'the copy remembers its original, server-side');
   const file = attachmentPath(thread.id, att.id);
   assert.ok(file && realpathSync(file).startsWith(realpathSync(attachmentsDir(thread.id))), file);
+});
+
+test('real child: at a full worktree cap open_worktree names the holders and frees nothing; the server-side Free idle then makes room', async () => {
+  const repo = templateRepo('mcpcap', { branch: 'main', user: true, files: { 'README.md': '# hi\n' } });
+  const [project] = (await addProject({ name: 'mcpcap', path: repo })).filter((p) => p.name === 'mcpcap');
+  const chats = [];
+  const paths = [];
+  const asker = createThread({ title: 'asker' });
+  try {
+    // every holder is clean and 30 days idle: only the (real) clock would let anything free them
+    const at = new Date(Date.now() - 30 * 24 * 60 * 60_000);
+    for (let i = 0; i < ASK_LIMITS.worktreesGlobal; i++) {
+      const t = createThread({ title: `holder ${i}` });
+      chats.push(t);
+      const w = await openAskWorktree({ threadId: t.id, projectKey: project.key, ref: 'main' });
+      paths.push(w.path);
+      prepare('UPDATE ask_worktrees SET created_at = ?, updated_at = ? WHERE id = ?').run(at.toISOString(), at.toISOString(), w.worktreeId);
+      prepare('UPDATE ask_threads SET updated_at = ? WHERE id = ?').run(at.toISOString(), t.id);
+      utimesSync(join(w.path, '.git'), at, at);
+    }
+    const open = (id) => runChild(['--home', home, '--thread', asker.id], [
+      { jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'open_worktree', arguments: { projectKey: project.key, ref: 'main' } } },
+    ], { env: { WORCA_ASK_WEB: '', WORCA_ASK_COMMANDS: '', ASK_COMMAND_TOKEN: '' } }).then((r) => JSON.parse(r.out.split('\n').filter(Boolean)[0]).result);
+    const full = await open(1);
+    assert.equal(full.isError, true);
+    assert.match(full.content[0].text, /global worktree cap reached \(15\)\. Held by: "holder \d+" \(1\)/);
+    assert.match(full.content[0].text, /Settings › Chat › Chat checkouts/);
+    const rows = () => prepare('SELECT id FROM ask_worktrees').all().length;
+    assert.equal(rows(), ASK_LIMITS.worktreesGlobal, 'the child frees nothing, even though every checkout is clean and 30 days idle');
+    assert.ok(paths.every((p) => existsSync(p)), 'and every checkout folder is still there');
+    // the server process frees one idle checkout (same real clock), then the child can open again
+    const res = await freeIdleAskWorktrees({ busyFor: () => null, limit: 1 });
+    assert.equal(res.freed.length, 1);
+    const again = await open(2);
+    assert.equal(again.isError, undefined, again.content[0].text);
+  } finally {
+    for (const t of [...chats, asker]) await removeThreadWorktrees(t.id).catch(() => {});
+    rmSync(repo, { recursive: true, force: true });
+  }
 });

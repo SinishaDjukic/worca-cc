@@ -70,5 +70,7 @@
   { "file": "ui/server.mjs", "from": 10577, "to": 10588, "commit": "c3468f083",
     "why": "Secret vault slice 6 (on c3468f083): the start-time vault settle and migration call (2 lines), the import of the two flag helpers (1 line) and the flag-change handler that primes the key and migrates on the off-to-on edge (8 more lines than the one-line handler before); measured with wc -l on this branch merged with dev a2891abf7" },
   { "file": "ui/server.mjs", "from": 10922, "to": 10936, "commit": "4663003ae",
-    "why": "Secret vault (#1521) rebased onto dev a3cd8b9cc: the same 14 lines the three raises above recorded on the older dev (10574 to 10588: the startSecretsProbe and flag-helper imports, the probe call in the listen callback, the boot settle and migration call, the flag-change handler), now on top of the #1619 integration cap; measured with readServerSource on the rebase" }
+    "why": "Secret vault (#1521) rebased onto dev a3cd8b9cc: the same 14 lines the three raises above recorded on the older dev (10574 to 10588: the startSecretsProbe and flag-helper imports, the probe call in the listen callback, the boot settle and migration call, the flag-change handler), now on top of the #1619 integration cap; measured with readServerSource on the rebase" },
+  { "file": "ui/server.mjs", "from": 10936, "to": 10951, "commit": "c3d709348",
+    "why": "Chat checkouts: free idle ones (#1591) merged with dev 5aebfd8a9: the boot idle-checkout step and its summary field, the checkout claim and removing guards and their exports (15 lines, outside the route regions), on top of the Secret vault (#1521) cap; measured with readServerSource on the merge" }
 ]

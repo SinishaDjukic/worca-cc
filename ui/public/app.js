@@ -232,7 +232,7 @@ import { renderCatalogue, renderModelPanel } from './models/catalogue-view.mjs';
 import { buildJobs, jobsSaved, jobsSaveBody, jobsDirty } from './models/jobs-model.mjs';
 import { renderJobs, openOverrideMenu } from './models/jobs-view.mjs';
 import { openModelPicker } from './models/model-picker.mjs';
-import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
+import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields, collectAskWebFields, renderCheckoutsList, checkoutsSummary, checkoutConfirmMessage, createCheckoutsRefresher } from './chat-settings-view.mjs';
 import { renderCredentials } from './credentials-view.mjs';
 import { renderExtensionPairings, browserLabel, formatPairCode, renderExtensionInstall, selectInstallBrowser, detectBrowser } from './extension-settings-view.mjs';
 import { mountNetworkProxyCard } from './settings-network-proxy.mjs';
@@ -2071,6 +2071,7 @@ function handleServerMessage(msg) {
   // seq) and ride the same broadcast socket. Handle them BEFORE the
   // !msg.runId early-return below.
   if (typeof msg.type === 'string' && msg.type.startsWith('ask-')) {
+    if (msg.type === 'ask-worktrees') askCheckoutsRefresh.poke();   // a checkout opened, closed or was freed: the Settings › Chat list follows
     alerts.onAskFrame(msg);   // a card waiting for an OK, in any chat (the panel only applies the open one)
     awayScreensaver?.onAskFrame(msg);   // chat turns and proposals it counts
     askPanel?.pushServerFrame(msg);
@@ -18377,6 +18378,94 @@ async function deleteAskHistory() {
   await loadAskHistory();
 }
 document.getElementById('askHistoryDelete')?.addEventListener('click', deleteAskHistory);
+
+// ---- Ask Worca chat checkouts (same card, below Chat history) ---------------
+// GET /api/ask/worktrees paints the slots and each checkout's verdict (chat-settings-view.mjs). Free idle removes
+// every safe one (POST …/free-idle); Remove takes one, behind a danger confirm that lists exactly what would be lost
+// when it is not safe. The server re-checks everything on each call and a confirm is bound to the state it listed.
+// Each load costs about two git probes per checkout, so the ws frame refreshes only while the card is on screen.
+let askCheckouts = null;
+function setAskCheckoutsMsg(text, kind) {
+  reportStatus(document.getElementById('askCheckoutsMsg'), 'hint drow-help', text, kind);
+}
+function paintAskCheckouts(payload) {
+  const list = document.getElementById('askCheckoutsList');
+  if (!list) return;
+  askCheckouts = payload;
+  document.getElementById('askCheckoutsSummary').textContent = checkoutsSummary(payload);
+  list.replaceChildren(renderCheckoutsList(payload, { doc: document }));
+  document.getElementById('askCheckoutsFree').disabled = !payload.items.some((i) => i.safe);
+}
+async function loadAskCheckouts() {
+  const list = document.getElementById('askCheckoutsList');
+  if (!list) return;
+  if (!askCheckouts) document.getElementById('askCheckoutsSummary').textContent = 'Checking checkouts…';
+  try {
+    const res = await fetch('/api/ask/worktrees');
+    const data = await safeJson(res);
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    paintAskCheckouts(data);
+    setAskCheckoutsMsg('');
+  } catch (e) { setAskCheckoutsMsg(e.message, 'err-inline'); }
+}
+const askCheckoutsRefresh = createCheckoutsRefresher({
+  load: loadAskCheckouts,
+  visible: () => currentView() === 'settings' && currentSettingsTab === 'ask' && !!document.getElementById('askCheckoutsList'),
+});
+async function freeIdleCheckouts() {
+  const btn = document.getElementById('askCheckoutsFree');
+  setAskCheckoutsMsg('');
+  const r = await withButton(btn, async () => {
+    const res = await fetch('/api/ask/worktrees/free-idle', { method: 'POST' });
+    const data = await safeJson(res);
+    if (!res.ok) return { ok: false, error: data.error || `HTTP ${res.status}` };
+    return { ok: true, data };
+  }, { busy: 'Freeing…', done: 'Freed', idleDisabled: () => !askCheckouts?.items.some((i) => i.safe) });
+  if (r.skipped) return;
+  if (!r.ok) { setAskCheckoutsMsg(r.error, 'err'); return; }
+  const n = r.data.freed.length + r.data.dropped.length;
+  const failed = r.data.failed ? ` ${askHistoryCount(r.data.failed, 'checkout')} could not be removed.` : '';
+  setAskCheckoutsMsg(`Freed ${askHistoryCount(n, 'checkout')}.${failed}`, r.data.failed ? 'warn' : 'ok');
+  await loadAskCheckouts();
+}
+async function removeCheckout(item) {
+  const url = `/api/ask/worktrees/${encodeURIComponent(item.worktreeId)}`;
+  let body = {};
+  let shown = item;
+  for (let round = 0; round < 3; round += 1) {
+    if (shown.loss !== 'none' && !body.discard) {
+      const ok = await confirmModal({
+        title: 'Remove this checkout?', message: checkoutConfirmMessage(shown), confirmLabel: 'Remove and discard', danger: true,
+      });
+      if (!ok) { await loadAskCheckouts(); return; }   // what the confirm showed may no longer be what the list shows
+      body = { discard: true, confirmFingerprint: shown.lost.fingerprint };
+    }
+    let res;
+    try {
+      res = await fetch(url, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    } catch { setAskCheckoutsMsg('network error', 'err'); return; }
+    const data = await safeJson(res);
+    if (res.ok) { setAskCheckoutsMsg(`Removed the checkout of “${item.title || 'Untitled chat'}”. The chat stays.`, 'ok'); await loadAskCheckouts(); return; }
+    // The checkout changed since the list was drawn: confirm again against what it holds NOW.
+    if (res.status === 409 && data.lost && (data.code === 'CHECKOUT_NEEDS_CONFIRM' || data.code === 'CHECKOUT_UNKNOWN')) {
+      shown = { ...item, loss: data.loss === 'unknown' ? 'unknown' : 'work', lost: data.lost };
+      body = {};
+      continue;
+    }
+    setAskCheckoutsMsg(data.error || `HTTP ${res.status}`, 'err');
+    await loadAskCheckouts();
+    return;
+  }
+  setAskCheckoutsMsg('The checkout keeps changing; try again.', 'warn');
+  await loadAskCheckouts();
+}
+document.getElementById('askCheckoutsFree')?.addEventListener('click', freeIdleCheckouts);
+document.getElementById('askCheckoutsList')?.addEventListener('click', (e) => {
+  const btn = e.target.closest?.('.checkout-remove');
+  if (!btn || btn.disabled) return;
+  const item = askCheckouts?.items.find((i) => i.worktreeId === btn.dataset.wt);
+  if (item) void removeCheckout(item);
+});
 
 // ---- Spawn-debug diagnostics card (shares the Ask card's helpers above) ----
 // The checkbox is the STORED preference; the note says when the environment
@@ -42842,7 +42931,7 @@ function showSettingsTab(param = '') {
   if (tab === 'tags') { void loadTagsTeam(); void loadLabelsSection(); }
   if (tab === 'presets') void loadPresetsView();
   if (tab === 'automations') void loadAutomationsView();
-  if (tab === 'ask') void paintAskMcpBlock(document.getElementById('ask-mcp-host'), { api: mcpApi });
+  if (tab === 'ask') { void paintAskMcpBlock(document.getElementById('ask-mcp-host'), { api: mcpApi }); void loadAskCheckouts(); }
   if (tab === 'guardrails') loadGuardrailsView(sub);
   if (tab === 'memory') loadMemoryTab(sub);
   if (tab === 'experimental') loadFlagsTab(sub);

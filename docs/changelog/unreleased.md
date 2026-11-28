@@ -3,6 +3,16 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## Free the chat checkouts nobody needs
+
+**A chat that needs a checkout no longer hits "global worktree cap reached (15)" because of old ones.**
+
+Worca now frees idle chat checkouts when it starts, and Settings › Chat › **Chat checkouts** shows the 15 slots, which chat holds each one and which are safe to remove, with **Free idle checkouts** and a Remove per row. Safe means clean, no commits of its own, not in use by a chat turn, command, followed run or terminal, and untouched for 7 days. Anything with changes or commits is kept; you can still remove it by hand after a confirm that lists what would be lost. On a shared Worca only the chat's owner can discard such a checkout. Removing a checkout never deletes its chat.
+
+When the cap is hit, the error now names the chats that hold slots and says where to free them.
+
+Chips: Chat · Settings · Checkouts
+
 ## Vault commands need your own terminal
 
 **worca secrets export, reset and ack now run only in a terminal, after you type a word they show.**
@@ -311,6 +321,7 @@ Read it: [Chat](../chat.md)
 
 Pull requests (add each number when it opens):
 
+- Chat: free idle checkouts at boot and from Settings › Chat
 - Chat: steady command rows, quiet Stop
 
 ## Chat composer bar, compact

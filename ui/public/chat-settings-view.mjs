@@ -227,3 +227,130 @@ export function collectAskWebFields(root) {
     search: url ? { url, key: val('askWebSearchKey'), keyHeader: val('askWebSearchHeader'), keyPrefix: q('askWebSearchPrefix') ? q('askWebSearchPrefix').value : '' } : null,
   };
 }
+
+// ── Settings › Chat › Chat checkouts (worktree-idle.mjs, GET /api/ask/worktrees) ─────────────────────────────
+
+const DAY_MS = 24 * 60 * 60_000;
+const NOT_ON_A_BRANCH_TIP = 'Commits made in this checkout that no branch holds. If it came from a branch that was since deleted, those commits are upstream history.';
+
+/** The chip of one checkout, from separate verdict fields, in one place: { label, tone, tip }. `tone` is a badge class. */
+export function chipFor(item) {
+  if (item.inUse !== false) return { label: 'In use', tone: 'waiting', tip: 'A live chat turn, command, followed run or terminal is using this checkout.' };
+  if (item.loss === 'unknown') return { label: 'Check failed', tone: 'red', tip: 'Git could not be asked what this checkout holds, so it is kept.' };
+  if (item.dirty) return { label: 'Uncommitted changes', tone: 'red', tip: 'Files in this checkout are changed or new and not committed.' };
+  if (item.ownCommits) return { label: 'Commits not on any branch', tone: 'red', tip: NOT_ON_A_BRANCH_TIP };
+  if (item.recent) return { label: 'Used recently', tone: 'waiting', tip: 'Its chat or checkout was used within the last week.' };
+  if (item.safe) return { label: 'Safe to remove', tone: 'green', tip: 'Clean, nothing only on it, and untouched for a week.' };
+  return { label: 'Kept', tone: 'waiting', tip: '' };
+}
+
+/** "12 days ago" for an ISO time; '' when it does not parse. */
+export function agoText(iso, now = Date.now()) {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return '';
+  const ms = Math.max(0, now - t);
+  if (ms < 60_000) return 'just now';
+  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)} min ago`;
+  if (ms < DAY_MS) { const h = Math.floor(ms / 3_600_000); return `${h} ${h === 1 ? 'hour' : 'hours'} ago`; }
+  const d = Math.floor(ms / DAY_MS);
+  return `${d} ${d === 1 ? 'day' : 'days'} ago`;
+}
+
+/** "12 of 15 slots used · 7 safe to remove" (the hint under the label). */
+export function checkoutsSummary(payload) {
+  const items = Array.isArray(payload?.items) ? payload.items : [];
+  const safe = items.filter((i) => i.safe).length;
+  return `${payload?.used ?? items.length} of ${payload?.capacity ?? 15} slots used · ${safe} safe to remove`;
+}
+
+/** Why the Remove button is disabled for this row, or '' when it is enabled. */
+function removeBlock(item) {
+  if (item.inUse !== false) return 'In use by a live turn, command, run or terminal';
+  if (!item.safe && !item.canDiscard) return "Belongs to someone else's chat and isn't safe to remove";
+  return '';
+}
+
+/**
+ * renderCheckoutsList(payload) -> a detached list: one row per checkout with the chat title, owner (only on a shared
+ * instance), project and ref, last use, the chip and a Remove button (`.checkout-remove[data-wt]`).
+ */
+export function renderCheckoutsList(payload, { doc = globalThis.document, now = Date.now() } = {}) {
+  const items = Array.isArray(payload?.items) ? payload.items : [];
+  const root = h(doc, 'div', 'checkouts');
+  if (!items.length) { root.appendChild(h(doc, 'small', 'hint checkouts-empty', 'No chat checkouts.')); return root; }
+  const shared = new Set(items.map((i) => i.createdBy || '')).size > 1;
+  for (const item of items) {
+    const row = h(doc, 'div', 'checkout-row');
+    row.dataset.wt = item.worktreeId;
+    row.dataset.thread = item.threadId;
+    const main = h(doc, 'div', 'checkout-main');
+    main.appendChild(h(doc, 'span', 'checkout-title', item.title || 'Untitled chat'));
+    const ago = agoText(item.lastTouchedAt, now);
+    const meta = [shared ? (item.createdBy || 'No owner') : null, item.projectKey, item.ref, ago ? `last used ${ago}` : null].filter(Boolean).join(' · ');
+    main.appendChild(h(doc, 'small', 'hint checkout-meta', meta));
+    row.appendChild(main);
+    const c = chipFor(item);
+    const badge = h(doc, 'span', `badge ${c.tone} checkout-chip`, c.label);
+    if (c.tip) badge.title = c.tip;
+    row.appendChild(badge);
+    const btn = h(doc, 'button', 'btn btn-sm checkout-remove', 'Remove');
+    btn.type = 'button';
+    btn.dataset.wt = item.worktreeId;
+    const blocked = removeBlock(item);
+    if (blocked) { btn.disabled = true; btn.title = blocked; }
+    row.appendChild(btn);
+    root.appendChild(row);
+  }
+  return root;
+}
+
+/** The text of the danger confirm for a checkout that would lose work (loss !== 'none'). */
+export function checkoutConfirmMessage(item) {
+  const lost = item.lost || {};
+  const lines = [`Remove the checkout of “${item.title || 'Untitled chat'}” (${item.projectKey} · ${item.ref})?`];
+  if (item.loss === 'unknown') {
+    lines.push('The check could not run, so it cannot say what this checkout holds. Removing it may lose work.');
+  } else {
+    const files = lost.dirtyFiles || [];
+    const commits = lost.commits || [];
+    if (files.length) {
+      lines.push(`Uncommitted changes (${files.length}${lost.truncated ? '+' : ''}):`);
+      for (const f of files.slice(0, 10)) lines.push(`• ${f}`);
+      if (files.length > 10) lines.push(`and ${files.length - 10} more`);
+    }
+    if (commits.length) {
+      lines.push(`Commits on no branch (${commits.length}${lost.truncated ? '+' : ''}):`);
+      for (const c of commits.slice(0, 10)) lines.push(`• ${String(c.sha).slice(0, 7)} ${c.subject}`);
+      if (commits.length > 10) lines.push(`and ${commits.length - 10} more`);
+    }
+  }
+  lines.push('This cannot be undone. The chat stays and can open a fresh checkout later.');
+  return lines.join('\n');
+}
+
+/**
+ * The debounced refresh of the checkouts list: pokes coalesce into ONE trailing `load`, nothing runs while the card is
+ * hidden, and a load in flight is never restarted (a poke during it earns one more run after). Each load costs about
+ * two git probes per checkout, so it must not follow every frame.
+ * @returns {{poke: () => void, cancel: () => void}}
+ */
+export function createCheckoutsRefresher({ load, visible, waitMs = 1500, setTimer = setTimeout, clearTimer = clearTimeout }) {
+  let timer = null;
+  let running = false;
+  let again = false;
+  const run = async () => {
+    timer = null;
+    if (!visible()) return;
+    running = true;
+    try { await load(); } finally { running = false; }
+    if (again) { again = false; poke(); }
+  };
+  function poke() {
+    if (!visible()) return;
+    if (running) { again = true; return; }
+    if (timer !== null) clearTimer(timer);
+    timer = setTimer(run, waitMs);
+    timer?.unref?.();
+  }
+  return { poke, cancel: () => { if (timer !== null) clearTimer(timer); timer = null; again = false; } };
+}

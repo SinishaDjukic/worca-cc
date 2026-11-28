@@ -320,6 +320,41 @@ not seen; the fixed keys and hooks have no such window. `http.sslCAInfo` is left
   chat checkout can never block a pipeline run. They are the assistant's only view
   into a repository: the native `Read`/`Grep`/`Glob` tools see the checkout as
   files, and the `git` tool serves history, diffs and search.
+  **Freeing idle chat checkouts.** The 15-checkout cap is shared by every chat, and a row
+  is never freed on its own while its chat lives, so full slots used to block new
+  checkouts for good. Worca now frees **idle** ones in two places, both in the server
+  process (the only one that can see a live turn, command, followed run or terminal),
+  and never anywhere else: **at boot**, and **by hand** in Settings › Chat › Chat
+  checkouts (a "Free idle checkouts" button, and Remove per row). A checkout is idle
+  (`safe`) only when all of this holds: no live turn, command, followed run or open
+  terminal is using it; `git status --porcelain --untracked-files=all` is empty; no
+  commit is reachable from its HEAD that no branch, remote branch or tag holds; and
+  nothing touched it for 7 days (`ASK_LIMITS.worktreeIdleMs`, a fixed constant, not a
+  setting). "Touched" is the most recent of the row's own times, its chat's
+  `updated_at`, the chat's newest message and the checkout's `.git` file. Any doubt
+  keeps the row: a git probe that fails, times out or returns too much output counts as
+  "could not check". Each removal is re-classified right before it runs, and the live-use
+  check is repeated immediately before the remove, and the chat is held (a new turn in it is
+  refused with `CHECKOUT_REMOVING`) until git has finished deleting the folder. The MCP child that runs
+  `open_worktree` **never removes anything**: at the cap it only names the chats that
+  hold slots and points to Settings (it cannot see the server's live turns, so freeing
+  there could delete a checkout a turn is using). `worca doctor`
+  (`sweepAskWorktrees`) still only reconciles rows against folders; it does no idle
+  removal. Known limits: a chat that only *reads* a checkout (no message for 7 days) is
+  protected by the live-use check while it runs but not afterwards; a chat driven by
+  another worca process that shares the store is not visible to the live-use check at
+  boot (git cleanliness and the chat's `updated_at` cover it); gitignored build output
+  is not in `git status`, so it counts as clean. A checkout whose source branch was
+  deleted can show "Commits not on any branch": those are upstream history, and it is
+  never freed automatically. By hand a person can still remove a checkout that is not
+  safe, after a confirm that lists the changed files and the commits that would be lost
+  (the confirm is bound to the state it listed: if the checkout changed, it asks again).
+  That is refused while a turn, command, run or terminal is using the checkout, and on a
+  shared deployment it needs the chat to be theirs (a no-viewer install, the chat's owner
+  or an ownerless legacy chat); anyone signed in can remove a *safe* checkout. Removing a
+  checkout never deletes its chat. No feature flag: this is housekeeping over an existing
+  feature (docs/feature-flags.md reserves flags for experimental surfaces and staged
+  rollouts) and removes only what a person could already remove by hand.
   **What the native file tools can reach — an accepted trade-off.** The chat runs
   `--tools Task,Read,Grep,Glob` under `dontAsk` (never Bash/Write/Edit, so nothing
   it reads can be turned into a write). Granting `Read` scoped to the worktree

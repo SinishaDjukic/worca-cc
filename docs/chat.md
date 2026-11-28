@@ -34,6 +34,10 @@ Settings › **Chat** (Advanced) sets:
 - the turn limit and a cost cap per turn
 - whether Chat may change and test-run your scripts
 - opt-in web access, with a list of allowed domains
+- the chat checkouts: how many of the 15 slots are used, who holds them and which are safe to remove, with
+  **Free idle checkouts** and a Remove per row. A checkout is safe when it is clean, holds no commits of its own,
+  is not in use and has been untouched for 7 days. Worca also frees those at start-up. Removing one never deletes
+  its chat
 
 Chat spend counts toward the total budget. A team policy can preset these limits or narrow web access, but never
 widen it.

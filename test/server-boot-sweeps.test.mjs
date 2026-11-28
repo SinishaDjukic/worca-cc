@@ -278,6 +278,86 @@ test('boot: a file left reading fails INTERRUPTED; old read folders and temp bod
   assert.equal((await bootMaintenance({ log: () => {} })).recoveredAttachmentReads, 0, 'idempotent');
 });
 
+// Idle chat checkouts: after the reconcile sweep, boot frees the ones nothing needs (clean, nothing only on them,
+// untouched for a week, not in use here) and keeps everything else. Never gated on the cap.
+test('boot: idle chat checkouts — frees the old clean one, keeps dirty / own-commit / recent / unreadable / in-use rows, reports, emits', async () => {
+  const repo = await freshRepo('worca-cc-boot-idle-');
+  const { addProject } = await import('../src/core/projects.mjs');
+  const { createThread, getThread } = await import('../src/core/ask/store.mjs');
+  const { openAskWorktree } = await import('../src/core/ask/worktrees.mjs');
+  const { writeFileSync } = await import('node:fs');
+  const mod = await import('../ui/server.mjs');
+  const p = (await addProject({ name: 'bsidle', path: repo })).find((x) => x.name === 'bsidle');
+  const db = getDb();
+  const DAY = 24 * 60 * 60_000;
+  /** A checkout whose every signal is `days` old. */
+  const seed = async (days) => {
+    const t = createThread({ title: `idle ${days}` });
+    const w = await openAskWorktree({ threadId: t.id, projectKey: p.key, ref: 'main' });
+    const at = Date.now() - days * DAY;
+    db.prepare('UPDATE ask_worktrees SET created_at = ?, updated_at = ? WHERE id = ?').run(new Date(at).toISOString(), new Date(at).toISOString(), w.worktreeId);
+    db.prepare('UPDATE ask_threads SET updated_at = ? WHERE id = ?').run(new Date(at).toISOString(), t.id);
+    utimesSync(join(w.path, '.git'), at / 1000, at / 1000);
+    return { t, w };
+  };
+  const old = await seed(30);
+  const dirty = await seed(30);
+  writeFileSync(join(dirty.w.path, 'wip.txt'), 'wip\n');
+  const commit = await seed(30);
+  writeFileSync(join(commit.w.path, 'c.txt'), 'c\n');
+  spawnSync('git', ['add', '-A'], { cwd: commit.w.path });
+  spawnSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'mine'], { cwd: commit.w.path });
+  const recent = await seed(1);
+  const unreadable = await seed(30);
+  writeFileSync(join(unreadable.w.path, '.git'), 'not a gitdir pointer\n');            // git cannot read it: unknown, keep
+  utimesSync(join(unreadable.w.path, '.git'), (Date.now() - 30 * DAY) / 1000, (Date.now() - 30 * DAY) / 1000);
+  const running = await seed(30);
+  mod._testing.askJobs.set(running.t.id, { status: 'running' });                      // a live turn in THIS process
+
+  const frames = [];
+  const onFrame = (f) => frames.push(f);
+  mod._testing.askBus.on(old.t.id, onFrame);
+  let res;
+  try {
+    res = await bootMaintenance({ log: () => {} });
+  } finally {
+    mod._testing.askJobs.delete(running.t.id);
+    mod._testing.askBus.off(old.t.id, onFrame);
+  }
+
+  assert.deepEqual(res.askWorktreesIdle.freed, [old.w.worktreeId]);
+  assert.equal(res.askWorktreesIdle.failed, 0);
+  assert.equal(res.askWorktreesIdle.kept, 5);
+  assert.ok(!existsSync(old.w.path), 'the idle checkout is gone');
+  for (const c of [dirty, commit, recent, unreadable, running]) assert.ok(existsSync(c.w.path), `${c.t.title} is kept`);
+  assert.ok(getThread(old.t.id), 'its chat stays');
+  assert.deepEqual(frames.filter((f) => f.type === 'ask-worktrees').map((f) => f.worktrees), [[]], 'a freed row is announced');
+  for (const c of [dirty, commit, recent, unreadable, running]) db.prepare('DELETE FROM ask_worktrees WHERE id = ?').run(c.w.worktreeId);
+});
+
+test('boot: the idle checkout step does not run on an empty registry, and a failure inside it never fails boot', async () => {
+  getDb().prepare('DELETE FROM ask_worktrees').run();
+  const empty = await bootMaintenance({ log: () => {} });
+  assert.equal(empty.askWorktreesIdle, null);
+  // a log sink that throws inside the step must still leave boot standing
+  const repo = await freshRepo('worca-cc-boot-idle2-');
+  const { addProject } = await import('../src/core/projects.mjs');
+  const { createThread } = await import('../src/core/ask/store.mjs');
+  const { openAskWorktree } = await import('../src/core/ask/worktrees.mjs');
+  const p = (await addProject({ name: 'bsidle2', path: repo })).find((x) => x.name === 'bsidle2');
+  const t = createThread();
+  const w = await openAskWorktree({ threadId: t.id, projectKey: p.key, ref: 'main' });
+  const db = getDb();
+  const at = new Date(Date.now() - 30 * 24 * 60 * 60_000).toISOString();
+  db.prepare('UPDATE ask_worktrees SET created_at = ?, updated_at = ? WHERE id = ?').run(at, at, w.worktreeId);
+  db.prepare('UPDATE ask_threads SET updated_at = ? WHERE id = ?').run(at, t.id);
+  utimesSync(join(w.path, '.git'), Date.parse(at) / 1000, Date.parse(at) / 1000);
+  const res = await bootMaintenance({ log: (scope) => { if (scope === 'ask-worktrees') throw new Error('sink exploded'); } });
+  assert.ok(res.reconciled !== undefined, 'boot finished');
+  assert.equal(res.askWorktreesIdle, null, 'the step threw (its log sink did), boot carried on');
+  db.prepare('DELETE FROM ask_worktrees WHERE id = ?').run(w.worktreeId);
+});
+
 // Slice 5 (R-arch-1, D6): the boot marks the runs it is about to resume as soon as the reconcile has named them,
 // before bootMaintenance's first await, so they hold their turn before the scheduler's first tick.
 test('bootMaintenance reports the reconciled ids before its first await', async () => {

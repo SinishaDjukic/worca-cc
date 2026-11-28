@@ -1040,6 +1040,20 @@
                 <small class="hint drow-help" id="askHistoryMsg"></small>
                 <div class="drow-control"><button type="button" id="askHistoryDelete" class="btn btn-danger ask-history-delete" disabled>Delete all chats</button></div>
               </div>
+              <!-- Chat checkouts: the git checkouts chats hold (15 slots in all) with the safe ones marked; painted by
+                   chat-settings-view.mjs renderCheckoutsList, I/O in app.js. Not part of the Save form above. -->
+              <div class="field drow drow-stack" id="ask-checkouts-row">
+                <div class="label-row drow-label">
+                  <label for="askCheckoutsFree">Chat checkouts</label>
+                  <button type="button" class="info-tip" aria-label="About Chat checkouts">i<span class="tip-content hidden">
+                    Each chat that opens a branch or run gets its own git checkout, and Worca allows 15 in all. A checkout that is clean, holds no commits of its own and has been untouched for a week is safe to remove: Worca frees those when it starts, and Free idle does it now. Removing a checkout never deletes its chat.
+                  </span></button>
+                </div>
+                <small class="hint drow-help" id="askCheckoutsSummary"></small>
+                <div id="askCheckoutsList"></div>
+                <small class="hint drow-help" id="askCheckoutsMsg"></small>
+                <div class="drow-control"><button type="button" id="askCheckoutsFree" class="btn btn-sm" disabled>Free idle checkouts</button></div>
+              </div>
               </div>
             </section>
           </section>

@@ -29,8 +29,9 @@ export const WT_ID_RE = /^wt_[0-9a-f]{8}$/;
 // can never reach a path.
 const ASK_THREAD_RE = /^ask_[0-9a-f]{8}$/;
 
+/** `code` (optional) is the machine-readable reason a route maps to a status; `detail` an optional payload for it. */
 export class AskWorktreeError extends Error {
-  constructor(message) { super(message); this.name = 'AskWorktreeError'; }
+  constructor(message, code, detail) { super(message); this.name = 'AskWorktreeError'; this.code = code; this.detail = detail; }
 }
 
 const newWtId = () => `wt_${randomBytes(4).toString('hex')}`;
@@ -122,6 +123,18 @@ async function resolveTarget({ projectKey, ref, runId }) {
   return { projectKey, projectDir: p.path, ref, runId: null };
 }
 
+/** The chats holding checkout slots, most first, for the global-cap error. Read-only: the MCP child that raises
+ *  it cannot see the server's live turns, so it never removes anything (worktree-idle.mjs frees, in the server). */
+function describeCapHolders() {
+  const MAX_CHATS = 5;
+  const holders = prepare(`SELECT w.thread_id AS id, count(*) AS n
+                           FROM ask_worktrees w
+                           GROUP BY w.thread_id ORDER BY n DESC, w.thread_id`).all();
+  const label = (h) => `${h.id} (${h.n})`;
+  const shown = holders.slice(0, MAX_CHATS).map(label).join(', ');
+  return holders.length > MAX_CHATS ? `${shown}, … (+${holders.length - MAX_CHATS} more chats)` : shown;
+}
+
 export async function openAskWorktree({ threadId, projectKey, ref, runId, signal } = {}) {
   getDb();
   if (typeof threadId !== 'string' || !ASK_ID_RE.test(threadId)
@@ -134,7 +147,7 @@ export async function openAskWorktree({ threadId, projectKey, ref, runId, signal
   }
   const globalCount = prepare('SELECT count(*) AS n FROM ask_worktrees').get().n;
   if (globalCount >= ASK_LIMITS.worktreesGlobal) {
-    throw new AskWorktreeError(`global worktree cap reached (${ASK_LIMITS.worktreesGlobal}) — remove unused worktrees first`);
+    throw new AskWorktreeError(`global worktree cap reached (${ASK_LIMITS.worktreesGlobal}). Held by: ${describeCapHolders()}. Free slots in Settings › Chat › Chat checkouts (safe ones are listed), or remove one with remove_worktree in the chat that holds it.`);
   }
   const t = await resolveTarget({
     projectKey: projectKey || undefined, ref: ref || undefined, runId: runId || undefined,

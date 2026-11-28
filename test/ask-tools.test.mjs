@@ -1242,6 +1242,12 @@ test('ask tool layer stays write-free (table-driven source scan over tools.mjs, 
         assert.ok(deps.includes(`from '${m}'`), `worktree-deps imports ${m}`);
       }
     } },
+    { name: 'test/ask-worktree-idle.test.mjs > the MCP child never reaches the idle remover: mcp-stdio, worktree-deps and tools do not import worktree-idle.mjs', run: () => {
+      for (const f of ['mcp-stdio.mjs', 'worktree-deps.mjs', 'tools.mjs']) {
+        const src = readFileSync(new URL(`../src/core/ask/${f}`, import.meta.url), 'utf8');
+        assert.doesNotMatch(src, /worktree-idle/, f);
+      }
+    } },
   ]);
 });
 
