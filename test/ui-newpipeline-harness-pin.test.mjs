@@ -3,21 +3,16 @@
 // project pick or the workflow's own pick that names `engine` stays editable and names its harness, a pick in the
 // picker saves the model with its harness (inherit clears both), a model the catalog lost shows as such, a disabled
 // trigger (Settings › Memory, no project) opens nothing, and a save of another tunable sends a pinned pick back with
-// its harness. The rig is test/ui-newpipeline-defrag-pin.test.mjs's.
-import { test, afterEach } from 'node:test';
+// its harness. One boot of the app for the file (test/helpers/shared-app-boot.mjs); each test opens New run on its own
+// server (openNew). The server is test/ui-newpipeline-defrag-pin.test.mjs's.
+import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import { JSDOM } from 'jsdom';
+import { fileURLToPath } from 'node:url';
 import { GRAPH_MEMORY_DEFRAG_WORKFLOW } from '../src/core/graph/builtin-workflows.mjs';
 import { defragWorkflowView, resolveDefragModel } from '../src/core/memory-defrag-model.mjs';
-import { useDomRelease } from './helpers/jsdom-release.mjs';
-import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { useSharedApp } from './helpers/shared-app-boot.mjs';
 
-// Release each booted window after its test (see test/helpers/jsdom-release.mjs).
-const trackDom = useDomRelease(afterEach);
-
-const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const PROJECT = '/tmp/proj';
 const MODELS = [
   { id: 'claude-sonnet-5', label: 'Sonnet 5', efforts: ['medium', 'high', 'xhigh', 'max'] },
@@ -30,14 +25,6 @@ const DEFRAG_META = JSON.parse(readFileSync(fileURLToPath(new URL('../agents/mem
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const settle = async (n = 16) => { for (let i = 0; i < n; i++) await tick(); };
 const ok = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
-
-class WSStub {
-  constructor() { this.readyState = 1; this._listeners = {}; WSStub.last = this; }
-  send() {} close() {}
-  addEventListener(t, fn) { (this._listeners[t] ||= []).push(fn); }
-  _open() { (this._listeners.open || []).forEach((fn) => fn({})); }
-  _message(obj) { (this._listeners.message || []).forEach((fn) => fn({ data: JSON.stringify(obj) })); }
-}
 
 /** config.mjs's catalog rule for a node write naming a model MODELS does not hold: `unknown model "<id>"`, unless it is
  *  the stored model sent back with its stored effort or none and its stored harness or none (kept unchecked). */
@@ -93,24 +80,30 @@ function makeServer({ stored, pick = null, template = null }) {
   return srv;
 }
 
-async function boot(srv) {
-  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4319/#new' }));
-  const { window } = dom;
-  window.document.documentElement.dataset.level = 'expert';
-  window.Element.prototype.scrollIntoView = function () {};
-  window.WebSocket = WSStub;
-  window.requestAnimationFrame = globalThis.requestAnimationFrame = (fn) => setTimeout(fn, 0);
-  window.cancelAnimationFrame = globalThis.cancelAnimationFrame = (id) => clearTimeout(id);
-  window.fetch = (url, opts) => srv.handle(String(url), opts || {}) || ok({ config: { steps: {}, customModels: [] }, models: [], efforts: [] });
-  for (const k of ['window', 'document', 'location', 'localStorage', 'WebSocket', 'fetch', 'navigator', 'HTMLInputElement', 'HTMLSelectElement']) {
-    try { Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true }); } catch { /* read-only */ }
-  }
-  globalThis.window = window; globalThis.document = window.document;
-  await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
-  await tick();
-  if (WSStub.last) WSStub.last._open();
-  await settle();
+// What app.js asks for as it loads (the project list, the catalog, the agents) is answered by a server with nothing
+// stored; after that each test's own server answers first.
+const app = useSharedApp({ before, beforeEach, after }, {
+  level: 'expert',
+  fetchHandler: makeServer({ stored: null }).handle,
+  setup: (window) => {
+    window.requestAnimationFrame = globalThis.requestAnimationFrame = (fn) => setTimeout(fn, 0);
+    window.cancelAnimationFrame = globalThis.cancelAnimationFrame = (id) => clearTimeout(id);
+    // app.js's agent-row listeners read HTMLInputElement and HTMLSelectElement by their bare names.
+    for (const k of ['HTMLInputElement', 'HTMLSelectElement']) {
+      Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true });
+    }
+  },
+});
+
+/** New run on `srv`. The reset leaves the form, and entering it again drops the app's memo of the workflow view (each
+ *  server lays its own picks into it); then the project and the workflow are picked. The row starts collapsed: the
+ *  open rows are the app's own state and would outlive the reset. */
+async function openNew(srv) {
+  const { window } = await app.fresh({ fetchHandler: (url, opts) => srv.handle(url, opts) });
   const doc = window.document;
+  window.__np.openAgentRows.clear();
+  app.go('new');
+  await settle();
   const pick = async (sel, value) => { const s = doc.querySelector(sel); s.value = value; s.dispatchEvent(new window.Event('change', { bubbles: true })); await settle(); };
   await pick('#projectSelect', PROJECT);
   await pick('#workflowSelect', 'wf_memory_defrag');
@@ -127,7 +120,7 @@ const PIN = { model: 'gpt-5.5', effort: 'low', engine: 'codex' };
 const opt = (doc, col, key) => [...doc.querySelectorAll(`.mdl-cols-pop [data-col="${col}"] [role="option"]`)].find((b) => b.dataset.key === key);
 
 test('a row pinned to another harness is editable: its trigger names the harness, its efforts are that harness\'s, its Sub-agents hide', async () => {
-  const { doc, row } = await boot(makeServer({ stored: null, pick: PIN }));
+  const { doc, row } = await openNew(makeServer({ stored: null, pick: PIN }));
   const m = row().model;
   assert.deepEqual([m.tagName, m.classList.contains('mdl-pick'), m.value, m.dataset.engine, m.disabled, row().effort.value, row().effort.disabled],
     ['BUTTON', true, 'gpt-5.5', 'codex', false, 'low', false]);
@@ -138,13 +131,13 @@ test('a row pinned to another harness is editable: its trigger names the harness
   assert.equal(row().sub.closest('.select-wrap').hidden, true);
 });
 test('the workflow\'s own pin is editable, and the origin line names its harness', async () => {
-  const { doc, row } = await boot(makeServer({ stored: null, template: PIN }));
+  const { doc, row } = await openNew(makeServer({ stored: null, template: PIN }));
   assert.deepEqual([row().model.value, row().model.dataset.engine, row().model.disabled], ['gpt-5.5', 'codex', false]);
   assert.equal(doc.querySelector('#agents-rows .agent-origin').textContent, 'This workflow’s default: GPT-5.5 · low on OpenAI Codex.');
 });
 test('a pick in the picker saves the model with its harness and resets the effort, and the focus stays on the row; inherit clears both', async () => {
   const srv = makeServer({ stored: null });
-  const { doc, row } = await boot(srv);
+  const { doc, row } = await openNew(srv);
   doc.querySelector('.agent-row-head[data-node-id="n_defrag"]').click();   // open the row: a collapsed body holds no focus
   row().model.click();
   assert.equal(doc.querySelector('.mdl-cols-pop .mdl-cols-hint').textContent, 'workflow default');
@@ -162,7 +155,7 @@ test('a pick in the picker saves the model with its harness and resets the effor
 });
 test('Review Focus 1: a stored model the catalog lost is shown as such and survives a save of another tunable', async () => {
   const srv = makeServer({ stored: null, pick: { model: 'gone-9' } });
-  const { window, row } = await boot(srv);
+  const { window, row } = await openNew(srv);
   assert.deepEqual([row().model.value, row().model.querySelector('.mdl-pick-text').textContent, row().effort.disabled], ['gone-9', 'gone-9 (not in the catalog)', true]);
   row().fan.checked = true;
   row().fan.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -173,7 +166,7 @@ test('Review Focus 1: a stored model the catalog lost is shown as such and survi
 });
 test('Review Focus 1: a stored model the catalog lost keeps its stored effort, shown and sent back on a save of another tunable', async () => {
   const srv = makeServer({ stored: null, pick: { model: 'gone-9', effort: 'high' } });
-  const { window, row } = await boot(srv);
+  const { window, row } = await openNew(srv);
   const effort = () => [[...row().effort.options].map((o) => o.value), row().effort.value, row().effort.disabled];
   assert.deepEqual(effort(), [['high'], 'high', true]);
   row().fan.checked = true;
@@ -188,14 +181,14 @@ test('Review Focus 1: a stored model the catalog lost keeps its stored effort, s
 // shows the trigger's own guard.
 test('Review Focus 5: a disabled trigger opens nothing: a model Settings › Memory owns, and a row with no project selected', async () => {
   const press = (window, b) => b.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
-  const locked = await boot(makeServer({ stored: { model: 'claude-haiku-4-5', effort: 'high' } }));
+  const locked = await openNew(makeServer({ stored: { model: 'claude-haiku-4-5', effort: 'high' } }));
   locked.doc.querySelector('.agent-row-head[data-node-id="n_defrag"]').click();
   const m = locked.row().model;
   assert.deepEqual([m.value, m.disabled, m.title], ['claude-haiku-4-5', true, 'Set in Settings › Memory']);
   press(locked.window, m);
   assert.equal(locked.doc.querySelector('.mdl-cols-pop'), null, 'the Memory-owned model opens nothing');
 
-  const { window, doc, row } = await boot(makeServer({ stored: null }));
+  const { window, doc, row } = await openNew(makeServer({ stored: null }));
   doc.querySelector('.agent-row-head[data-node-id="n_defrag"]').click();
   const project = doc.querySelector('#projectSelect');
   project.value = '';
@@ -208,7 +201,7 @@ test('Review Focus 5: a disabled trigger opens nothing: a model Settings › Mem
 test('a save of another tunable sends the pinned pick back untouched, with its harness; so does a stale pin', async () => {
   for (const pick of [PIN, { model: 'claude-haiku-4-5', effort: 'medium', engine: 'codex' }]) {
     const srv = makeServer({ stored: null, pick });
-    const { window, row } = await boot(srv);
+    const { window, row } = await openNew(srv);
     row().fan.checked = true;
     row().fan.dispatchEvent(new window.Event('change', { bubbles: true }));
     await settle(24);
@@ -217,7 +210,7 @@ test('a save of another tunable sends the pinned pick back untouched, with its h
   }
 });
 test('Save as workflow defaults sends a row\'s harness beside its model', async () => {
-  const { window } = await boot(makeServer({ stored: null }));
+  const { window } = await openNew(makeServer({ stored: null }));
   const of = (row) => window.__np.effectiveDefaultsOf({ fanOut: false, askQuestions: null, subagentModel: '', ...row });
   assert.deepEqual(of({ model: 'gpt-5.5', effort: 'low', engine: 'codex' }), { model: 'gpt-5.5', effort: 'low', engine: 'codex', fanOut: false });
   assert.deepEqual(of({ model: 'claude-haiku-4-5', effort: 'high' }), { model: 'claude-haiku-4-5', effort: 'high', fanOut: false });
