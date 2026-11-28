@@ -6,92 +6,23 @@
 // the pane's bar (test/ui-running-detail.test.mjs, test/ui-running-stop-modal.test.mjs,
 // test/ui-running-resume.test.mjs) and a waiting run is listed under Needs you.
 //
-// boot()/dispatch()/helloRunning() are copied from test/ui-question.test.mjs (boot
-// 19-82, RUN_ID 84, helloRunning 88-96) — the nearest suite that captures the
-// WebSocket instance. showRunning() follows test/helpers/run-page-boot.mjs: the bare
+// helloRunning() is copied from test/ui-question.test.mjs. showRunning() is test/helpers/run-page-boot.mjs's: the bare
 // list with nothing selected (a bare #runs would otherwise reopen the remembered run, D6).
-import { test, afterEach } from 'node:test';
+import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import { JSDOM } from 'jsdom';
-import { useDomRelease } from './helpers/jsdom-release.mjs';
-import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { runPageOn } from './helpers/run-page-boot.mjs';
+import { useSharedApp } from './helpers/shared-app-boot.mjs';
 
-// Release each booted window after its test (see test/helpers/jsdom-release.mjs).
-const trackDom = useDomRelease(afterEach);
-
-const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
-
-async function boot({ fetchHandler } = {}) {
-  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/' }));
-  const { window } = dom;
-  window.Element.prototype.scrollIntoView = function () {};
-  // jsdom has no rAF; the run page defers its scroll-to-question by a frame
-  // (paintRdQuestions). Same shim as test/ui-sidebar-counts.test.mjs.
-  window.requestAnimationFrame = (fn) => setTimeout(fn, 0);
-
-  const wsBox = { ws: null };
-  window.WebSocket = class {
-    constructor() {
-      this.readyState = 1;
-      this._listeners = {};
-      wsBox.ws = this;
-    }
-    send() {}
-    close() {}
-    addEventListener(type, fn) {
-      (this._listeners[type] ||= []).push(fn);
-    }
-    dispatch(type, evt) {
-      (this._listeners[type] || []).forEach((fn) => fn(evt));
-    }
-  };
-
-  const calls = [];
-  window.fetch = (url, opts) => {
-    calls.push({ url: String(url), opts: opts || {} });
-    if (fetchHandler) {
-      const r = fetchHandler(String(url), opts || {});
-      if (r) return r;
-    }
-    return Promise.resolve({
-      ok: true,
-      status: 200,
-      json: async () => ({ projects: [], config: { steps: {}, customModels: [] }, models: [], efforts: [] }),
-    });
-  };
-
-  for (const k of ['window', 'document', 'location', 'localStorage', 'WebSocket', 'fetch', 'navigator', 'requestAnimationFrame']) {
-    try {
-      Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true });
-    } catch {
-      /* read-only global already present — leave it */
-    }
-  }
-  globalThis.window = window;
-  globalThis.document = window.document;
-
-  await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
-  await new Promise((r) => setTimeout(r, 0));
-
-  function dispatch(msg) {
-    wsBox.ws.dispatch('message', { data: JSON.stringify(msg) });
-  }
-  function go(hash) {
-    window.location.hash = hash;
-    window.dispatchEvent(new window.Event('hashchange'));
-  }
-  // The bare list with nothing selected: forget the remembered run first (rule 5).
-  function showRunning() {
-    window.localStorage.removeItem('worca-cc.runs.last');
-    go('runs');
-  }
-  // Rows repaint on a microtask and a changed row is REPLACED: settle, then re-query.
-  const settle = async (n = 3) => {
-    for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0));
-  };
-  return { window, dispatch, go, showRunning, settle, calls, wsBox };
-}
+// One app for the file (test/helpers/shared-app-boot.mjs). jsdom has no rAF; the run page defers its scroll-to-question
+// by a frame (paintRdQuestions). Same shim as test/ui-sidebar-counts.test.mjs, set before app.js loads.
+const app = useSharedApp({ before, beforeEach, after }, {
+  setup: (window) => {
+    window.requestAnimationFrame = (fn) => setTimeout(fn, 0);
+    globalThis.requestAnimationFrame = window.requestAnimationFrame;
+  },
+});
+// The run-page ctx: dispatch, go, showRunning (the bare list with nothing selected), settle, calls, wsBox.
+const boot = runPageOn(app);
 
 const RUN_ID = 'run-aaa';
 

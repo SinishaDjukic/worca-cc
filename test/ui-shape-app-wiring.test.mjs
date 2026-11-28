@@ -4,16 +4,34 @@
 // `schedules-changed` frames repaint the hosts (F40).
 // Harness: the REAL app.js under jsdom (test/helpers/run-page-boot.mjs); the mount functions are read off
 // window.__shapeFeature, the test seam app.js exposes beside its other window.__* hooks.
-import { test } from 'node:test';
+import { test, before, beforeEach, afterEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { bootApp, runPanel } from './helpers/run-page-boot.mjs';
+import { runPageOn, runPanel } from './helpers/run-page-boot.mjs';
 import { namedAnswer } from '../ui/public/shape/step-receipt.mjs';
 import { chatCardBuilder } from '../ui/public/chat/extensions.mjs';
 import { gateStop, planStop } from '../src/shared/shape/run-stops.mjs';
+import { useSharedApp } from './helpers/shared-app-boot.mjs';
 
 const click = (ctx, el) => el.dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
 const res = (status, body) => Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body });
+
+// One app for the file. A feature view a test mounted repaints on the next reset's frames, so the file answers its
+// routes (no groups, no such feature), and each test's own hosts leave the page when it ends.
+const app = useSharedApp({ before, beforeEach, after }, {
+  fetchHandler: (url) => (url.startsWith('/api/run-groups') ? res(200, { groups: [] })
+    : url.startsWith('/api/shape/features/') ? res(404, { error: 'unknown feature' }) : null),
+});
+const openRunPage = runPageOn(app);
+// The shared app loaded its run groups at boot: each page here reads the test's own.
+const bootApp = async (opts) => {
+  const ctx = await openRunPage(opts);
+  ctx.dispatch({ type: 'run-groups-changed' });
+  await ctx.settle();
+  return ctx;
+};
+const testHosts = [];
+afterEach(() => { for (const h of testHosts.splice(0)) h.remove(); });
 
 // ---- the outline ask on the run page -------------------------------------------------------------------------------
 
@@ -142,7 +160,7 @@ async function bootFeature({ server = featureServer() } = {}) {
   ctx.dispatch({ type: 'hello', runs: [] });
   await ctx.settle();
   const seam = ctx.window.__shapeFeature;
-  const host = () => { const h = ctx.window.document.createElement('div'); ctx.window.document.body.appendChild(h); return h; };
+  const host = () => { const h = ctx.window.document.createElement('div'); ctx.window.document.body.appendChild(h); testHosts.push(h); return h; };
   return { ctx, server, seam, host };
 }
 
@@ -476,7 +494,10 @@ test('s2: threadForRun reads the slice route\'s threadId; shaperCard GETs once, 
 // ---- slice 4: the plan gate with role reviews on every surface (run page, workspace run, Chat card, feature page) ----
 
 const RR_ASK = JSON.parse(readFileSync(new URL('./fixtures/role-review/recorded-run.json', import.meta.url), 'utf8'));
-const rrRun = (o = {}) => ({ runId: 'run-rr', pipelineId: 'p-rr', title: 'Role reviews', projectDir: '/tmp/p', status: 'running', kind: 'run',
+// Each test's role-review run has its own pipeline id: app.js keeps a pipeline's slice answer for the life of the app.
+let PRR = 'p-rr';
+beforeEach(() => { PRR = app.uid('p-rr-'); });
+const rrRun = (o = {}) => ({ runId: 'run-rr', pipelineId: PRR, title: 'Role reviews', projectDir: '/tmp/p', status: 'running', kind: 'run',
   startedAt: '2026-01-01T00:00:00Z', shaping: { perspectives: RR_ASK.plan.perspectives, rounds: [], approved: null, savedTo: null },
   pendingQuestion: RR_ASK, ...o });
 const recordAnswers = (runId, posts, next = () => null) => (url, opts) => {
@@ -484,25 +505,27 @@ const recordAnswers = (runId, posts, next = () => null) => (url, opts) => {
   return next(url, opts);
 };
 
-for (const workspaceId of [null, 'ws1']) {
-  test(`run page${workspaceId ? ' (workspace run)' : ''}: the plan gate with 1 open issue is approvable`, async () => {
-    const posts = [];
-    const ctx = await bootApp({ fetchHandler: recordAnswers('run-rr', posts) });
-    ctx.wsBox.ws.dispatch('open', {});
-    ctx.dispatch({ type: 'hello', runs: [rrRun(workspaceId ? { workspaceId } : {})] });
-    ctx.go('running/run-rr');
-    await ctx.settle();
-    const panel = runPanel(ctx);
-    const approve = panel.querySelector('.plan-approve');
-    assert.equal(approve.textContent, 'Approve with 1 open issue');
-    assert.equal(panel.querySelectorAll('.plan-roles .plan-check-row').length, 5);
-    assert.equal(panel.querySelectorAll('.plan-more').length, 1, 'Shaper\'s ⋯ always holds Stop');
-    click(ctx, approve);
-    await ctx.settle();
-    assert.equal(posts.length, 1);
-    assert.equal(posts[0].decision, 'approve');
-  });
+// The run page's plan gate with 1 open issue, for a project run (workspaceId null) and a workspace run.
+async function planGateApprovable(workspaceId) {
+  const posts = [];
+  const ctx = await bootApp({ fetchHandler: recordAnswers('run-rr', posts) });
+  ctx.wsBox.ws.dispatch('open', {});
+  ctx.dispatch({ type: 'hello', runs: [rrRun(workspaceId ? { workspaceId } : {})] });
+  ctx.go('running/run-rr');
+  await ctx.settle();
+  const panel = runPanel(ctx);
+  const approve = panel.querySelector('.plan-approve');
+  assert.equal(approve.textContent, 'Approve with 1 open issue');
+  assert.equal(panel.querySelectorAll('.plan-roles .plan-check-row').length, 5);
+  assert.equal(panel.querySelectorAll('.plan-more').length, 1, 'Shaper\'s ⋯ always holds Stop');
+  click(ctx, approve);
+  await ctx.settle();
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].decision, 'approve');
 }
+
+test('run page: the plan gate with 1 open issue is approvable', () => planGateApprovable(null));
+test('run page (workspace run): the plan gate with 1 open issue is approvable', () => planGateApprovable('ws1'));
 
 test('Chat run card: the plan gate is approvable and the receipt names the roles and the open issue', async () => {
   const posts = [];
@@ -512,7 +535,7 @@ test('Chat run card: the plan gate is approvable and the receipt names the roles
   await ctx.settle();
   const doc = ctx.window.document;
   const built = chatCardBuilder('progress')(
-    { kind: 'card', id: 'c-rr', state: 'tracked', card: { type: 'progress', pipelineId: 'p-rr', runId: 'run-rr', projectKey: 'p', title: 'Role reviews' } },
+    { kind: 'card', id: 'c-rr', state: 'tracked', card: { type: 'progress', pipelineId: PRR, runId: 'run-rr', projectKey: 'p', title: 'Role reviews' } },
     { doc, win: ctx.window, fetch: (...a) => ctx.window.fetch(...a), openRunPanel() {}, openArtifact() {}, announce() {} });
   doc.body.appendChild(built.el);
   await ctx.settle();
@@ -639,7 +662,7 @@ test('Chat run card, Ask for changes open: Answer is not a primary and its click
   await ctx.settle();
   const doc = ctx.window.document;
   const built = chatCardBuilder('progress')(
-    { kind: 'card', id: 'c-req', state: 'tracked', card: { type: 'progress', pipelineId: 'p-rr', runId: 'run-rr', projectKey: 'p', title: 'Requirements' } },
+    { kind: 'card', id: 'c-req', state: 'tracked', card: { type: 'progress', pipelineId: PRR, runId: 'run-rr', projectKey: 'p', title: 'Requirements' } },
     { doc, win: ctx.window, fetch: (...a) => ctx.window.fetch(...a), openRunPanel() {}, openArtifact() {}, announce() {} });
   doc.body.appendChild(built.el);
   await ctx.settle();
@@ -923,12 +946,13 @@ test('C1: a shape-prototype frame re-reads its planning run\'s card', async () =
 });
 
 test('C1: the run page draws the building moment in its step area from the planning run\'s saved card, and drops it once an ask opens', async () => {
-  const card = { pipelineId: 'p-pb', smallRuns: true, care: { position: 'balanced' }, log: [],
+  // a planning run of its own: app.js keeps each run's Shaper card, and earlier tests read p-pb's
+  const card = { pipelineId: 'p-pb-page', smallRuns: true, care: { position: 'balanced' }, log: [],
     prototype: { state: 'building', screenIds: ['R-ux-1', 'R-ux-2'], designId: 'd_1', buildId: 'b_1', costUsd: 0, findings: [], remarks: 0, rebuilt: false,
       reviewRounds: 0, screens: [{ section: 'editor', name: 'Template editor', ids: ['R-ux-1'] }, { section: 'prefs', name: 'Email preferences', ids: ['R-ux-2'] }] } };
-  const ctx = await bootApp({ fetchHandler: (url) => (url === '/api/shape/pipelines/p-pb/card' ? res(200, card) : null) });
+  const ctx = await bootApp({ fetchHandler: (url) => (url === '/api/shape/pipelines/p-pb-page/card' ? res(200, card) : null) });
   ctx.wsBox.ws.dispatch('open', {});
-  const RUN = { runId: 'run-pb', pipelineId: 'p-pb', title: 'Email templates', projectDir: '/tmp/p', status: 'running', kind: 'run',
+  const RUN = { runId: 'run-pb', pipelineId: 'p-pb-page', title: 'Email templates', projectDir: '/tmp/p', status: 'running', kind: 'run',
     startedAt: '2026-01-01T00:00:00Z', shaping: { perspectives: [], rounds: [], approved: null, savedTo: null } };
   ctx.dispatch({ type: 'hello', runs: [RUN] });
   ctx.go('running/run-pb');
@@ -1007,7 +1031,7 @@ async function openStopRun(pq, route, { slice = { featureId: 'feat-1', index: 4,
   const { applyFlags } = await import('../ui/public/flags.mjs');
   const posts = [];
   const info = { current: slice };
-  const sliceGet = (url) => (url === '/api/shape/pipelines/p-rr/slice' ? res(200, info.current) : null);
+  const sliceGet = (url) => (url === `/api/shape/pipelines/${PRR}/slice` ? res(200, info.current) : null);
   const ctx = await bootApp({ fetchHandler: stopAnswers(posts, sliceGet, reply) });
   applyFlags({ shaperSmallRuns: true }, ctx.window.document);
   ctx.wsBox.ws.dispatch('open', {});
@@ -1085,7 +1109,7 @@ test('slice 3, flag on: a held answer refused at delivery reopens the stop on th
 test('flag on: a delivered answer (question-resolved) clears the stop on the run page and on the feature card', async () => {
   const { ctx, doc, off } = await openStopRun(C3_GATE_STOP, 'running/run-rr');
   const built = chatCardBuilder('progress')(
-    { kind: 'card', id: 'c-stop', state: 'tracked', card: { type: 'progress', pipelineId: 'p-rr', runId: 'run-rr', projectKey: 'p', title: 'Stop' } },
+    { kind: 'card', id: 'c-stop', state: 'tracked', card: { type: 'progress', pipelineId: PRR, runId: 'run-rr', projectKey: 'p', title: 'Stop' } },
     { doc, win: ctx.window, fetch: (...a) => ctx.window.fetch(...a), openRunPanel() {}, openArtifact() {}, announce() {} });
   doc.body.appendChild(built.el);
   await ctx.settle(6);
@@ -1117,7 +1141,7 @@ test('C3: a plan-kind stop is drawn by the gate card on the feature card: one pr
   await ctx.settle();
   const doc = ctx.window.document;
   const built = chatCardBuilder('progress')(
-    { kind: 'card', id: 'c-stop', state: 'tracked', card: { type: 'progress', pipelineId: 'p-rr', runId: 'run-rr', projectKey: 'p', title: 'Stop' } },
+    { kind: 'card', id: 'c-stop', state: 'tracked', card: { type: 'progress', pipelineId: PRR, runId: 'run-rr', projectKey: 'p', title: 'Stop' } },
     { doc, win: ctx.window, fetch: (...a) => ctx.window.fetch(...a), openRunPanel() {}, openArtifact() {}, announce() {} });
   doc.body.appendChild(built.el);
   await ctx.settle();
@@ -1134,14 +1158,14 @@ test('C3: a plan-kind stop is drawn by the gate card on the feature card: one pr
 test('C3: a shape-feature frame keeps an open stop\'s pick and focus; only a held answer repaints it', async () => {
   const info = { featureId: 'feat-1', index: 8, stop: { reason: 'objection', held: false } };   // a slice's answer always has its index
   let gets = 0;
-  const slice = (url) => (url === '/api/shape/pipelines/p-rr/slice' ? (gets++, res(200, { ...info })) : null);
+  const slice = (url) => (url === `/api/shape/pipelines/${PRR}/slice` ? (gets++, res(200, { ...info })) : null);
   const ctx = await bootApp({ fetchHandler: recordAnswers('run-rr', [], slice) });
   ctx.wsBox.ws.dispatch('open', {});
   ctx.dispatch({ type: 'hello', runs: [reqRun(C3_GATE_STOP)] });
   await ctx.settle();
   const doc = ctx.window.document;
   const built = chatCardBuilder('progress')(
-    { kind: 'card', id: 'c-stop', state: 'tracked', card: { type: 'progress', pipelineId: 'p-rr', runId: 'run-rr', projectKey: 'p', title: 'Stop' } },
+    { kind: 'card', id: 'c-stop', state: 'tracked', card: { type: 'progress', pipelineId: PRR, runId: 'run-rr', projectKey: 'p', title: 'Stop' } },
     { doc, win: ctx.window, fetch: (...a) => ctx.window.fetch(...a), openRunPanel() {}, openArtifact() {}, announce() {} });
   doc.body.appendChild(built.el);
   await ctx.settle(6);

@@ -67,7 +67,7 @@ it → know the workflows → real work → scale.
 ## First start
 
 On a fresh install (the welcome not seen, no project and no run: `fresh` in `GET /api/onboarding`, derived and
-never stored), the setup assistant (`docs/setup-assistant.md`) opens before the welcome. **Set up later** closes
+never stored), the setup assistant (`docs/setup-assistant.md`) opens before the welcome. **Skip all** closes
 it at once and goes straight to the welcome; finishing it ends on its ready screen instead: the welcome is marked seen and does not open, and **Start your
 first run** goes to the New run page. A re-run that applied something ends on the welcome's three doors. Settings ›
 General › Setup assistant › **Run setup** reopens it later with the saved values.

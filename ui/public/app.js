@@ -41470,7 +41470,7 @@ function openSetup({ entry = 'rerun', step = 'check', team = null, teamHash = nu
       else showWelcome();
     }
     else if (entry === 'rerun' && how === 'done' && applied) showWelcome({ force: true });
-    // T15: Apply then Continue, or Finish when nothing differs. Set up later / Escape keep the notice.
+    // T15: Apply then Continue, or Finish when nothing differs. Skip all / Escape keep the notice.
     else if (entry === 'team' && how === 'done' && team && teamHash) { markTeamSeen(team, teamHash); void paintTeamNotice(); }
   } });
 }

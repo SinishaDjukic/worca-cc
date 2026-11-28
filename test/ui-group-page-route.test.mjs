@@ -1,12 +1,13 @@
 // test/ui-group-page-route.test.mjs — runs redesign slice 4 (D16): #feature/:id and #group/:id render the group page
 // (ui/public/group-page.mjs) into the feature page's section, for features, user
 // groups and Run-after chains; its Decisions tab (D15) and its Ship for a user group (D6).
-import { test } from 'node:test';
+import { test, before, beforeEach, afterEach, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { bootApp } from './helpers/run-page-boot.mjs';
+import { runPageOn } from './helpers/run-page-boot.mjs';
 import { REPLAY_FRAMES } from './helpers/run-states.mjs';
 import { SIXTEEN_RUN_LINKS } from './helpers/shape-sixteen-runs.mjs';
 import { applyFlags } from '../ui/public/flags.mjs';
+import { useSharedApp } from './helpers/shared-app-boot.mjs';
 
 const member = (i) => ({ position: i, title: `Slice ${i}`, pipelineId: `p${i}`, ticketId: null, status: 'done', pr: null, ticket: null, adhoc: false, after: null });
 const GROUPS = { groups: [
@@ -19,11 +20,24 @@ const json = (b, s = 200) => Promise.resolve(new Response(JSON.stringify(b), { s
 const handler = (url) => (url.startsWith('/api/run-groups') ? json(GROUPS)
   : url.startsWith('/api/shape/features/feat_1') ? json(FEATURE)
   : url.startsWith('/api/shape/features/') ? json({ error: 'unknown feature' }, 404) : null);
+// The app loads its run groups at boot and again on each reset: no groups then (a failed load keeps the groups it
+// holds); each test's own come with boot()'s run-groups-changed. A feature view an earlier test left mounted reloads
+// on the reset too, so the feature answers are the file's.
+const app = useSharedApp({ before, beforeEach, after }, { fetchHandler: (url) => (url.startsWith('/api/run-groups') ? json({ groups: [] }) : handler(url)) });
+const bootApp = runPageOn(app);
+// The shared app keeps the Ship dialog: a test that leaves it open closes here, so the next test opens its own.
+afterEach(async () => {
+  const modal = globalThis.document?.getElementById('shipit-modal');
+  if (!modal || modal.classList.contains('hidden')) return;
+  modal.querySelector('.shipit-cancel')?.click();
+  await new Promise((r) => setTimeout(r, 0));
+});
 
 async function boot(fetchHandler = handler) {
   const ctx = await bootApp({ fetchHandler });
   ctx.wsBox.ws.dispatch('open', {});
   ctx.dispatch({ type: 'hello', runs: [] });
+  ctx.dispatch({ type: 'run-groups-changed' });   // the shared app loaded its groups at boot: this test's answer now
   await ctx.settle();
   return ctx;
 }
@@ -138,6 +152,9 @@ test('D1, flag off: a small-runs feature\'s header follows the small-runs ledger
   assert.equal(modal.querySelector('.shipit-prs input[value="one"]').disabled, true, 'One is off');
   assert.equal(modal.querySelector('.shipit-prs-one-why').textContent, 'small runs ship a PR per run', 'flag off: the reason as before');
   assert.doesNotMatch(modal.querySelector('.shipit-prs-hint').textContent, /one PR is easier/, 'the hint never suggests the disabled One');
+  modal.querySelector('.shipit-cancel').click();             // the shared app keeps the dialog: close it for the next test
+  await ctx.settle(4);
+  assert.equal(modal.classList.contains('hidden'), true, 'closed');
 });
 
 test('small runs, flag on, along the real branches: a carried run\'s open PR turns One off and is named', async () => {
@@ -682,11 +699,13 @@ test('D10: with no current run, the Verifier\'s open stop is asked and answered 
 });
 
 test('D10: a cached miss of the Verifier\'s run is asked again once per question, and the feature page then asks it', async () => {
+  // a Verifier run of its own: app.js caches each pipeline's /slice answer, and an earlier test already had pv's
+  const run = { ...verifierRun, runId: 'rv-miss', pipelineId: 'pv-miss' };
   let gets = 0;
-  const extra = (url) => (url === '/api/shape/pipelines/pv/slice'
+  const extra = (url) => (url === '/api/shape/pipelines/pv-miss/slice'
     ? (gets += 1, gets === 1 ? json({ error: 'not a slice' }, 404) : json({ verifier: true, featureId: 'feat_1', threadId: null })) : null);
   const { ctx } = await d3Boot({ extra, feature: () => json(D3_FEATURE('met')) });
-  ctx.dispatch({ type: 'hello', runs: [verifierRun] });
+  ctx.dispatch({ type: 'hello', runs: [run] });
   ctx.go('feature/feat_1');
   await ctx.settle(12);
   const slot = pageOf(ctx).querySelector('.gpage-question');
@@ -1240,6 +1259,7 @@ async function s6Open({ n = 6, feature = () => json(s6Feature({ n })), groups = 
   if (level) { doc.documentElement.dataset.level = level; doc.dispatchEvent(new ctx.window.Event('worca:level')); }
   const scrolls = [];
   ctx.window.Element.prototype.scrollIntoView = function (arg) { scrolls.push({ node: this, arg }); };
+  calls.before = calls.feature;      // the shared app may still hold an earlier test's feature page: count from this visit
   ctx.go(hash);
   await ctx.settle(12);
   const gp = () => pageOf(ctx).querySelector('.gpage');
@@ -1464,7 +1484,7 @@ test('R-ux-3 flag off: a small-runs feature with an open mark keeps Runs, Overvi
 
 test('R-ux-3 flag off: an overview deep link fetches the feature twice and says "Loading feature…" while the card loads', async () => {
   const p = await s6Open({ flag: false, hash: 'feature/feat_1/overview', feature: (n) => (n === 1 ? json(s6Feature()) : new Promise(() => {})) });
-  assert.equal(p.calls.feature, 2);
+  assert.equal(p.calls.feature - p.calls.before, 2);
   assert.equal(p.q('.gpage-panel[data-tab="overview"] .gpage-overview .feature-page-loading')?.textContent, 'Loading feature…');
 });
 

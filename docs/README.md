@@ -96,5 +96,6 @@ Start with the [project README](../README.md) for what Worca is and a quick star
 - [Design system](design-system.md) — how Worca looks; every UI change passes its design gate
 - [Architecture (C4) design](architecture-c4.md) — how Worca reads a codebase into a LikeC4 model
 - [Releasing](RELEASING.md) — how `@worca/app` versions are published
+- [Required checks](required-checks.md) — the admin checklist that makes dev require CI gate, parity and Firefox e2e
 - [Changelog](changelog/README.md) — the release pages behind docs.worca.dev/changelog
 - [Screenshots](screenshots.md) — how the shots in the README and docs are made

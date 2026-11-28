@@ -1,14 +1,19 @@
 // test/ui-run-sessions-tray.test.mjs — the monitor tray is live and opens the session's log.
-import { test, afterEach } from 'node:test';
+import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { mountRunGraph } from '../ui/public/graph/run-hosts.mjs';
 import { decorFromState } from '../ui/public/graph/run-decor.mjs';
 import { SID, SESSION_STEPPER, groupedRunningState } from './helpers/session-run-state.mjs';
-import { bootApp, helloRun } from './helpers/run-page-boot.mjs';
+import { runPageOn, helloRun } from './helpers/run-page-boot.mjs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
-import { bootDetail, openDetail, settle as settleHd, DETAIL } from './helpers/history-detail-boot.mjs';
+import { openDetail, settle as settleHd, DETAIL, detailOn, historyFetch } from './helpers/history-detail-boot.mjs';
 import { readStyleCss } from '../src/core/read-style-css.mjs';
+import { useSharedApp } from './helpers/shared-app-boot.mjs';
+
+const app = useSharedApp({ before, beforeEach, after }, { fetchHandler: historyFetch() });
+const bootApp = runPageOn(app);
+const bootDetail = detailOn(app).detail;
 
 test('a header click calls onSessionClick with the sid; the aria label carries the status', async () => {
   const dom = new JSDOM('<!doctype html><body><div id="h" style="width:800px;height:400px"></div></body>');
@@ -26,7 +31,7 @@ test('a header click calls onSessionClick with the sid; the aria label carries t
 
 // ── v2: keyboard, hosts without the callback, the view options, and the app's wiring ──
 const OPEN = { claude: true };
-const trackDom = useDomRelease(afterEach);
+const trackDom = useDomRelease(after);   // this file's own windows, released at its end: never the shared app's per test
 function mount(opts = {}, state = groupedRunningState(), decorOpts = {}) {
   const dom = trackDom(new JSDOM('<!doctype html><body><div class="run-flow-wrap"><div id="h"></div></div></body>'));
   const doc = dom.window.document;
@@ -173,6 +178,8 @@ test('v4 — History: the tray header is a tab stop only when the run saved a lo
     assert.ok(head, 'the tray painted');
     assert.equal(head.getAttribute('tabindex'), tab, artifacts.length ? 'a saved log: the header opens it' : 'no saved log: nothing to open');
     assert.equal(!!head.closest('.gv-sess-links'), links);
-    ctx.window.close();
+    ctx.window.location.hash = 'history';   // close the run: the next case opens the same one on the one shared app
+    ctx.window.dispatchEvent(new ctx.window.Event('hashchange'));
+    await settleHd(ctx.window);
   }
 });
