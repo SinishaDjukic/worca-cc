@@ -872,7 +872,7 @@ const INCREMENTAL_COLUMNS = {
                             // The run clock, no version of their own; reconcileSchema adds them
                             elapsed_ms: 'INTEGER NOT NULL DEFAULT 0',   // folded elapsed ms; 0 with a NULL elapsed_since = no figure (an old run)
                             elapsed_since: 'INTEGER',                   // epoch ms the clock has been running since; NULL = parked or no figure
-                            run_setup: 'TEXT',  // v62 (#712): the run's normalized setup (src/shared/run-presets.mjs keys, full picks); NULL = before v62, a CLI start, a scan, or a No-project run started before Rerun
+                            run_setup: 'TEXT',  // v62 (#712): the run's normalized setup (src/shared/run-presets.mjs keys, full picks); {workflowId, idOnly} = a CLI start or a scan; NULL = before v62, or a No-project run started before Rerun
                             deleted_at: 'TEXT',   // v65: Delete (runs redesign §3.2) keeps an anonymised row for Statistics
                             pr_verdict: 'TEXT',   // v65: the PR chip's CI verdict (JSON), runs redesign §2.1a
                             release_version: 'TEXT',  // v66 (Shaper s4): the Ship it dialog's draft release tag; NULL = none

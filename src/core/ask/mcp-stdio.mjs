@@ -21,6 +21,8 @@
 import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
 import { createAskTools } from './tools.mjs';
+import { readProjectProfile } from '../project-profile.mjs';
+import { listProjects } from '../projects.mjs';
 import { createRpcServer } from './rpc-server.mjs';
 import { defaultToolDeps } from './tool-deps.mjs';
 import { defaultWorktreeDeps } from './worktree-deps.mjs';
@@ -101,6 +103,11 @@ export function createAskToolServer({ threadId, reader = null, signal, write, lo
       ...defaultActionsDeps(),
       // MCP servers (docs/mcp-servers.md "Chat"): read the registry; propose a Manual server change (validate only).
       ...defaultMcpServerDeps(),
+      // The stored project profile (get_project_profile); a read failure is "no profile".
+      profile: {
+        known: async (key) => { try { return (await listProjects()).some((p) => p.key === key); } catch { return false; } },
+        read: (key) => { try { return readProjectProfile(key); } catch { return null; } },
+      },
       // Corporate proxy (docs/network-proxy.md "From Chat"): read + test over the per-turn bridge; two cards.
       ...defaultProxyDeps({ env }),
       // Security setups and sandboxes (docs/chat.md "Security and sandboxes"): the posture, the execution environments, a

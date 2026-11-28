@@ -204,3 +204,7 @@ button.wd-member:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;
 .wm-add-form{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
 .wm-add-form .input{flex:1 1 160px;width:auto;padding:0 12px;font-size:12px;}
 .wm-add-msg[hidden]{display:none;}
+.wd-members .card-head .wd-members-rd:empty{display:none;}
+.wd-members-rd{margin-left:6px;}
+.wd-member-rd{flex:0 0 auto;display:flex;align-items:center;}
+.wd-member-rd:empty{display:none;}

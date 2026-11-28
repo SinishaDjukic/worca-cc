@@ -1,0 +1,56 @@
+{
+  "key": "readinessRescore",
+  "metaVersion": 2,
+  "runnerType": "producer",
+  "mockRole": "generic-producer",
+  "domain": "readiness",
+  "displayName": "Re-score",
+  "description": "Judges the generated instruction files and tests after setup; worca's Gate script computes the score and decides the fix loop.",
+  "color": "amber",
+  "scope": "project",
+  "workspaceFanOut": true,
+  "workspaceStrategy": "explore",
+  "agentFile": "readinessRescore.md",
+  "order": 15,
+  "promptHints": "Cycle: {cycle}.",
+  "requiresSkills": [
+    "readiness-rubric"
+  ],
+  "inputs": [
+    {
+      "id": "map",
+      "type": "json"
+    },
+    {
+      "id": "plan",
+      "type": "json"
+    },
+    {
+      "id": "generated",
+      "type": "json"
+    },
+    {
+      "id": "tests",
+      "type": "json",
+      "required": false
+    },
+    {
+      "id": "probe",
+      "type": "json"
+    },
+    {
+      "id": "after",
+      "type": "void",
+      "required": false,
+      "as": "worktree"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "judgement",
+      "type": "json",
+      "filename": "readiness-judgement-final-cycle{cycle}.json",
+      "artifactKind": "readiness-judgement"
+    }
+  ]
+}

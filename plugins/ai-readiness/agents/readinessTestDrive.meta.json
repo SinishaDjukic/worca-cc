@@ -1,0 +1,56 @@
+{
+  "key": "readinessTestDrive",
+  "metaVersion": 2,
+  "runnerType": "verifier",
+  "mockRole": "generic-approver",
+  "domain": "readiness",
+  "displayName": "Test-drive",
+  "description": "Test-drive in a throwaway worktree: performs one confirmed recurring task with Claude Code and Codex, when selected, using only the generated guidance, and reports every selected tool (the others from their static checks).",
+  "color": "red",
+  "scope": "project",
+  "agentFile": "readinessTestDrive.md",
+  "order": 16,
+  "promptHints": "Cycle: {cycle}.",
+  "verdict": {
+    "filename": "readiness-test-drive-verdict-cycle{cycle}.json"
+  },
+  "inputs": [
+    {
+      "id": "map",
+      "type": "json"
+    },
+    {
+      "id": "plan",
+      "type": "json"
+    },
+    {
+      "id": "after",
+      "type": "void",
+      "required": false,
+      "as": "worktree"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "report",
+      "type": "md",
+      "when": "always",
+      "filename": "readiness-test-drive-cycle{cycle}.md",
+      "artifactKind": "readiness-test-drive"
+    },
+    {
+      "id": "findings",
+      "type": "md",
+      "when": "blocking",
+      "filename": "readiness-test-drive-findings-cycle{cycle}.md",
+      "artifactKind": "readiness-findings"
+    },
+    {
+      "id": "pass",
+      "type": "md",
+      "when": "clean",
+      "filename": "readiness-test-drive-cycle{cycle}.md",
+      "artifactKind": "readiness-test-drive"
+    }
+  ]
+}

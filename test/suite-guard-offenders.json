@@ -5,7 +5,6 @@
   "test/extension-pair-prompt.test.mjs",
   "test/graph-session-notices.test.mjs",
   "test/newpipeline-config.test.mjs",
-  "test/readiness-project-page.test.mjs",
   "test/readiness-ui.test.mjs",
   "test/requirements-app.test.mjs",
   "test/ui-account-corner.test.mjs",

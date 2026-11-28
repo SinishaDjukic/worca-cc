@@ -36,8 +36,10 @@ export const SEED_ID_KEYS = ['runId', 'heldRunId', 'pipelineId', 'threadId', 'he
 export const idMasks = (page, seed) => SEED_ID_KEYS.filter((k) => seed[k]).map((k) => page.getByText(seed[k], { exact: false }));
 
 /** No transitions, animations or caret in a shot. A dev-vs-dev CI run showed 1–38 px on rounded corners (the search
- *  box, the Profile avatar, the "Getting started" pill): focus or hover state caught mid-transition. */
-export const PIN_STYLE = '*,*::before,*::after{transition:none!important;animation:none!important;caret-color:transparent!important}';
+ *  box, the Profile avatar, the "Getting started" pill): focus or hover state caught mid-transition. No toasts either:
+ *  a one-time notice (the role-defaults toast) lands after an async request, so one side's first shot caught it and the
+ *  other's did not, and a mask cannot even them out (it paints only an element that is there). */
+export const PIN_STYLE = '*,*::before,*::after{transition:none!important;animation:none!important;caret-color:transparent!important}#toasts{visibility:hidden!important}';
 
 /** Settle a page for its shot: the pin style, no focus, no hover, then two frames so the result is painted. Two frames
  *  first, too: Chrome runs a pending `autofocus` at its next rendering update, which on a loaded machine came after the

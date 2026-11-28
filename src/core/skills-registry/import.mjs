@@ -356,9 +356,14 @@ async function stage(source, { fetchGit, update = null }) {
  * source: { kind:'dir', path } (absolute) | { kind:'paste', name, content } | { kind:'home', name } (a folder of
  * ~/.claude/skills) | { kind:'git', url, ref?, subdir? }. 400 bad source / too large, 404 not found.
  * `fetchGit({ url, ref, subdir, dest, scratch }) → { sha, subdir, candidates }` is the git seam (default: git, or GitHub over HTTPS without it).
+ * `update` (a library skill's name) stages a replacement of that skill instead, applied with applyUpdate(update, dir).
  */
-export async function stageImport(source, { fetchGit = defaultFetchGit } = {}) {
-  return stage(source, { fetchGit });
+export async function stageImport(source, { fetchGit = defaultFetchGit, update = null } = {}) {
+  if (update !== null) {
+    const nameProblem = skillNameProblem(update);
+    if (nameProblem) fail(400, nameProblem);
+  }
+  return stage(source, { fetchGit, update });
 }
 
 /** Remove a stage (its files, its origin, a git scratch). Unknown stage: nothing to do. 400 on a malformed id. */

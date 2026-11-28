@@ -6,10 +6,10 @@
 import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, readFile, writeFile, readdir, mkdir } from 'node:fs/promises';
-import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, writeFileSync, symlinkSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, execSync } from 'node:child_process';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { gitDir } from './helpers/git-dir.mjs';
 import { seedQuickFix } from './helpers/engines.mjs';
@@ -570,6 +570,127 @@ test('wf_memory_defrag + memoryScope global: one-scope mount, the mock merges, s
   const detail = await readPipelineByKey(pk, orch.pipeline.id);
   assert.match(detail.auditMarkdown, /Memory: \+0 ~1 -1 by memoryDefragmenter/);
   assert.match(detail.auditMarkdown, /Memory: Global defragmented by this run\./);
+});
+
+/** A repo on `main` (the base branch a defragment reads, worktree.mjs baseBranchRef) whose commit carries the
+ *  instruction files the project-scope defragment compares notes against. */
+const GIT_ID = '-c user.email=t@t -c user.name=t';
+function gitDirWithInstructions(files, { branch = 'main' } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'worca-cc-mem-'));
+  execSync(`git init -q -b ${branch} && git ${GIT_ID} commit -q --allow-empty -m init`, { cwd: dir });
+  for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text);
+  execSync(`git add -A && git ${GIT_ID} commit -q -m instructions`, { cwd: dir });
+  return dir;
+}
+/** The copies a defragment's task names, by absolute path. */
+const namedCopies = (task) => [...String(task).matchAll(/`([^`\n]+[\\/](?:CLAUDE|AGENTS)\.md)`/g)].map((m) => m[1]);
+/** Run a project-scope mock defragment of `dir`; the task document its agent got. */
+async function defragTask(dir) {
+  let task = null;
+  const orch = createOrchestrator({
+    projectDir: dir, workflowId: 'wf_memory_defrag', memoryScope: 'project', prompt: 'Defragment.', claude: { mock: true }, auto: true,
+    runners: { producer: async (ctx) => { if (ctx.node.key === 'memoryDefragmenter') task = await readFile(ctx.bindings.task.path, 'utf8'); return runAgentExecution(ctx); } },
+  });
+  const r = await orch.run();
+  assert.equal(r.status, 'done', String(orch.getState().pauseDetail));
+  return { task, orch };
+}
+
+test('a PROJECT-scope defragment gets read-only copies of the project\'s CLAUDE.md and AGENTS.md, named in its task with the base branch, outside the checkout', { timeout: 120000 }, async () => {
+  await rm(memoryRoot(), { recursive: true, force: true });
+  const dir = gitDirWithInstructions({ 'CLAUDE.md': '# Rules\n\nRun npm ci before the suite.\n', 'AGENTS.md': '# Agents\n\nUse node 22.\n' });
+  // The live checkout's uncommitted edit is never read: the copy is the base branch's committed text.
+  await writeFile(join(dir, 'CLAUDE.md'), '# Rules\n\nUNCOMMITTED\n');
+  const pk = projectKey(dir);
+  await writeMemory(memoryRoot(), projectScope(pk), 'testing', 'Run npm ci before the suite.\n', { source: 'user', now: NOW, caps: CAPS });
+  let task = null; let cwd = null;
+  const orch = createOrchestrator({
+    projectDir: dir, workflowId: 'wf_memory_defrag', memoryScope: 'project', prompt: 'Defragment the memory of this project.', claude: { mock: true }, auto: true,
+    runners: { producer: async (ctx) => { if (ctx.node.key === 'memoryDefragmenter') { task = await readFile(ctx.bindings.task.path, 'utf8'); cwd = ctx.projectDir; } return runAgentExecution(ctx); } },
+  });
+  { const r = await orch.run(); assert.equal(r.status, 'done', String(orch.getState().pauseDetail)); }
+  const pipelineDir = orch.getState().pipelineDir;
+  assert.match(task, /\n## Instruction files\n/, 'the task names the copies');
+  const copies = [...task.matchAll(/`([^`\n]+[\\/](?:CLAUDE|AGENTS)\.md)`/g)].map((m) => m[1]);
+  assert.equal(copies.length, 2, task);
+  for (const p of copies) {
+    assert.ok(p.startsWith(pipelineDir + sep), `${p} is in the run's own folder`);
+    assert.ok(!p.startsWith(cwd + sep), `${p} is outside the run's checkout`);
+  }
+  const claude = copies.find((p) => p.endsWith('CLAUDE.md'));
+  const agents = copies.find((p) => p.endsWith('AGENTS.md'));
+  assert.equal(await readFile(claude, 'utf8'), '# Rules\n\nRun npm ci before the suite.\n', 'the base branch\'s committed text, not the live edit');
+  assert.equal(await readFile(agents, 'utf8'), '# Agents\n\nUse node 22.\n');
+  if (process.platform !== 'win32') for (const p of copies) assert.equal((statSync(p).mode & 0o222), 0, `${p} is read-only`);
+  assert.equal(await readFile(join(dir, 'CLAUDE.md'), 'utf8'), '# Rules\n\nUNCOMMITTED\n', 'the live checkout is never touched');
+  const sha = execSync('git rev-parse --short HEAD', { cwd: dir }).toString().trim();
+  assert.match(task, new RegExp(`from the base branch \`main\` at \`${sha}\``), 'the section names the branch and commit');
+});
+
+test('a project-scope defragment reads the BASE branch\'s instruction files, not the feature branch the live checkout is on', { timeout: 120000 }, async () => {
+  await rm(memoryRoot(), { recursive: true, force: true });
+  const dir = gitDirWithInstructions({ 'CLAUDE.md': 'Base rule.\n', 'AGENTS.md': 'Base agents.\n' });
+  const baseSha = execSync('git rev-parse --short HEAD', { cwd: dir }).toString().trim();
+  writeFileSync(join(dir, 'CLAUDE.md'), 'Feature-only rule.\n');
+  execSync(`git checkout -q -b feature && git ${GIT_ID} commit -q -am feature`, { cwd: dir });
+  const { task } = await defragTask(dir);
+  assert.match(task, new RegExp(`from the base branch \`main\` at \`${baseSha}\``), task);
+  const claude = namedCopies(task).find((p) => p.endsWith('CLAUDE.md'));
+  assert.equal(await readFile(claude, 'utf8'), 'Base rule.\n', 'the base branch\'s text, never the feature branch\'s');
+  assert.equal(task.includes('Feature-only'), false);
+});
+
+test('a project-scope defragment with no base branch gets no instruction files', { timeout: 120000 }, async () => {
+  await rm(memoryRoot(), { recursive: true, force: true });
+  // No origin/HEAD, init.defaultBranch names a branch that does not exist, no `main`: only the checked-out branch,
+  // which is not the base.
+  const dir = gitDirWithInstructions({ 'CLAUDE.md': 'Rule.\n' }, { branch: 'trunk' });
+  execSync('git config init.defaultBranch nosuch', { cwd: dir });
+  const { task, orch } = await defragTask(dir);
+  assert.equal(task.includes('## Instruction files'), false, task);
+  assert.equal(existsSync(join(orch.getState().pipelineDir, 'instruction-files', 'CLAUDE.md')), false);
+});
+
+test('a project-scope defragment skips an instruction file over 256 KB', { timeout: 120000 }, async () => {
+  await rm(memoryRoot(), { recursive: true, force: true });
+  const dir = gitDirWithInstructions({ 'CLAUDE.md': 'Rule.\n', 'AGENTS.md': `${'x'.repeat(256 * 1024)}\n` });
+  const { task, orch } = await defragTask(dir);
+  assert.deepEqual(namedCopies(task).map((p) => p.split(/[\\/]/).pop()), ['CLAUDE.md'], task);
+  const log = await readFile(join(orch.getState().pipelineDir, RUN_LOG_FILE), 'utf8');
+  assert.match(log, /AGENTS\.md[^\n]*over 256 KB/);
+});
+
+test('a project-scope defragment names only the instruction files the base branch has, and never a symlink', { timeout: 120000 }, async () => {
+  await rm(memoryRoot(), { recursive: true, force: true });
+  const outside = mkdtempSync(join(tmpdir(), 'worca-mem-outside-'));
+  writeFileSync(join(outside, 'secret.md'), 'secret\n');
+  const dir = gitDirWithInstructions({ 'AGENTS.md': 'Use node 22.\n' });
+  symlinkSync(join(outside, 'secret.md'), join(dir, 'CLAUDE.md'));
+  execSync('git add -A && git -c user.email=t@t -c user.name=t commit -q -m link', { cwd: dir });
+  let task = null;
+  const orch = createOrchestrator({
+    projectDir: dir, workflowId: 'wf_memory_defrag', memoryScope: 'project', prompt: 'Defragment.', claude: { mock: true }, auto: true,
+    runners: { producer: async (ctx) => { if (ctx.node.key === 'memoryDefragmenter') task = await readFile(ctx.bindings.task.path, 'utf8'); return runAgentExecution(ctx); } },
+  });
+  { const r = await orch.run(); assert.equal(r.status, 'done', String(orch.getState().pauseDetail)); }
+  const copies = [...task.matchAll(/`([^`\n]+[\\/](?:CLAUDE|AGENTS)\.md)`/g)].map((m) => m[1]);
+  assert.deepEqual(copies.map((p) => p.split(/[\\/]/).pop()), ['AGENTS.md'], task);
+  assert.equal(task.includes('secret'), false);
+  rmSync(outside, { recursive: true, force: true });
+});
+
+test('a GLOBAL defragment never gets the hosting project\'s instruction files', { timeout: 120000 }, async () => {
+  await rm(memoryRoot(), { recursive: true, force: true });
+  const dir = gitDirWithInstructions({ 'CLAUDE.md': 'Run npm ci.\n', 'AGENTS.md': 'Use node 22.\n' });
+  await writeMemory(memoryRoot(), GLOBAL_SCOPE, 'a', 'Rule A.\n', { source: 'user', now: NOW, caps: CAPS });
+  let task = null;
+  const orch = createOrchestrator({
+    projectDir: dir, workflowId: 'wf_memory_defrag', memoryScope: 'global', prompt: 'Defragment global memory.', claude: { mock: true }, auto: true,
+    runners: { producer: async (ctx) => { if (ctx.node.key === 'memoryDefragmenter') task = await readFile(ctx.bindings.task.path, 'utf8'); return runAgentExecution(ctx); } },
+  });
+  { const r = await orch.run(); assert.equal(r.status, 'done', String(orch.getState().pauseDetail)); }
+  assert.ok(task && !task.includes('## Instruction files'), 'no section');
+  assert.equal(existsSync(join(orch.getState().pipelineDir, 'instruction-files')), false, 'no copies');
 });
 
 test('memoryScope: the constructor refuses the illegal combinations (the API/CLI answer 400 first; this is the last line)', () => {

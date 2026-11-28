@@ -75,8 +75,8 @@ function fakePage() {
 const FRAMES = /^evaluate .*requestAnimationFrame.*requestAnimationFrame/s;
 const SETTLE = [/^style /, FRAMES, /^evaluate .*activeElement.*blur/, /^mouse 0,0$/, FRAMES];
 
-test('steady: pin style, two frames (a pending autofocus runs), then blur, the mouse to (0,0), and two more frames', async () => {
-  assert.equal(PIN_STYLE, '*,*::before,*::after{transition:none!important;animation:none!important;caret-color:transparent!important}');
+test('steady: pin style (toasts hidden), two frames (a pending autofocus runs), then blur, the mouse to (0,0), and two more frames', async () => {
+  assert.equal(PIN_STYLE, '*,*::before,*::after{transition:none!important;animation:none!important;caret-color:transparent!important}#toasts{visibility:hidden!important}');
   const page = fakePage();
   await steady(page);
   assert.equal(page.calls.length, SETTLE.length);

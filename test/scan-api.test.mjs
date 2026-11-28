@@ -241,9 +241,11 @@ test('two first scans of the same set in the same tick: the launch reservation r
   // Both calls start in ONE synchronous tick: the first is parked at its first await inside
   // startRunHandler (no runs entry yet) when the second checks — only the reservation refuses it.
   // Over HTTP the second request usually lands after runs.set, which proves nothing.
-  const p1 = scanRequest({ body: {}, headers: {} }, r1, target('Tick One', [a, b]));
+  const q1 = { body: {}, headers: {} };
+  const p1 = scanRequest(q1, r1, target('Tick One', [a, b]));
   const p2 = scanRequest({ body: {}, headers: {} }, r2, target('Tick Two', [b, a]));
   await Promise.all([p1, p2]);
+  assert.equal(q1.body.noMemory, true, 'a scan run carries no memory: it has no Workspace Context either (D9)');
   assert.deepEqual([r1.statusCode, r2.statusCode], [200, 409], JSON.stringify([r1.body, r2.body]));
   assert.match(r2.body.error, /already running/);
   assert.equal((await settled(r1.body.runId)).status, 'done');

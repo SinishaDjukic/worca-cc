@@ -5,7 +5,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { mkdtempSync, mkdirSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, existsSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket } from 'ws';
@@ -15,6 +15,7 @@ import { _resetForTests as closeDbForTests } from '../src/core/db.mjs';
 import { _testing as gitTesting } from '../src/core/git-available.mjs';
 import { displayPath } from '../src/core/projects.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { cache as readinessCache } from '../src/core/repo-readiness/cache.mjs';
 
 useTempHome(after);
 
@@ -133,6 +134,19 @@ test('project card route: decline, apply create (folder + registry + chat switch
       const j = await (await post(`/api/ask/threads/${threadId}/cards/${cardId}`, { state: 'applied' })).json();
       assert.equal(j.block.card.result.project.vcs, 'git');
       assert.ok(existsSync(join(dir, '.git', 'HEAD')));
+    } },
+    { name: 'the chat project card\'s apply is evaluated for readiness', run: async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'worca-cc-askproj-ready-')); made.push(dir);
+      writeFileSync(join(dir, 'index.js'), 'export {};\n');
+      const added = [];
+      const on = (e) => added.push(e);
+      readinessCache.on('added', on);
+      try {
+        const { threadId, cardId } = await seedCard({ type: 'project', kind: 'add', summary: 'Add ready-folder', name: 'ready-folder', path: dir, vcs: 'none', change: { kind: 'add', name: 'ready-folder', path: dir, useGit: false } });
+        const j = await (await post(`/api/ask/threads/${threadId}/cards/${cardId}`, { state: 'applied' })).json();
+        assert.equal(j.block.state, 'applied', JSON.stringify(j.block));
+        await waitFor(async () => added.find((e) => e.projectKey === j.block.card.result.project.key));
+      } finally { readinessCache.off('added', on); }
     } },
     { name: 'a refusal at apply time (the folder appeared since) fails the card and switches nothing', run: async () => {
       mkdirSync(join(projectsRoot, 'taken-one'));

@@ -1,0 +1,134 @@
+{
+  "key": "readinessPlan",
+  "metaVersion": 2,
+  "runnerType": "verifier",
+  "mockRole": "generic-approver",
+  "domain": "readiness",
+  "displayName": "Plan",
+  "description": "Shows the score and the files the setup will write, and asks you to approve them.",
+  "color": "violet",
+  "scope": "project",
+  "agentFile": "readinessPlan.md",
+  "order": 13,
+  "promptHints": "Cycle: {cycle}.",
+  "requiresSkills": ["readiness-rubric"],
+  "asksQuestions": true,
+  "questionsLocked": true,
+  "questionsDefault": true,
+  "verdict": { "filename": "readiness-plan-verdict-cycle{cycle}.json" },
+  "inputs": [
+    { "id": "score", "type": "md" },
+    { "id": "map", "type": "json" }
+  ],
+  "outputs": [
+    { "id": "plan", "type": "json", "when": "always", "filename": "readiness-plan.json", "artifactKind": "readiness-plan" },
+    { "id": "proceed", "type": "md", "when": "clean", "filename": "readiness-approved.md", "artifactKind": "readiness-approved" },
+    { "id": "stopped", "type": "md", "when": "blocking", "filename": "readiness-stopped.md", "artifactKind": "readiness-stopped" }
+  ],
+  "ask": {
+    "forms": {
+      "readiness-plan": {
+        "version": 1,
+        "title": "Plan: what the setup will write",
+        "data": {
+          "type": "object",
+          "required": ["scoreLine", "files", "existing", "tasks", "testOptions", "testDefault", "heavy"],
+          "properties": {
+            "scoreLine": { "type": "string", "maxLength": 1500 },
+            "files": {
+              "type": "array", "maxItems": 80,
+              "items": { "type": "object", "required": ["id"], "properties": {
+                "id": { "type": "string", "maxLength": 200, "pattern": "^[^*?{}\\[\\]]+$", "patternHint": "one path or one folder ending in /; no wildcards" },
+                "tools": { "type": "string", "maxLength": 120 },
+                "reason": { "type": "string", "maxLength": 300 } } }
+            },
+            "existing": {
+              "type": "array", "maxItems": 12,
+              "items": { "type": "object", "required": ["id"], "properties": {
+                "id": { "type": "string", "maxLength": 200 },
+                "title": { "type": "string", "maxLength": 200 } } }
+            },
+            "tasks": {
+              "type": "array", "maxItems": 12,
+              "items": { "type": "object", "required": ["id"], "properties": {
+                "id": { "type": "string", "maxLength": 120 },
+                "name": { "type": "string", "maxLength": 120 },
+                "becomes": { "type": "string", "maxLength": 200 } } }
+            },
+            "testOptions": {
+              "type": "array", "minItems": 1, "maxItems": 6,
+              "items": { "type": "object", "required": ["id", "label"], "properties": {
+                "id": { "type": "string", "enum": ["none", "seed-helpers", "docs-only", "scaffold", "smoke", "characterization"] },
+                "label": { "type": "string", "maxLength": 120 },
+                "adds": { "type": "string", "maxLength": 200 } } }
+            },
+            "testDefault": { "type": "string", "enum": ["none", "seed-helpers", "docs-only", "scaffold", "smoke", "characterization"] },
+            "heavy": {
+              "type": "array", "maxItems": 12,
+              "items": { "type": "object", "required": ["id", "label"], "properties": {
+                "id": { "type": "string", "maxLength": 120 },
+                "label": { "type": "string", "maxLength": 160 } } }
+            }
+          }
+        },
+        "answer": {
+          "type": "object",
+          "required": ["files", "tests", "decision"],
+          "properties": {
+            "files": { "type": "array", "items": { "type": "string", "enumFrom": "data.files[].id" }, "defaultFrom": "data.files[].id" },
+            "existing": {
+              "type": "array",
+              "items": { "type": "object", "required": ["id", "verdict"], "properties": {
+                "id": { "type": "string" },
+                "verdict": { "type": "string", "enum": ["only-add", "improve", "leave"], "default": "only-add" },
+                "note": { "type": "string", "maxLength": 500 } } }
+            },
+            "tasks": {
+              "type": "array",
+              "items": { "type": "object", "required": ["id", "verdict"], "properties": {
+                "id": { "type": "string" },
+                "verdict": { "type": "string", "enum": ["repo", "worca", "skip"], "default": "repo" } } }
+            },
+            "tests": { "type": "string", "enumFrom": "data.testOptions[].id", "defaultFrom": "data.testDefault" },
+            "offLimits": { "type": "array", "items": { "type": "string", "enumFrom": "data.heavy[].id" }, "default": [] },
+            "offLimitsNote": { "type": "string", "maxLength": 2000 },
+            "notes": { "type": "string", "maxLength": 4000 },
+            "decision": { "type": "string", "enum": ["write", "stop"], "default": "write" }
+          }
+        },
+        "layout": [
+          { "widget": "markdown", "bind": "data.scoreLine", "label": "Score" },
+          { "widget": "table-select", "bind": "data.files", "field": "files", "label": "Files we will write",
+            "columns": [ { "key": "id", "label": "File" }, { "key": "tools", "label": "For" }, { "key": "reason", "label": "Why" } ] },
+          { "widget": "review-list", "bind": "data.existing", "field": "existing", "label": "Instruction files you already have",
+            "titleKey": "title", "labels": { "only-add": "Only add", "improve": "Improve", "leave": "Leave alone" } },
+          { "widget": "review-list", "bind": "data.tasks", "field": "tasks", "label": "Recurring tasks",
+            "titleKey": "name", "labels": { "repo": "In the repo (team, any tool)", "worca": "In worca (this project's skill set)", "skip": "Skip" } },
+          { "widget": "select", "field": "tests", "label": "Tests", "style": "cards",
+            "options": { "from": "data.testOptions", "value": "id", "label": "label", "description": "adds" } },
+          { "widget": "multiselect", "field": "offLimits", "label": "Off limits (nothing here is changed)", "style": "rows",
+            "options": { "from": "data.heavy", "value": "id", "label": "label" } },
+          { "widget": "textarea", "field": "offLimitsNote", "label": "Anything else that is off limits", "rows": 2 },
+          { "widget": "textarea", "field": "notes", "label": "Anything else", "rows": 2 },
+          { "widget": "select", "field": "decision", "label": "Decision", "style": "segmented",
+            "labels": { "write": "Write these files", "stop": "Stop" } }
+        ],
+        "example": {
+          "scoreLine": "**40/100**, pass mark 80. Claude Code 40 · OpenAI Codex 0 · Qwen Code 0",
+          "files": [
+            { "id": "AGENTS.md", "tools": "Claude Code, OpenAI Codex, Qwen Code", "reason": "the shared core" },
+            { "id": "CLAUDE.md", "tools": "Claude Code", "reason": "exactly @AGENTS.md" },
+            { "id": ".claude/skills/", "tools": "Claude Code", "reason": "1 skill: the recurring tasks kept in the repository" },
+            { "id": ".agents/skills/", "tools": "OpenAI Codex", "reason": "1 skill: the recurring tasks kept in the repository" },
+            { "id": ".qwen/skills/", "tools": "Qwen Code", "reason": "1 skill: the recurring tasks kept in the repository" }
+          ],
+          "existing": [],
+          "tasks": [],
+          "testOptions": [{ "id": "none", "label": "No tests", "adds": "adds nothing" }],
+          "testDefault": "none",
+          "heavy": []
+        }
+      }
+    }
+  }
+}
