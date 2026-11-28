@@ -1,7 +1,7 @@
 ---
 name: run-worktree-needs-npm-ci
 description: Read before running tests, fetching dev, or writing under .claude/ in a worca run worktree — no node_modules, maybe no remote, .claude writes refused.
-updated: 2026-11-03T23:07:39.918Z
+updated: 2026-11-28T10:36:19.449Z
 author: Bulibas
 ---
 
@@ -18,10 +18,17 @@ gsap@3.12.5 and playwright-core@1.56.0 on 2026-10-18), `src/core/preflight-deps.
 do not match package.json" and exits 1, and every server-importing test fails in ~300 ms. No env bypass; the install
 in the scratch copy takes ~5 s.
 
+**Never name `WORCA_HOST_PID` in a command.** Inside a worca run the harness refuses any command line that contains it,
+so `env -u WORCA_HOST_PID …` is denied before anything runs. On run 2302da6f (2026-11-27) the implementer hit that
+denial and stopped after 3 of 7 plan steps. Do not retry it or route it through another shell. This overrides every
+`env -u WORCA_HOST_PID` line in older notes, including the team note [[pipeline-worktree-node-modules]]: run subsets as
+`npm test -- <files>` (the same `tools/test.mjs` runner) and the full suite as below. With the variable left set,
+`test/host-guard-wiring.test.mjs` can fail one case: attribute it to the host, not your change.
+
 **Full suite.** `npm test` (~12,300 tests) takes over 10 minutes here (about 63 min on the 8-CPU Linux host). A Bash
 call with `run_in_background` and the default 600000 ms timeout is stopped mid-suite with no summary: use
 `timeout: 3600000`, redirect to a file, poll it for the `ℹ fail` line. Start every full suite as
-`env -u WORCA_HOST_PID -u ANTHROPIC_BASE_URL -u OPENAI_API_KEY -u FORCE_COLOR GIT_CONFIG_GLOBAL="$HOME/.gitconfig" HOME="$(mktemp -d)" npm test`
+`env -u ANTHROPIC_BASE_URL -u OPENAI_API_KEY -u FORCE_COLOR GIT_CONFIG_GLOBAL="$HOME/.gitconfig" HOME="$(mktemp -d)" npm test`
 — each of those leaks turns tests red ([[test-suite-known-failures]], [[tests-read-real-home-settings]]).
 
 **No git remote.** A worktree can have no remote and only its own branch (2026-10-20, Linux host): `git fetch origin dev`
