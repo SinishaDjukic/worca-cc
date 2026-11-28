@@ -1239,6 +1239,10 @@ test('s7: homeForRun reads the slice route; featureId only for a run with `owns`
     plain: { featureId: 'feat_1', threadId: null },
     marked: { featureId: 'feat_1', threadId: null, owns: [] },
     chatted: { featureId: 'feat_1', threadId: 't-1', owns: [] },
+    // s19: a Verifier run is no slice, so its answer carries `verifier`, never `owns`.
+    verifier: { verifier: true, featureId: 'feat_1', threadId: null },
+    verifierChatted: { verifier: true, featureId: 'feat_1', threadId: 't-2' },
+    verifierOff: { verifier: false, featureId: 'feat_1', threadId: null },
   };
   const ctx = await bootApp({ fetchHandler: (url) => {
     const m = /^\/api\/shape\/pipelines\/([^/]+)\/slice$/.exec(url);
@@ -1254,6 +1258,9 @@ test('s7: homeForRun reads the slice route; featureId only for a run with `owns`
   const before = ctx.calls.filter((c) => c.url === '/api/shape/pipelines/chatted/slice').length;
   assert.equal((await seam.homeForRun({ pipelineId: 'chatted' })).threadId, 't-1');
   assert.equal(ctx.calls.filter((c) => c.url === '/api/shape/pipelines/chatted/slice').length, before + 1, 'one GET');
+  assert.deepEqual(await seam.homeForRun({ pipelineId: 'verifier' }), { threadId: null, featureId: 'feat_1' }, 's19 R-arch-4: a Verifier\'s run names its feature');
+  assert.equal((await seam.homeForRun({ pipelineId: 'verifierChatted' })).threadId, 't-2', 's19: its chat is still the first home');
+  assert.deepEqual(await seam.homeForRun({ pipelineId: 'verifierOff' }), { threadId: null, featureId: null }, 's19: only verifier === true counts');
 });
 
 test('s7 R-arch-4: the run panel\'s Prototype stop of a chat-less feature run links to its feature page', async () => {

@@ -465,3 +465,18 @@ test('s18: the in-review outranking proof shoots the Runs group row and the page
   const body = phases.map((p) => p.body).join('\n');
   for (const needle of ['Verifier round 2 failed · 1 gap', 'Needs your confirmation: R-ux-2']) assert.ok(body.includes(needle), needle);
 });
+
+// Slice 19 (R-arch-4, D8): Chat home's Answer on a chat-less feature's Verifier question, in s7's chat-less phase.
+test('s19: the confirm-in-place phase clicks Answer on the chat-less Verifier tile and shoots the feature page\'s gap question', () => {
+  const s = src();
+  const at = s.indexOf('async function confirmInPlacePhase(');
+  assert.ok(at >= 0, 'the confirm-in-place phase');
+  const body = s.slice(at, s.indexOf('\n}\n', at));
+  assert.match(body, /verifyStop\(|VSTOP|VPQ/, 'a seeded Verifier run waiting at its gap stop');
+  for (const needle of ['setVerify(', '#chat/new', '.chat-run-tile-answer', '#feature/', '.gpage-question', 'THEMES', '1280', 'check(']) {
+    assert.ok(body.includes(needle), needle);
+  }
+  for (const theme of ['light', 'dark']) {
+    assert.match(body, new RegExp(`[\`'/]chat-home-verifier-answer-(\\$\\{theme\\}|${theme})\\.png`), `the ${theme} screenshot`);
+  }
+});

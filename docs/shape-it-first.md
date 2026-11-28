@@ -809,8 +809,8 @@ A feature started without a chat has no feature card, so both texts say to answe
   for and pointing at the row puts a dashed bar on the runs that build on it. A stopped run's page names the stop and
   links where it is answered (the feature's card in Chat, or the feature page for a feature no chat started); it has no
   answer controls. With the flag on, a feature no chat started gets no chat card: its waiting line reads "Ship card
-  comes when all 5 runs are done, on this page.", Chat home's Answer on one of its runs opens its feature page, and the
-  run panel's Prototype stop links "Answer it on the feature page".
+  comes when all 5 runs are done, on this page.", Chat home's Answer on one of its runs, or on its Verifier's question,
+  opens its feature page, and the run panel's Prototype stop links "Answer it on the feature page".
 - **The feature page**: Runs, Requirements (each with its owner run or confirming role, and its status) and Decisions
   with the Care line, and Show order on its Runs tab. Its run rows are one line with the same short words as the card and the Runs list ("waiting for
   you", "waits for run 8", "done"). Its head button reads "Create N PRs" and follows the Ship card: until the

@@ -1678,6 +1678,17 @@ async function confirmInPlacePhase() {
     workflowId: 'wf_shape', smallRuns: true, care });
   const protoRun = liveRun(protoPid, 'Chat-less prototype', { at: 'n_refine', runShape: { perspectives: ['product', 'ux'] },
     pendingQuestion: { id: 'proto-n_proto-1-cp-1', kind: 'prototype', nodeId: 'n_proto', prototype: { moment: 'offered', ...prototypeView(protoRec), screens: [] } } });
+  // Slice 19 (R-arch-4): a chat-less marked feature's Verifier run waiting at its gap stop (slice 8's VPQ, two gaps).
+  const vless = seedFeature('cv', 'Chat-less gaps', ['done', 'done', 'done', 'done'], { chat: false });
+  const VLESS_PID = 'c5cvv00001';
+  const VLESS_TITLE = 'Chat-less gaps · Verifier';
+  pipeline(VLESS_PID, 'running', VLESS_TITLE);
+  getDb().prepare(`INSERT INTO scheduled_runs (id, status, pipeline_id, request, run_at, created_at, updated_at, title)
+    VALUES (?, 'fired', ?, ?, ?, ?, ?, ?)`).run(`t-${VLESS_PID}`, VLESS_PID,
+    JSON.stringify({ workflowId: 'wf_shape_verify', shape: { verify: { featureId: vless.f.id, round: 1 } } }), now, now, now, VLESS_TITLE);
+  setVerify(vless.f, vCheck(vless, VLESS_PID, 'verifying', { round: 1 }));
+  liveRun(VLESS_PID, VLESS_TITLE, { at: 'n_verify', verify: true, pendingQuestion: VPQ, runShape: VERIFY(vless.f.id, 1) });
+  const VLESS_ONLY = process.env.CHAT_HOME_VERIFIER_ONLY === '1';   // runs only this cell of the phase
   const page = `#feature/${encodeURIComponent(held.f.id)}`;
   const capture = async (name) => {
     await ev("(() => { for (const b of document.querySelectorAll('button[aria-label=\"Dismiss\"]')) if (b.offsetParent) b.click(); return 0; })()");
@@ -1761,6 +1772,28 @@ async function confirmInPlacePhase() {
     }
   };
   for (const theme of THEMES) {
+    // Slice 19 (R-arch-4): Chat home's Answer on the chat-less Verifier tile lands on its feature page, which asks the gaps.
+    await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+    await open(`${base}/?chat-home-verifier-${theme}#chat/new`);
+    await skipWelcome(); await setTheme(theme);
+    const VTILE = `[...document.querySelectorAll('.chat-run-tile')].find((t) => (t.querySelector('.chat-run-tile-open') || {}).textContent === ${JSON.stringify(VLESS_TITLE)})`;
+    await ev(`(() => { const t = document.querySelector('.chat-home-tab[data-tab="needs"]'); if (t) t.click(); return 0; })()`);
+    if (await waitFor(`(() => { const t = ${VTILE}; const a = t && t.querySelector('.chat-run-tile-answer'); return !!a && !a.hidden && !!a.offsetParent; })()`,
+      `the chat-less Verifier's Needs-you tile (${theme})`)) {
+      await ev(`(() => { ${VTILE}.querySelector('.chat-run-tile-answer').click(); return 0; })()`);
+      const want = `#feature/${encodeURIComponent(vless.f.id)}`;
+      if (await waitFor(`location.hash.startsWith(${JSON.stringify(want)}) && (() => { const q = document.querySelector('#group-detail .gpage-question'); return !!q && !q.hidden && !!q.offsetParent; })()`,
+        `the feature page's gap question after Answer (${theme})`)) {
+        await sleep(400);
+        const r = await ev(`(() => { const q = document.querySelector('#group-detail .gpage-question'); const p = document.querySelector('[data-chat-panel]');
+          return { hash: location.hash, text: q.textContent.replace(/\\s+/g, ' ').trim(), panel: !!p && !p.hidden && !!p.offsetParent }; })()`);
+        check(r.hash.startsWith(want) && !r.panel && r.text.includes(GAP.id) && r.text.includes(GAP2.id),
+          `chat home verifier answer, ${theme}: Answer opens the feature page (#feature/…), no run panel, its gap question asks ${GAP.id} and ${GAP2.id} (${JSON.stringify([r.hash, r.panel])})`);
+        await ev("(() => { const q = document.querySelector('#group-detail .gpage-question'); if (q) q.scrollIntoView({ block: 'center' }); return 0; })()");
+        await capture(`chat-home-verifier-answer-${theme}.png`);
+      }
+    }
+    if (VLESS_ONLY) continue;
     await tipAndReason(theme, 1280);
     // The Runs list: the feature under Needs you, the badge counting it.
     await ev("(() => { try { localStorage.removeItem('worca-cc.runs.last'); } catch {} return 0; })()");
@@ -1829,7 +1862,7 @@ async function confirmInPlacePhase() {
     }
   }
   // 375px (WIDTH), light: the narrow head puts the buttons under the status line; the tip still clears the reason.
-  await tipAndReason('light', WIDTH);
+  if (!VLESS_ONLY) await tipAndReason('light', WIDTH);
   await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
 }
 
@@ -2076,7 +2109,7 @@ async function stopListPhase() {
 }
 
 // D2_ONLY=1 runs the D2 cases alone, D3_ONLY=1 the D3 cases, HELD_ONLY=1 the clash-held row, TAKEIN_ONLY=1 the take-in, SHIP_LIST_ONLY=1
-// the Ship list along the real branches, HELD_RESUME_ONLY=1 the held resume, AFTER_RUN_ONLY=1 the after-run row and Resume wording, STOP_FINDINGS_ONLY=1 a stop's findings on every surface, SHIP_ONE_ONLY=1 Ship as one PR, SHIP_CARRIED_ONLY=1 the carried runs Ship names, FEATURE_TABS_ONLY=1 the feature page's Cost, Requirements and Log tabs, CONFIRM_ONLY=1 confirm in place, VERIFIER_ROWS_ONLY=1 the Verifier's check row, STOP_LIST_ONLY=1 the stop list's closed lines and one opened step card (each command stays under 10 minutes); unset, every case runs, D2 before D3, the held row, then the take-in last.
+// the Ship list along the real branches, HELD_RESUME_ONLY=1 the held resume, AFTER_RUN_ONLY=1 the after-run row and Resume wording, STOP_FINDINGS_ONLY=1 a stop's findings on every surface, SHIP_ONE_ONLY=1 Ship as one PR, SHIP_CARRIED_ONLY=1 the carried runs Ship names, FEATURE_TABS_ONLY=1 the feature page's Cost, Requirements and Log tabs, CONFIRM_ONLY=1 confirm in place (CHAT_HOME_VERIFIER_ONLY=1 only its chat-less Verifier Answer cell), VERIFIER_ROWS_ONLY=1 the Verifier's check row, STOP_LIST_ONLY=1 the stop list's closed lines and one opened step card (each command stays under 10 minutes); unset, every case runs, D2 before D3, the held row, then the take-in last.
 // ---- Shaper slice 10 (R-po-5): Away mode answered a plain gap, the person a judgement call. The feature page's Log tab and
 // the Chat card's log say who decided each gap; a live gap stop lists Away's answer above the question and says why the
 // held gap waits. Light and dark: app-verifier-away-log-… (1280px, the Log tab), app-verifier-away-card-log-… and
@@ -2235,6 +2268,7 @@ if (process.env.SHIP_ONE_ONLY === '1') { await shipOnePhase(); await finish(); }
 if (process.env.SHIP_CARRIED_ONLY === '1') { await shipCarriedPhase(); await finish(); }
 if (process.env.FEATURE_TABS_ONLY === '1') { await featureTabsPhase(); await finish(); }
 if (process.env.CONFIRM_ONLY === '1') { await confirmInPlacePhase(); await finish(); }
+if (process.env.CHAT_HOME_VERIFIER_ONLY === '1') { await confirmInPlacePhase(); await finish(); }
 if (process.env.SHIP_NOTES_ONLY === '1') { await shipNotesPhase(); await finish(); }
 if (process.env.VERIFIER_ROWS_ONLY === '1') { await verifierRowsPhase(); await finish(); }
 if (process.env.STOP_LIST_ONLY === '1') { await stopListPhase(); await finish(); }

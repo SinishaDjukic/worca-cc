@@ -318,6 +318,45 @@ test('Answer opens the chat that follows the run when there is one (findFollowin
   assert.equal(ctx.window.location.hash, '#chat/ask_000000f1');
 });
 
+// Slice 19 (R-arch-4): a Verifier run is no slice, so its slice answer carries `verifier`, never `owns`. These two boot
+// the real app, so Answer goes through app.js's homeForRun and not a stubbed dep.
+async function answerVerifierTile({ threadId = null, thread = null } = {}) {
+  _resetChatExtensions();
+  const base = arms({ threads: thread ? [thread] : [] });
+  const ctx = await bootApp({ fetchHandler: (url, opts) => {
+    if (url === '/api/shape/pipelines/pv/slice') return ok({ verifier: true, featureId: 'feat_1', threadId });
+    if (thread && url === `/api/ask/threads/${thread.id}`) {
+      return ok({ thread, messages: [], attachments: [], runLinks: [{ threadId: thread.id, runId: 'rv', pipelineId: 'pv' }] });
+    }
+    return base(url, opts);
+  } });
+  ctx.go('chat/new');
+  await ctx.settle(6);
+  helloRun(ctx, { runId: 'rv', pipelineId: 'pv', title: 'Verifier · Sign-up · round 1', pendingQuestion: QUESTION });
+  await revisit(ctx);
+  const answer = ctx.window.document.querySelector('.chat-run-tile .chat-run-tile-answer');
+  assert.ok(answer, 'the Verifier run is a Needs-you tile with Answer');
+  assert.equal(answer.hidden, false);
+  answer.click();
+  await ctx.settle(10);
+  assert.ok(ctx.calls.some((c) => c.url === '/api/shape/pipelines/pv/slice'), 'Answer read the slice route');
+  return ctx;
+}
+
+test('s19 R-arch-4: Answer on a chat-less feature\'s Verifier question opens the feature page', async () => {
+  const ctx = await answerVerifierTile();
+  const { hash } = ctx.window.location;
+  assert.notEqual(hash, '#chat/new/run/rv/qa', 'not the run panel');
+  assert.ok(hash.startsWith('#feature/feat_1'), `the feature page, got ${hash}`);
+  assert.equal(ctx.window.document.querySelector('[data-chat-panel]').hidden, true, 'no run panel');
+});
+
+test('s19: Answer on the Verifier question of a feature a chat started still opens that chat', async () => {
+  const thread = { id: 'ask_000000f1', title: 'Sign-up', createdAt: '2026-10-11T00:00:00Z', updatedAt: '2026-10-11T00:00:00Z', runLinks: 1, waiting: true };
+  const ctx = await answerVerifierTile({ threadId: thread.id, thread });
+  assert.equal(ctx.window.location.hash, '#chat/ask_000000f1');
+});
+
 test('a cold boot: the hello alone does not settle the tab — a paused History row still on its way wins over the chats', async () => {
   _resetChatExtensions();
   const held = [];

@@ -777,8 +777,9 @@ async function featureThreadFor(ref) {
   } catch { return null; }
 }
 /** Shaper slice 7 (D11): where a run is answered, from ONE slice read: the chat that started its feature, else the
- *  chat that follows the run; `featureId` only for a marked feature with the flag on (its slice info carries `owns`),
- *  so Chat home's Answer opens that feature's page when no chat follows it. → {threadId, featureId} */
+ *  chat that follows the run; `featureId` only for a marked feature with the flag on (its slice info carries `owns`,
+ *  or, for its Verifier's run, `verifier: true`), so Chat home's Answer opens that feature's page when no chat follows
+ *  it. → {threadId, featureId} */
 async function featureHomeFor(ref) {
   const pid = ref && ref.pipelineId;
   let info = null;
@@ -790,7 +791,8 @@ async function featureHomeFor(ref) {
   }
   const own = (info && typeof info.threadId === 'string' && info.threadId) || null;
   const threadId = own || (await findFollowingThread((...args) => fetch(...args), ref || {}).catch(() => null)) || null;
-  const featureId = info && Array.isArray(info.owns) && typeof info.featureId === 'string' ? info.featureId : null;
+  const featureId = info && (Array.isArray(info.owns) || info.verifier === true) && typeof info.featureId === 'string'
+    ? info.featureId : null;
   return { threadId, featureId };
 }
 if (typeof window !== 'undefined') window.__shapeFeature = { mount: mountShapeFeature, refresh: refreshShapeFeatures, paintAsk: (ref, host) => chatPaintQuestion(ref, host),

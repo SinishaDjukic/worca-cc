@@ -587,6 +587,11 @@ test('s18 (R-arch-4): the guide says a feature with no chat is answered on its f
   ]), []);
 });
 
+// Slice 19 (R-arch-4): Chat home's Answer on a chat-less feature's Verifier question lands on the feature page too.
+test('s19 (R-arch-4): the guide says Answer on a chat-less feature\'s Verifier question opens its feature page', () => {
+  assert.deepEqual(missing(flat(read('shape-it-first.md')), ['or on its Verifier\'s question, opens its feature page']), [], 'shape-it-first.md');
+});
+
 test('s18: the guide and the design system say a failed Verifier round or an open confirmation outranks In review', () => {
   const guide = flat(DOCS['shape-it-first.md'].text());
   assert.deepEqual(missing(guide, [/failed Verifier round or an open confirmation outranks In review/i]), [], 'shape-it-first.md');
