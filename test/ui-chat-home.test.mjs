@@ -450,13 +450,23 @@ test('boot: until the runs are known the chat list alone never picks the tab —
   s.home.destroy();
   const t = setup({ runs: { ...RUNS(), ready: false }, threads: [] });
   t.home.destroy();
-  const home = createChatHome({ doc: t.doc, host: t.host, heroSlot: t.doc.querySelector('[data-chat-hero-slot]'), runsWaitMs: 30, deps: {
+  // The cap runs on an injected clock, not wall time: a loaded runner's settle() can outlast a real 30 ms cap.
+  // runsWaitMs is only the boot wait's key here (VERB_HOLD_MS is RUNS_WAIT_MS, so the default would not single it out).
+  const due = new Map();
+  let ids = 0;
+  const timers = {
+    setTimeout: (fn, ms) => { due.set(++ids, { fn, ms }); return ids; }, clearTimeout: (id) => { due.delete(id); },
+    setInterval: () => 0, clearInterval() {},
+  };
+  const fire = (ms) => { for (const [id, tm] of [...due]) if (tm.ms === ms) { due.delete(id); tm.fn(); } };
+  const home = createChatHome({ doc: t.doc, host: t.host, heroSlot: t.doc.querySelector('[data-chat-hero-slot]'), runsWaitMs: 30, timers, deps: {
     runs: () => ({ ...RUNS(), ready: false }), threads: async () => [], workflows: async () => ({ list: [], portsFn: null }),
     flags: async () => ({ scripts: true, tasks: false }), threadForRun: async () => null, openThread() {}, openRunPanel() {},
     setIntent() {}, prefill() {}, navigate() {}, level: () => 'expert' } });
   await settle(t.window);
-  assert.equal(selected(t.doc), null);
-  await new Promise((r) => t.window.setTimeout(r, 60));
+  assert.equal(selected(t.doc), null, 'the chats answered, the cap has not passed: still undecided');
+  assert.ok([...due.values()].some((tm) => tm.ms === 30), 'the boot wait is armed');
+  fire(30);
   assert.equal(selected(t.doc), 'workflows', 'no socket: after the cap the chats decide as before');
   home.destroy();
 });
