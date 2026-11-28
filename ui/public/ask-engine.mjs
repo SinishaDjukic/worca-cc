@@ -25,26 +25,58 @@ export function pickerEngineLabel(engine, { beta = false } = {}) {
   const name = engine === 'copilot' ? 'GitHub Copilot CLI' : engineLabel(engine);
   return beta && isBetaEngine(engine) ? `${name} (beta)` : name;
 }
+/** Why the catalog (GET /api/ask/models `notReady`) says a chat cannot run on `engine` on this machine (its CLI is not
+ *  installed), or null. */
+export function engineNotReady(catalog, engine) {
+  const why = catalog && catalog.notReady && typeof catalog.notReady === 'object' ? catalog.notReady[engine] : null;
+  return typeof why === 'string' && why ? why : null;
+}
+/** The model button's words when the catalog names engines not installed here and no engine in the picker has a model
+ *  a new chat can take (the rest have none yet): its menu lists the harnesses to set up instead. */
+export const SET_UP_HARNESS = 'Set up a harness';
+/** Whether the picker has nothing a chat can take for want of an installed engine (`SET_UP_HARNESS`): `opts` are
+ *  pickerGroups' own (`notReady` comes from the catalog). An empty catalog with every engine installed is not one. */
+export function needsHarness(catalog, models, opts = {}) {
+  return !!(catalog && catalog.notReady) && !pickerGroups(models, { ...opts, notReady: catalog.notReady }).length;
+}
 /** The picker's sections: one per engine present (Claude first); `lock` keeps only that engine; `active` (the chat's
- *  engine) is labelled "· this chat". */
-export function pickerGroups(models, { lock = null, active = null } = {}) {
+ *  engine) is labelled "· this chat". `notReady` (the catalog's): an engine that cannot run here is left out, unless the
+ *  chat is already on it; then its section holds only the chat's own model (`current`) and carries the reason. */
+export function pickerGroups(models, { lock = null, active = null, notReady = null, current = null } = {}) {
   const out = [];
   for (const engine of ASK_CHAT_ENGINES) {
     if (lock && lock !== engine) continue;
+    const why = engineNotReady({ notReady }, engine);
+    if (why && engine !== active && engine !== lock) continue;
     // A model whose connection both harnesses reach (an OpenAI Responses endpoint) is in both sections.
-    const own = (Array.isArray(models) ? models : []).filter((m) => m && runsOn(m, engine));
+    let own = (Array.isArray(models) ? models : []).filter((m) => m && runsOn(m, engine));
+    if (why) own = own.filter((m) => m.id === current);
     const name = pickerEngineLabel(engine, { beta: true });
     const label = engine === active ? `${name} · this chat` : name;
-    if (own.length) out.push({ engine, label, models: own });
+    if (own.length) out.push({ engine, label, models: own, ...(why ? { notReady: why } : {}) });
   }
   return out;
 }
 /** The chat engines with no model yet, for the picker's "More harnesses" list: `[{engine, label}]` in picker order.
- *  Only a sign-in engine can be one: it ships no built-in models, and Add model takes it as a sign-in. */
-export function moreHarnesses(models) {
+ *  Only a sign-in engine can be one: it ships no built-in models, and Add model takes it as a sign-in. An engine the
+ *  catalog's `notReady` names is not installed here, so it is left out: a model added on it would never be offered. */
+export function moreHarnesses(models, notReady = null) {
   const list = Array.isArray(models) ? models : [];
-  return ASK_CHAT_ENGINES.filter((engine) => SIGN_IN_ENGINE_NAMES.includes(engine) && !list.some((m) => m && runsOn(m, engine)))
+  return ASK_CHAT_ENGINES.filter((engine) => SIGN_IN_ENGINE_NAMES.includes(engine) && !list.some((m) => m && runsOn(m, engine))
+    && !engineNotReady({ notReady }, engine))
     .map((engine) => ({ engine, label: pickerEngineLabel(engine, { beta: true }) }));
+}
+/** The chat engines not installed here, for the foot of "More harnesses", so a machine with none of them still has a
+ *  way to set one up: `[{engine, label, reason, docsUrl}]` in picker order, from the catalog's `notReady` (the reason)
+ *  and `setupDocs` (the engine's setup section, or null). `shown`: the engines that have a section in the picker (a chat
+ *  already on a missing engine has its own), which are left out. */
+export function notInstalledHarnesses(catalog, shown = []) {
+  const docs = catalog && catalog.setupDocs && typeof catalog.setupDocs === 'object' ? catalog.setupDocs : {};
+  return ASK_CHAT_ENGINES.filter((engine) => !shown.includes(engine) && engineNotReady(catalog, engine))
+    .map((engine) => ({
+      engine, label: pickerEngineLabel(engine, { beta: true }), reason: engineNotReady(catalog, engine),
+      docsUrl: typeof docs[engine] === 'string' && docs[engine] ? docs[engine] : null,
+    }));
 }
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
 /** D16: what a chat's engine cannot take, said before upload (engine-switch.mjs chatAttachRefusal: Codex and Goose chats
@@ -121,7 +153,8 @@ function tokensLabel(n) {
   return n >= 1_000_000 ? `${+(n / 1_000_000).toFixed(1)}M` : `${Math.round(n / 1000)}k`;
 }
 /** The engine name a model button shows (#943; Chat and the extension): the engine the next message runs on, whenever
- *  the catalog offers more than one chat engine; '' when it offers one, as the picker then shows no engine headings. */
-export function pickerEngineName(models, engine) {
-  return pickerGroups(models).length > 1 ? pickerEngineLabel(engine) : '';
+ *  the catalog offers more than one chat engine; '' when it offers one, as the picker then shows no engine headings.
+ *  `groups`: pickerGroups' options, so an engine the picker leaves out is not counted. */
+export function pickerEngineName(models, engine, groups = {}) {
+  return pickerGroups(models, groups).length > 1 ? pickerEngineLabel(engine) : '';
 }

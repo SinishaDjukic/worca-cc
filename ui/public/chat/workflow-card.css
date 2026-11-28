@@ -211,6 +211,8 @@
 .ask-pop-empty{padding:10px 10px 12px;font-size:12px;color:var(--ink-3);}
 .ask-pop-divider{height:1px;margin:6px 11px;background:var(--line);}
 .ask-pop-group { padding: 6px 12px 2px; font-size: 12px; color: var(--ink-2);font-weight:600; }
+/* An engine's heading with its harness mark (ask-panel.mjs withMark); its rows are flex already (.ask-pop-item). */
+.ask-pop-group:has(> .mdl-mark){display:flex;align-items:center;gap:8px;}
 /* A connection inside an engine's section (Claude sign-in, OpenAI-compatible, …): quieter than the section. */
 .ask-pop-subgroup { padding: 6px 12px 2px; font-size: var(--fs-meta); font-weight: 600; color: var(--ink-3); }
 .ask-pop-item{display:flex;align-items:center;gap:10px;width:100%;text-align:left;}
@@ -218,6 +220,12 @@
 .ask-model-check{margin-left:auto;color:var(--ink);font-weight:600;}
 .ask-pop-row-value{margin-left:auto;font-weight:400;font-size:var(--fs-meta);color:var(--ink-3);}
 .ask-pop-row-chev{color:var(--ink-3);}
+/* More harnesses: an engine not installed here (ask-panel.mjs missingNow) is quieter than one that is. */
+.ask-harness-row.is-missing{color:var(--ink-3);}
+.ask-harness-row.is-missing .mdl-mark{opacity:.6;}
+.ask-harness-row.is-missing .ask-pop-row-value{flex:0 0 auto;white-space:nowrap;}
+/* A chat on an engine not installed here: the row leading its section opens that engine's setup (ask-panel.mjs setupRow); amber, as the chat's own "not installed". */
+.ask-setup-lead .ask-pop-row-value{flex:0 0 auto;white-space:nowrap;color:var(--amber-ink);}
 /* .ask-pop-model is a fixed 292px panel (256px of row content), so something in the
    row has to give: rigid badges win every negotiation, and measured in Chrome an
    origin badge -- "DS Fast" + "plugin: example-models" + "secret not set" --

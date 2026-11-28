@@ -150,6 +150,111 @@ test('askCatalog: Codex models are offered with their engine and validate (Plan 
   assert.deepEqual(await withCodex.validateModelEffort('gpt-5.5', 'low'), { ok: true, model: 'gpt-5.5', effort: 'low' });
 });
 
+// An engine whose CLI is not installed here (its chat descriptor's notInstalled: a stat, never a spawn) is named in
+// `notReady`; its rows stay, so a chat already on it still validates and its turn says why it cannot run.
+const CODEX_ROW = { id: 'gpt-5.5', label: 'GPT-5.5', efforts: ['minimal', 'low', 'medium', 'high'], custom: false, hasEnv: false, engine: 'codex' };
+const codexCatalog = (deps = {}) => createAskModels({
+  listModels: async () => [...FAKE, CODEX_ROW],
+  pluginModels: () => PLUGIN_MODELS,
+  secretStatus: (name) => SECRET_STATUS[name] || [],
+  askPrefs: () => ({ engine: 'codex', slots: {} }),
+  codexAvailable: () => true,
+  ...deps,
+});
+
+test('askCatalog: Codex not installed — notReady names it, a new chat starts on Claude, the rows stay', async () => {
+  const why = 'OpenAI Codex is not installed: codex was not found. Install it, or set WORCA_CODEX_BIN to its path.';
+  const m = codexCatalog({ notInstalled: (e) => (e === 'codex' ? why : null) });
+  const cat = await m.askCatalog();
+  assert.deepEqual(cat.notReady, { codex: why });
+  assert.deepEqual(cat.setupDocs, { codex: 'https://github.com/worca-org/worca/blob/dev/docs/models.md#codex' }, 'More harnesses links its setup section');
+  assert.equal(cat.askEngine, 'claude', 'the Ask engine falls back to Claude');
+  assert.deepEqual(cat.default, cat.defaults.claude);
+  assert.equal(cat.defaults.codex.model, 'gpt-5.5', "a chat already on Codex keeps its engine's default");
+  assert.ok(cat.models.some((x) => x.id === 'gpt-5.5' && x.engine === 'codex'), 'the rows stay for a chat already on Codex');
+  // A chat already on Codex is not refused by validation: its turn says why Codex cannot run (the chat engine gate).
+  assert.deepEqual(await m.validateModelEffort('gpt-5.5', 'low', { engine: 'codex' }), { ok: true, model: 'gpt-5.5', effort: 'low' });
+  assert.deepEqual(await m.eventPick({ model: 'gpt-5.5', effort: 'low' }, 'codex'), { ok: true, model: 'gpt-5.5', effort: 'low' });
+});
+
+test('askCatalog: Codex installed — no notReady, the Ask engine stays Codex (today\'s payload)', async () => {
+  const cat = await codexCatalog({ notInstalled: () => null }).askCatalog();
+  assert.equal('notReady' in cat, false);
+  assert.equal('setupDocs' in cat, false);
+  assert.equal(cat.askEngine, 'codex');
+  assert.equal(cat.default.model, 'gpt-5.5');
+});
+
+test('askCatalog: an engine with no rows is checked too (the picker\'s More harnesses leaves it out)', async () => {
+  const seen = [];
+  const m = createAskModels({ listModels: async () => FAKE, pluginModels: () => [], secretStatus: () => [], askPrefs: () => ({ engine: 'claude', slots: {} }),
+    notInstalled: (e) => { seen.push(e); return e === 'gemini' ? 'Gemini CLI is not installed' : null; } });
+  const cat = await m.askCatalog();
+  assert.equal(cat.models.some((x) => x.engine === 'gemini'), false, 'Gemini has no rows here');
+  assert.deepEqual(cat.notReady, { gemini: 'Gemini CLI is not installed' });
+  assert.deepEqual(cat.setupDocs, { gemini: 'https://github.com/worca-org/worca/blob/dev/docs/models.md#gemini-cli-and-qwen-code' });
+  assert.ok(seen.includes('claude') && seen.includes('qwen') && seen.includes('goose'), 'every chat engine is checked, Claude too');
+});
+
+test('askCatalog: Claude Code not installed — notReady names it as any engine, and a new chat starts on one that is installed', async () => {
+  const why = 'Claude Code is not installed: claude was not found. Install it, or set WORCA_CLAUDE_BIN to its path.';
+  const m = codexCatalog({ askPrefs: () => ({ engine: 'claude', slots: {} }), notInstalled: (e) => (e === 'claude' ? why : null) });
+  const cat = await m.askCatalog();
+  assert.deepEqual(cat.notReady, { claude: why });
+  assert.deepEqual(cat.setupDocs, { claude: 'https://github.com/worca-org/worca/blob/dev/docs/models.md#claude-code' });
+  assert.equal(cat.askEngine, 'codex', 'the Ask engine falls back to the first installed engine');
+  assert.deepEqual(cat.default, cat.defaults.codex);
+  assert.ok(cat.models.some((x) => !x.engine), 'the Claude rows stay for a chat already on Claude');
+  assert.deepEqual(await m.validateModelEffort('claude-opus-5-5', 'high', { engine: 'claude' }), { ok: true, model: 'claude-opus-5-5', effort: 'high' });
+});
+
+test('askCatalog: no engine installed — every one in notReady; a new chat keeps the Ask engine (the pickers ask for a harness)', async () => {
+  const cat = await codexCatalog({ notInstalled: (e) => `${e} is not installed` }).askCatalog();
+  assert.equal(Object.keys(cat.notReady).length, 7, 'every chat engine');
+  assert.equal(cat.askEngine, 'codex', 'the Ask engine, which has a model');
+  assert.deepEqual(cat.default, cat.defaults.codex);
+  const onClaude = await createAskModels({ listModels: async () => FAKE, pluginModels: () => [], secretStatus: () => [],
+    askPrefs: () => ({ engine: 'gemini', slots: {} }), notInstalled: (e) => `${e} is not installed` }).askCatalog();
+  assert.equal(onClaude.askEngine, 'claude', 'an Ask engine with no model: Claude, which always has built-ins');
+});
+
+test('askCatalog default notInstalled: Claude\'s configured binary decides (WORCA_CLAUDE_BIN), never in mock mode', async () => {
+  const keep = { bin: process.env.WORCA_CLAUDE_BIN, mock: process.env.WORCA_MOCK, orch: process.env.ORCH_MOCK };
+  const missing = join(sandboxHome, 'no-such-dir', 'claude');
+  const cat = () => createAskModels({ listModels: async () => FAKE, pluginModels: () => [], secretStatus: () => [], askPrefs: () => ({ engine: 'claude', slots: {} }) }).askCatalog();
+  try {
+    delete process.env.WORCA_MOCK; delete process.env.ORCH_MOCK;
+    process.env.WORCA_CLAUDE_BIN = missing;
+    assert.equal((await cat()).notReady?.claude, `Claude Code is not installed: ${missing} was not found. Install it, or set WORCA_CLAUDE_BIN to its path.`);
+    process.env.WORCA_CLAUDE_BIN = process.execPath;
+    assert.equal((await cat()).notReady?.claude, undefined, 'a binary that exists');
+    process.env.WORCA_CLAUDE_BIN = missing;
+    process.env.WORCA_MOCK = '1';
+    assert.equal('notReady' in await cat(), false, 'mock mode has every engine');
+  } finally {
+    for (const [k, v] of [['WORCA_CLAUDE_BIN', keep.bin], ['WORCA_MOCK', keep.mock], ['ORCH_MOCK', keep.orch]]) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+});
+
+test('chat descriptor notInstalled: the configured binary decides; a descriptor naming none is never "not installed"', async () => {
+  const { makeChatDescriptor } = await import('../src/core/engines/chat-descriptor.mjs');
+  const missing = join(sandboxHome, 'no-such-dir', 'codex');
+  assert.equal(makeChatDescriptor({ engine: 'codex', lockdown: () => true, bin: () => missing }).notInstalled(),
+    `OpenAI Codex is not installed: ${missing} was not found. Install it, or set WORCA_CODEX_BIN to its path.`);
+  assert.equal(makeChatDescriptor({ engine: 'codex', lockdown: () => true, bin: () => process.execPath }).notInstalled(), null, 'a binary that exists');
+  assert.equal(makeChatDescriptor({ engine: 'codex', lockdown: () => true }).notInstalled(), null);
+});
+
+test('askCatalog default notInstalled: mock mode has every engine', async () => {
+  const prev = process.env.WORCA_MOCK;
+  process.env.WORCA_MOCK = '1';
+  try {
+    const cat = await codexCatalog().askCatalog();
+    assert.equal('notReady' in cat, false);
+    assert.equal(cat.askEngine, 'codex');
+  } finally { if (prev === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = prev; }
+});
+
 // A bridged row that is not ready names the Providers row that fixes it (Models › Providers › <row>).
 const needsKey = (id, extra = {}) => ({ id, label: id, efforts: ['medium', 'high'], custom: 'global', hasEnv: false, bridged: 'openai', upstreamApi: 'openai-chat', needsSignIn: true, signInReason: 'no_key', ...extra });
 const signInOf = async (deps, id) => (await createAskModels({ pluginModels: () => [], secretStatus: () => [], askPrefs: () => ({ engine: 'claude', slots: {} }), ...deps }).askCatalog()).models.find((m) => m.id === id).signInMessage;

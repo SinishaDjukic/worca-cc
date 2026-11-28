@@ -147,12 +147,12 @@ test('Team policy: sentence-case labels, a sans sync chip, grey "not installed",
 // The 19 dialogs in index.html. The model editor's card and the plugin modal's actions are JS-built, so their static
 // markup has no footer button; the proof's dialog-sizes state and the source pins below cover them.
 const DIALOGS = ['#model-editor-modal', '#viewer-card', '#folder-browser', '#mode-modal', '#confirm-modal',
-  '#report-modal', '#export-modal', '#shipit-modal', '#publish-modal', '#welcome-modal', '#claude-setup-modal', '#stop-modal',
+  '#report-modal', '#export-modal', '#shipit-modal', '#publish-modal', '#welcome-modal', '#engine-setup-modal', '#stop-modal',
   '#project-add-modal', '#project-git-modal', '#project-bulk-modal', '#plugin-modal', '#scan-model-modal',
   '#update-modal', '#update-overlay'];
 // D12: the action rows, and the head Close / Full screen buttons.
 const FOOT = ['.confirm-actions', '.stop-actions', '.add-project-actions', '.mode-foot', '.report-head-actions', '.publish-actions',
-  '.shipit-actions', '.mv-editor-btns', '.viewer-actions', '[data-card-actions]'].map((s) => `${s} .btn`).concat('#plugin-modal-close', '#claude-setup-close').join(', ');
+  '.shipit-actions', '.mv-editor-btns', '.viewer-actions', '[data-card-actions]'].map((s) => `${s} .btn`).concat('#plugin-modal-close', '#engine-setup-close').join(', ');
 test('dialogs: footer actions are 32px .btn, cards keep the shared 24px padding, the danger OK is .btn-danger', () => {
   assert.equal(page.querySelectorAll('.viewer-modal[id]').length, DIALOGS.length, 'a new dialog joins DIALOGS');
   const small = [];

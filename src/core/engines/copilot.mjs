@@ -805,11 +805,11 @@ export async function runCopilotProcess({
 export const copilotChat = makeChatDescriptor({
   engine: 'copilot',
   lockdown: () => COPILOT_ASK_LOCKDOWN,
+  bin: () => COPILOT_DEFAULT_BIN,
   noLockdownMessage: 'Chat on Copilot is unavailable: this copilot cannot be locked down for a chat. Use a Claude chat.',
   askSupport: (o, impl = copilotAskSupport) => impl(o),
   preflight: (_ctx, impl = copilotPreflight) => impl(),
   resumeNotFound: copilotResumeNotFound,
-  docsAnchor: 'github-copilot-cli',
   shellTrippedMessage: 'GitHub Copilot tried to run a shell command although it was given none — worca stopped the turn.',
   titles: true,
   // GPT-5 Mini is one of Copilot's included models (0× premium requests on a paid plan): a suggestion after every reply

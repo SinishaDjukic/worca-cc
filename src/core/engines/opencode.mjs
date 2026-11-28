@@ -1159,6 +1159,7 @@ export function opencodeChatSelfTest({ bin = opencodeDefaultBin(), ...o } = {}) 
 export const opencodeChat = makeChatDescriptor({
   engine: 'opencode',
   lockdown: () => OPENCODE_ASK_LOCKDOWN,
+  bin: opencodeDefaultBin,
   askSupport: (o, impl = opencodeAskSupport) => impl(o),
   selfTest: (o, impl = opencodeChatSelfTest) => impl(o),
   // A chat always names its model: OpenCode's default is never in play.

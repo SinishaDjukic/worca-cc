@@ -1050,6 +1050,7 @@ export async function runCodexProcess({
 export const codexChat = makeChatDescriptor({
   engine: 'codex',
   lockdown: () => CODEX_ASK_LOCKDOWN,
+  bin: () => CODEX_DEFAULT_BIN,
   noLockdownMessage: "Chat on Codex is unavailable: this codex version cannot switch off its image viewer (which reads any image on disk) or its sub-agents, and a chat must stay inside its own files. Use a Claude chat.",
   askSupport: (o, impl = codexAskSupport) => impl(o),
   preflight: ({ model } = {}, impl = codexPreflight) => impl({ signIn: !hasCodexEndpoint(model) }),

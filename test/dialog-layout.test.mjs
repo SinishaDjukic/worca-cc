@@ -18,7 +18,7 @@ const ALL = cssRules(css);
 const has = (sel, re) => ALL.some((r) => r.sel === sel && re.test(r.body));
 
 const MIGRATED = ['#shipit-modal', '#publish-modal', '#export-modal', '#report-modal', '#confirm-modal',
-  '#scan-model-modal', '#stop-modal', '#mode-modal', '#welcome-modal', '#claude-setup-modal',
+  '#scan-model-modal', '#stop-modal', '#mode-modal', '#welcome-modal', '#engine-setup-modal',
   '#project-add-modal', '#project-git-modal', '#project-bulk-modal', '#plugin-modal', '#viewer-card'];
 const NO_FOOT = new Set(['#viewer-card']);
 // Bordered, deliberately bounded boxes that may scroll inside a body (design-system.md › Modals).

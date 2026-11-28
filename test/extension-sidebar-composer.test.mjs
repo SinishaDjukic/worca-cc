@@ -428,6 +428,49 @@ test('#943: a chat that has run names its engine, offers only that engine\'s mod
   assert.deepEqual(h.$$('.ask-pop-model .ask-pop-group').map((g) => g.textContent), ['Claude Code · this chat'], 'the open menu now lists the new engine');
 });
 
+test('Codex not installed: a chat already on Codex keeps its model in the picker, tagged with the reason; the engine word stays', async () => {
+  const why = 'OpenAI Codex is not installed: codex was not found. Install it, or set WORCA_CODEX_BIN to its path.';
+  const CAT2 = { ...CATALOG, models: [...CATALOG.models, { id: 'gpt-5.5', label: 'GPT-5.5', efforts: ['low', 'medium'], engine: 'codex' }, { id: 'gpt-5.4', label: 'GPT-5.4', efforts: ['low'], engine: 'codex' }],
+    defaults: { claude: CATALOG.default, codex: { model: 'gpt-5.5', effort: 'medium' } }, notReady: { codex: why } };
+  const base = SNAP(TID);
+  const snap = { ...base, thread: { ...base.thread, model: 'gpt-5.5', effort: 'low', engine: 'codex' },
+    messages: [...base.messages, { id: 'askm_00000002', threadId: TID, seq: 2, role: 'assistant', text: 'Because.', blocks: [], status: 'done', model: 'gpt-5.5', effort: 'low', createdAt: 't' }] };
+  const { route } = rig((p, o, method) => (p === '/api/ask/models' ? ok(CAT2) : p === `/api/ask/threads/${TID}` && method === 'GET' ? ok(snap) : null),
+    { threads: [{ id: TID, title: 'Rate limits' }] });
+  const h = await bootSidebar({ storage: STORE, route });
+  await h.change(h.$('.chat-head select[aria-label="Chat"]'), TID);
+  assert.equal(h.$('.ask-model-btn-label').textContent, 'GPT-5.5 ⚠');
+  assert.equal(h.$('.ask-model-btn-engine').textContent, 'OpenAI Codex', 'Claude and the chat\'s own engine are offered');
+  await h.click(h.$('.ask-model-btn'));
+  assert.deepEqual(h.$$('.ask-pop-model .ask-model-name').map((n) => n.textContent), ['GPT-5.5'], 'only its own model');
+  const tag = h.$('.ask-pop-model .ask-model-tag.is-warn');
+  assert.deepEqual([tag.textContent, tag.title], ['not installed', why]);
+});
+
+test('Claude Code not installed: a new chat starts on an installed engine; with none, the button asks for a harness', async () => {
+  const why = 'Claude Code is not installed: claude was not found. Install it, or set WORCA_CLAUDE_BIN to its path.';
+  const CAT2 = { ...CATALOG, models: [...CATALOG.models, { id: 'gpt-5.5', label: 'GPT-5.5', efforts: ['low', 'medium'], engine: 'codex' }],
+    default: { model: 'gpt-5.5', effort: 'medium' }, defaults: { claude: CATALOG.default, codex: { model: 'gpt-5.5', effort: 'medium' } },
+    askEngine: 'codex', notReady: { claude: why } };
+  const { route } = rig((p) => (p === '/api/ask/models' ? ok(CAT2) : null));
+  const h = await bootSidebar({ storage: STORE, route });
+  assert.equal(h.$('.ask-model-btn-label').textContent, 'GPT-5.5');
+  assert.equal(h.$('.ask-model-btn').dataset.engine, 'codex');
+  await h.click(h.$('.ask-model-btn'));
+  assert.deepEqual(h.$$('.ask-pop-model .ask-model-name').map((n) => n.textContent), ['GPT-5.5'], 'Claude is left out like any missing engine');
+
+  const none = { ...CAT2, notReady: { claude: why, codex: 'OpenAI Codex is not installed.' }, askEngine: 'claude', default: CATALOG.default };
+  const { route: route2 } = rig((p) => (p === '/api/ask/models' ? ok(none) : null));
+  const h2 = await bootSidebar({ storage: STORE, route: route2 });
+  assert.equal(h2.$('.ask-model-btn-label').textContent, 'Set up a harness');
+  assert.equal(h2.$('.ask-model-btn-effort').hidden, true);
+  assert.equal(h2.$('.ask-model-btn').dataset.setup, '');
+  await h2.click(h2.$('.ask-model-btn'));
+  assert.deepEqual(h2.$$('.ask-pop-model .ask-model-name').map((n) => n.textContent), [], 'no model to pick');
+  assert.match(h2.$('.ask-pop-model .ask-pop-empty').textContent, /^No harness on this machine can run a chat yet\. Set one up from the model picker in Chat/);
+  assert.equal(h2.$('.ask-pop-model [data-ask-effort-row]'), null, 'no effort to pick');
+});
+
 test('a pasted link\'s auto-switch: the 202 `scope` moves the pill with no PATCH and the next message carries the pin; an ask-scope frame does too (review M1)', async () => {
   let reply = null;
   const posts = [];

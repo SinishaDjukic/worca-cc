@@ -71,6 +71,7 @@ test('Ask catalog: no Codex rows while the broker is on, so new chats start on C
     ],
     pluginModels: () => [], secretStatus: () => [], effortless: () => new Set(),
     askPrefs: () => ({ engine: 'codex', slots: {} }), codexAvailable: () => true,
+    notInstalled: () => null,   // codex installed: CI has none
   };
   const open = await createAskModels(deps).askCatalog();
   assert.ok(open.models.some((m) => m.id === 'gpt-5.5'), 'offered without the broker');

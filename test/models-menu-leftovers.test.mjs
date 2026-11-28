@@ -8,6 +8,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { listEngines } from '../src/core/engines/index.mjs';
+import { ENGINE_SETUP } from '../src/shared/engine-setup.mjs';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const read = (f) => readFileSync(join(ROOT, f), 'utf8');
@@ -153,7 +154,9 @@ test('every link into docs/models.md lands on its heading', () => {
       if (f === 'docs/models.md') for (const m of line.matchAll(/\]\(#([^)\s]*)\)/g)) links.push([`${f}:${i + 1}`, m[1]]);
     });
   }
-  // chat-descriptor.mjs builds each engine's setup link as `${DOCS}#${docsAnchor || engine}`: no literal to grep
+  // shared/engine-setup.mjs names each engine's setup section as a bare `docsAnchor` (the setup dialog's link and the
+  // chat descriptors' notReady.docsUrl): no literal to grep
+  for (const [e, { docsAnchor }] of Object.entries(ENGINE_SETUP)) links.push([`engine-setup.mjs ${e}`, docsAnchor]);
   const engines = listEngines().filter((a) => a.chat);
   assert.ok(engines.length >= 6, 'the engines with a chat descriptor');
   for (const a of engines) {

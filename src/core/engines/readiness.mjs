@@ -3,7 +3,8 @@
 // (engines/ready-cache.mjs) so a page or a pause asking twice spawns nothing new. Only the UI server's GET /api/engines
 // calls this; the text surfaces read the cache and never spawn a preflight.
 import { listEngines } from './index.mjs';
-import { engineLabel } from '../../shared/engine-switch.mjs';
+import { engineLabel, CHAT_ENGINE_NAMES } from '../../shared/engine-switch.mjs';
+import { chatEngineBin, chatEngineNotInstalled } from './chat.mjs';
 import { envFlag } from '../model-env.mjs';
 import { cachedReadiness, storeReadiness } from './ready-cache.mjs';
 import { probeClaudeAuth } from '../preflight.mjs';
@@ -75,4 +76,24 @@ export async function engineReadiness({ force = false, now = Date.now(), mock = 
   }));
   storeReadiness(list, now);
   return list;
+}
+
+/**
+ * What the setup dialog (Connect <engine>, ui/public/engine-setup.mjs) says of a chat engine: whether its CLI is installed
+ * here (a few stat()s: engines/chat.mjs chatEngineNotInstalled, the model picker's own check) and, once it is, the
+ * engine's readiness as GET /api/engines reports it (`force`: the dialog's Check again asks anew, skipping the cache).
+ * A missing CLI skips the readiness check, which would only find the same.
+ * @param {string} name
+ * @param {{force?:boolean, notInstalled?:(e:string)=>string|null, binOf?:(e:string)=>string|null,
+ *   readiness?:typeof engineReadiness}} [o]  test seams beside `force`
+ * @returns {Promise<null|{name:string, bin:string|null, installed:boolean, missing:string|null, ready:boolean|null,
+ *   reason:string|null, broker?:true}>}  null: not a chat engine. `ready` null: readiness had no row for it
+ */
+export async function engineSetupStatus(name, { force = false, notInstalled = chatEngineNotInstalled, binOf = chatEngineBin, readiness = engineReadiness } = {}) {
+  if (!CHAT_ENGINE_NAMES.includes(name)) return null;
+  const bin = binOf(name);
+  const missing = notInstalled(name);
+  if (missing) return { name, bin, installed: false, missing, ready: false, reason: null };
+  const row = (await readiness({ force })).find((e) => e.name === name) || null;
+  return { name, bin, installed: true, missing: null, ready: row ? row.ready === true : null, reason: row?.reason || null, ...(row?.broker ? { broker: true } : {}) };
 }

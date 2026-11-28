@@ -30,7 +30,7 @@
 #project-add-modal .dlg-body > .proj-add-git{margin-bottom:14px;}   /* New/Folder end on the Use git row, which has no margin of its own */
 #export-modal .card.dlg{--dlg-gap-head:6px;--dlg-gap-foot:0px;}   /* .export-field 12px and #export-msg 18px sit inside #export-form */
 .report-modal .card.dlg{--dlg-gap-head:31px;}   /* the old sticky head's 14px padding + 1px rule + 16px margin */
-.ob-claude.dlg{--dlg-gap-foot:22px;}
+.ob-setup.dlg{--dlg-gap-foot:22px;}
 /* Create PR: the title's --line rule and the footer's top rule are its fixed dividers, so the scroll dividers stay
    off and the body adds no gap of its own: the zones' 14px padding is the spacing. (0,3,0) so the short-window
    10px head gap does not reach it. */

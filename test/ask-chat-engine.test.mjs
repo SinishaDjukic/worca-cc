@@ -28,7 +28,7 @@ const ROWS = [
 ];
 // Task 0 (a) was NOT CONFIRMED (plans/ask-on-codex-spike.md): CODEX_ASK_LOCKDOWN is null, so by default the catalog hides
 // Codex. These tests inject codexAvailable to cover the catalog a lockable codex gets.
-const mk = (prefs = { engine: 'claude', slots: {} }, { codexAvailable = () => true } = {}) => createAskModels({ listModels: async () => ROWS, pluginModels: () => [], secretStatus: () => [], effortless: () => new Set(), askPrefs: () => prefs, codexAvailable });
+const mk = (prefs = { engine: 'claude', slots: {} }, { codexAvailable = () => true } = {}) => createAskModels({ listModels: async () => ROWS, pluginModels: () => [], secretStatus: () => [], effortless: () => new Set(), askPrefs: () => prefs, codexAvailable, notInstalled: () => null });   // every engine installed: CI has no codex
 
 test('askCatalog: no Codex rows while this codex cannot be locked down; askEngine codex falls back to claude', async () => {
   const cat = await mk({ engine: 'codex', slots: {} }, { codexAvailable: () => false }).askCatalog();
