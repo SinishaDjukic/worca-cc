@@ -300,3 +300,69 @@ test('a diverged branch (remote and local both moved) offers no push; a workspac
   await settle(w);
   assert.deepEqual([...q(w, '#publish-modal').querySelectorAll('.publish-repo')].map((r) => r.dataset.memberKey), ['web-2']);
 });
+
+// The pull request state lands seconds after the page paints (finalizeHistoryPr -> hdSyncPr) and reads the publish
+// state again. The head's button row is laid out around this button: hiding it for the read's round trip shifts
+// the other head buttons under the pointer and back.
+test('a re-read of the publish state keeps the button and the note until the answer lands', async () => {
+  const defer = () => { let done; const p = new Promise((r) => { done = r; }); return { p, done }; };
+  const prLookup = defer();
+  const reread = defer();
+  let reads = 0;
+  const first = [member({ remote: 'origin', state: 'moved' })];
+  const ctx = await boot({ fetchHandler: (url) => {
+    if (STATUS_RE.test(url)) { reads += 1; return reads === 1 ? ok({ ok: true, members: first }) : reread.p; }
+    if (url.endsWith('/api/history/pr')) return prLookup.p;
+    if (/\/api\/pr\/remotes\?/.test(url)) return ok(REMOTES);
+    if (url.endsWith('/diff') || url.endsWith('/log')) return fail(404, { error: 'none' });
+    if (url.endsWith('/api/history')) return ok({ pipelines: [row({ pr: undefined })], ghAvailable: true });
+    if (url.endsWith(`/api/history/${KEY}/${ID}`)) return ok(detail());
+    return null;
+  } });
+  const w = ctx.window;
+  await settle(w);
+  go(w, `history/${KEY}/${ID}`);
+  await settle(w, 10);
+  const btn = q(w, '#hist-detail .hd-publish');
+  const note = q(w, '#hist-detail .hd-published');
+  assert.equal(btn.hidden, false);
+  assert.equal(btn.textContent, 'Push changes');
+  assert.equal(note.hidden, false);
+  assert.equal(reads, 1);
+
+  prLookup.done({ ok: false, status: 500, json: async () => ({}) });   // the lookup ends: every open head is synced
+  await settle(w, 10);
+  assert.equal(reads, 2, 'the sync reads the publish state again');
+  assert.equal(btn.hidden, false, 'still offered while the read is in flight');
+  assert.equal(btn.textContent, 'Push changes');
+  assert.equal(note.hidden, false);
+
+  reread.done({ ok: true, status: 200, json: async () => ({ ok: true, members: [member({ remote: 'origin', state: 'published' })] }) });
+  await settle(w, 10);
+  assert.equal(btn.hidden, true, 'the answer decides: nothing left to push');
+  assert.equal(note.textContent, 'Published to origin/worca-cc/log-ux-fcec04e8');
+});
+
+test('a publish state that can no longer be read takes the button and the note away', async () => {
+  let reads = 0;
+  const prLookup = (() => { let done; const p = new Promise((r) => { done = r; }); return { p, done }; })();
+  const ctx = await boot({ fetchHandler: (url) => {
+    if (STATUS_RE.test(url)) { reads += 1; return reads === 1 ? ok({ ok: true, members: [member({ remote: 'origin', state: 'moved' })] }) : fail(500, { error: 'no' }); }
+    if (url.endsWith('/api/history/pr')) return prLookup.p;
+    if (/\/api\/pr\/remotes\?/.test(url)) return ok(REMOTES);
+    if (url.endsWith('/diff') || url.endsWith('/log')) return fail(404, { error: 'none' });
+    if (url.endsWith('/api/history')) return ok({ pipelines: [row({ pr: undefined })], ghAvailable: true });
+    if (url.endsWith(`/api/history/${KEY}/${ID}`)) return ok(detail());
+    return null;
+  } });
+  const w = ctx.window;
+  await settle(w);
+  go(w, `history/${KEY}/${ID}`);
+  await settle(w, 10);
+  assert.equal(q(w, '#hist-detail .hd-publish').hidden, false);
+  prLookup.done({ ok: false, status: 500, json: async () => ({}) });
+  await settle(w, 10);
+  assert.equal(reads, 2);
+  assert.equal(q(w, '#hist-detail .hd-publish').hidden, true);
+  assert.equal(q(w, '#hist-detail .hd-published').hidden, true);
+});
