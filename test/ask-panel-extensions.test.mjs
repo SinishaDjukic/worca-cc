@@ -349,10 +349,15 @@ const GUIDE_READ = Object.freeze({ model: { id: 'claude-haiku-5-5', label: 'Haik
 // The Guide switch and line (ui/public/chat/guide-line.mjs) are registered after the picker; their requests are recorded.
 // The check (POST /api/shape/guide/check) answers CHECK_REPLY, refuses with a code once failChecks(code) is called, or
 // waits for ever once holdChecks() is called, and the 2-second pause runs on a timer the test drives (wait).
+// The write (POST /api/shape/guide/write) answers the sent prompt written out, or once holdWrites() is called waits until
+// releaseWrite(), whatever its signal says, so a late answer to an aborted write still arrives.
 const CHECK_REPLY = Object.freeze({
   register: 'technical', size: 'large', model: GUIDE_READ.model,
   checks: ['who', 'what', 'trigger', 'limits', 'done'].map((id, i) => ({ id, label: id, covered: i < 2, question: i < 2 ? '' : 'q' })),
 });
+const FILLED_LINES = ['Trigger and scope: any upload (suggested)', 'Constraints: files up to 2 GB (suggested)',
+  'Acceptance checks: a large file arrives (suggested)'];
+const writtenFor = (prompt) => `${prompt}${prompt.endsWith('\n') ? '' : '\n'}${FILLED_LINES.join('\n')}`;
 function manualTimers() {
   let now = 0;
   let ids = 0;
@@ -386,12 +391,15 @@ async function composer(t, { lead = null, flag = true, picker = true, guide = pi
   let holding = false;
   let failing = null;      // the error code the check refuses with
   let roles = null;
+  const writes = [];       // { body, signal } of the write requests
+  let holdingWrites = false;
+  const heldWrites = [];
   if (picker) {
     const { installRolePicker } = await import('../ui/public/chat/role-picker.mjs');
     roles = installRolePicker({ intent, flagOn: () => flag, onFlagChange: () => () => {} });
   }
   if (guide) {
-    const { installGuideLine, loadGuide, saveGuidePrefs, checkGuide } = await import('../ui/public/chat/guide-line.mjs');
+    const { installGuideLine, loadGuide, saveGuidePrefs, checkGuide, writeGuide } = await import('../ui/public/chat/guide-line.mjs');
     const record = async (url, init) => {
       requests.push(`${init?.method || 'GET'} ${url}`);
       if (url === '/api/shape/guide/prefs') prefsPuts.push(JSON.parse(init.body));
@@ -406,11 +414,19 @@ async function composer(t, { lead = null, flag = true, picker = true, guide = pi
         }
         return { ok: true, status: 200, json: async () => CHECK_REPLY };
       }
+      if (url === '/api/shape/guide/write') {
+        const body = JSON.parse(init.body);
+        writes.push({ body, signal: init.signal });
+        const reply = { ok: true, status: 200, json: async () => ({ text: writtenFor(body.prompt), filled: ['trigger', 'limits', 'done'], model }) };
+        if (holdingWrites) return new Promise((resolve) => { heldWrites.push(() => resolve(reply)); });
+        return reply;
+      }
       return { ok: true, status: 200, json: async () => ({ ...GUIDE_READ, model, on: guideOn, rowsOpen }) };
     };
     installGuideLine({
       intent, flagOn: () => flag, onFlagChange: () => () => {}, load: () => loadGuide(record), save: (patch) => saveGuidePrefs(patch, record),
       timers, role: () => roles?.role() ?? null, check: (body, opts) => checkGuide(body, { ...opts, fetchFn: record }),
+      write: (body, opts) => writeGuide(body, { ...opts, fetchFn: record }),
     });
   }
   const panelApi = api(rec);
@@ -469,7 +485,17 @@ async function composer(t, { lead = null, flag = true, picker = true, guide = pi
     assert.ok(input, 'the Add field');
     return input;
   };
-  return { ...ctx, rec, requests, prefsPuts, intent, lead: lead0, send, sendAsIs, openAdd, settle, type, wait, checks, holdChecks, failChecks, line };
+  const holdWrites = () => { holdingWrites = true; };
+  const releaseWrite = async () => { assert.ok(heldWrites.length, 'a held write'); heldWrites.shift()(); await settle(); };
+  /** The person activates the line's button named `label` (Write it out, Stop or Undo). */
+  const press = async (label) => {
+    const b = ctx.doc.querySelector('.ask-guide .ask-guide-do');
+    assert.equal(b?.textContent, label, `a "${label}" button on the line`);
+    b.focus();
+    b.click();
+    await settle();
+  };
+  return { ...ctx, rec, requests, prefsPuts, intent, lead: lead0, send, sendAsIs, openAdd, settle, type, wait, checks, holdChecks, failChecks, line, writes, holdWrites, releaseWrite, press };
 }
 
 for (const [row, saved, want] of [
@@ -605,6 +631,9 @@ test('R-qa-2 example: 40 characters and 3 seconds ask for no check with the flag
     await c.settle();       // the offer's save goes out before the pause ends
     await c.wait(3000);
     assert.deepEqual(c.requests.filter((r) => /guide/i.test(r)), wanted, row);
+    // Write it out is offered only where a check ran, and nothing is written until the person asks.
+    assert.equal(c.doc.querySelectorAll('.ask-guide-do').length, wanted.includes('POST /api/shape/guide/check') ? 1 : 0, row);
+    assert.deepEqual(c.writes, [], row);
   }
 });
 
@@ -637,7 +666,10 @@ const failurePainted = (sentence, action) => (c) => {
 };
 const failedCheck = (code) => async (c) => { c.failChecks(code); c.type(SHAPER_TEXT); await c.wait(); };
 
-// The Send table: every state the check can put the line in keeps Send on and sends the person's text.
+/** What a landed write of SHAPER_TEXT puts in the field: no outer whitespace, so Send's trim keeps every byte. */
+const WRITTEN = writtenFor(SHAPER_TEXT);
+
+// The Send table: every state the line can be in keeps Send on and sends the person's text.
 for (const [row, arrange, painted, opts = {}] of [
   ['checking', async (c) => { c.holdChecks(); c.type(SHAPER_TEXT); await c.wait(); },
     (c) => assert.equal(c.line().querySelector('.ask-guide-t')?.textContent, 'Checking your prompt…')],
@@ -652,24 +684,50 @@ for (const [row, arrange, painted, opts = {}] of [
   ['add open', async (c) => { c.type(SHAPER_TEXT); await c.wait(); await c.openAdd(); },
     (c) => { assert.equal(foldText(c), GAPS); assert.ok(c.doc.querySelector('.ask-guide-ans input'), 'the Add field is open'); },
     { sendAsIs: true }],
+  // `sendAsIs`: typing before the click would itself abort the write.
+  ['writing it out', async (c) => { c.holdWrites(); c.type(SHAPER_TEXT); await c.wait(); await c.press('Write it out'); },
+    (c) => {
+      assert.equal(c.line().querySelector('.ask-guide-t')?.textContent, 'Writing it out…');
+      assert.equal(c.line().querySelector('.ask-guide-do')?.textContent, 'Stop');
+    },
+    {
+      sendAsIs: true,
+      after: async (c) => {
+        assert.equal(c.writes[0].signal.aborted, true, 'the send aborts the write');
+        const field = c.doc.querySelector('.ask-input').value;
+        const line = c.line()?.textContent;
+        await c.releaseWrite();
+        assert.equal(c.doc.querySelector('.ask-input').value, field, 'a late answer leaves the field');
+        assert.equal(c.line()?.textContent, line, 'and the line');
+      },
+    }],
+  ['written out with Undo', async (c) => {
+    assert.equal(WRITTEN, WRITTEN.trim(), 'fixture');
+    c.type(SHAPER_TEXT); await c.wait(); await c.press('Write it out');
+  },
+  (c) => {
+    assert.equal(c.doc.querySelector('.ask-input').value, WRITTEN);
+    assert.match(c.line().textContent, /^Guide filled 3 gaps · check them/);
+    assert.equal(c.line().querySelector('.ask-guide-do')?.textContent, 'Undo');
+  },
+  { sendAsIs: true, expected: WRITTEN }],
 ]) {
   test(`the Send table, ${row}: Send stays on, one message goes out with the person's words, and no check follows`, async (t) => {
-    const { sendAsIs = false, ...composerOpts } = opts;
+    const { sendAsIs = false, expected = SHAPER_TEXT, after = null, ...composerOpts } = opts;
     const c = await composer(t, composerOpts);
     await arrange(c);
     painted(c);
     const before = c.checks.length;
-    if (sendAsIs) {
-      assert.ok(c.doc.querySelector('.ask-guide-ans input'), 'open right before the click');
-      await c.sendAsIs();              // asserts Send is enabled
-    } else await c.send(SHAPER_TEXT);  // asserts Send is enabled
+    if (sendAsIs) await c.sendAsIs();  // asserts Send is enabled
+    else await c.send(SHAPER_TEXT);    // asserts Send is enabled
     assert.equal(c.doc.querySelector('.ask-guide-ans'), null, 'no Add field after the send');
     assert.equal(c.rec.messageBodies?.length, 1, 'exactly one message');
-    assert.equal(c.rec.messageBodies[0].text, `${INTENT_LEADS.shape}\n\n${SHAPER_TEXT}`);
-    assert.equal(c.doc.querySelector('.ask-user-bubble').textContent, SHAPER_TEXT);
+    assert.equal(c.rec.messageBodies[0].text, `${INTENT_LEADS.shape}\n\n${expected}`);
+    assert.equal(c.doc.querySelector('.ask-user-bubble').textContent, expected);
     await c.wait(3000);
     assert.equal(c.checks.length, before);
-    assert.doesNotMatch(c.line()?.textContent ?? '', /Prompt|checking|not answering|no model/i, 'nothing of the sent prompt stays on the line');
+    assert.doesNotMatch(c.line()?.textContent ?? '', /Prompt|checking|not answering|no model|Writing|Guide filled|Undo/i, 'nothing of the sent prompt stays on the line');
+    if (after) await after(c);
   });
 }
 
@@ -742,3 +800,57 @@ test('R-ux-5: a click on the fold PUTs rowsOpen:true, and a new composer whose r
   assert.equal(next.doc.querySelector('.ask-guide .ask-guide-fold').getAttribute('aria-expanded'), 'true');
   assert.deepEqual(rowsPuts(next), [], 'arriving saves nothing');
 });
+
+// Write it out, Stop and Undo in the real panel, main and docked.
+/** The person's two lines, with trailing spaces and a last line of spaces. */
+const TWO_LINES = 'Line one  \nLine two \n  ';
+for (const where of ['main', 'docked']) {
+  /** A write of TWO_LINES that is out (held) or landed. */
+  const writing = async (t, { hold = true } = {}) => {
+    const c = await composer(t, {});
+    if (where === 'docked') await dock(c);
+    if (hold) c.holdWrites();
+    c.type(TWO_LINES);
+    await c.wait();
+    await c.press('Write it out');
+    assert.deepEqual(c.writes.map((w) => w.body), [{ prompt: TWO_LINES, role: null, gaps: ['trigger', 'limits', 'done'] }]);
+    return c;
+  };
+  const prompt = (c) => c.doc.querySelector('.ask-input');
+
+  test(`R-qa-9, the ${where} chat: typing a letter mid-write aborts the request and the field keeps the text plus the letter`, async (t) => {
+    const c = await writing(t);
+    c.type(`${TWO_LINES}x`);
+    await c.settle();
+    assert.equal(c.writes[0].signal.aborted, true);
+    await c.releaseWrite();
+    assert.equal(prompt(c).value, `${TWO_LINES}x`);
+    assert.doesNotMatch(c.line().textContent, /Writing|Guide filled|Undo/);
+    assert.equal(c.rec.messageBodies, undefined, 'nothing is sent');
+  });
+
+  test(`R-qa-9, the ${where} chat: Stop mid-write aborts the request and the field is byte-identical`, async (t) => {
+    const c = await writing(t);
+    await c.press('Stop');
+    assert.equal(c.writes[0].signal.aborted, true);
+    await c.releaseWrite();
+    assert.equal(prompt(c).value, TWO_LINES);
+    assert.equal(foldText(c), GAPS);
+    assert.equal(c.line().querySelector('.ask-guide-do')?.textContent, 'Write it out');
+    assert.equal(c.doc.querySelector('.ask-send').disabled, false);
+    assert.equal(c.rec.messageBodies, undefined, 'nothing is sent');
+  });
+
+  test(`R-qa-10, the ${where} chat: after Undo the field equals the pre-write text byte for byte and no Undo is left`, async (t) => {
+    const c = await writing(t, { hold: false });
+    assert.equal(prompt(c).value, writtenFor(TWO_LINES));
+    assert.equal(c.doc.querySelector('.ask-send').disabled, false);
+    await c.press('Undo');
+    assert.equal(prompt(c).value, TWO_LINES);
+    assert.equal(c.line().querySelector('.ask-guide-do')?.textContent, 'Write it out');
+    assert.doesNotMatch(c.line().textContent, /Guide filled|Undo/);
+    await c.wait(3000);
+    assert.equal(c.checks.length, 1, 'neither the write nor Undo asks for a check');
+    assert.equal(c.rec.messageBodies, undefined, 'nothing is sent');
+  });
+}

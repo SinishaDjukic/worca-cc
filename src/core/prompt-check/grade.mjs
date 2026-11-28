@@ -1,7 +1,7 @@
 // src/core/prompt-check/grade.mjs — Shaper ask screens: the model call of Guide's check (POST /api/shape/guide/check).
 // One tool-less call on the Guide job's model (src/core/guide-model.mjs) through auxTextCall, locked down as the chat
-// suggestion is, from a fresh empty folder that is removed afterwards. The prompt is quoted between fixed delimiter
-// lines as data. One check per person and a cap overall (the slots). It writes no log line and never throws.
+// suggestion is (runGuideCall, which Write it out shares), from a fresh empty folder that is removed afterwards. The
+// prompt is quoted between fixed delimiter lines as data. One check per person and a cap overall (the slots). It writes no log line and never throws.
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { auxTextCall } from '../title.mjs';
@@ -122,9 +122,9 @@ const mockRun = async (o) => {
   return { text: JSON.stringify(mockCheck(text, register)) };
 };
 
-/** The runner auxTextCall spawns with: a test override, else the mock under WORCA_MOCK, else runClaude. */
-export function guideRunner() {
-  return testRun ?? (mockEnabled({}) ? mockRun : runClaude);
+/** The runner auxTextCall spawns with: a test override, else `mock` under WORCA_MOCK, else runClaude. */
+export function guideRunner(mock = mockRun) {
+  return testRun ?? (mockEnabled({}) ? mock : runClaude);
 }
 
 /** The Guide job's model pick, exactly as GET /api/shape/guide names it. */
@@ -154,11 +154,12 @@ const rejectOnAbort = (signal) => new Promise((_, reject) => {
 });
 
 /**
- * Check one prompt on `model`. Never throws.
- * @returns {Promise<{ok:true, result:object}|{ok:false, reason:'timeout'|'unreadable reply'|'model call failed'|'aborted'}>}
+ * One locked-down Guide call: a fresh empty folder (removed afterwards), the timeout and the abort race. Never throws.
+ * @returns {Promise<{ok:true, reply:string}|{ok:false, reason:'timeout'|'model call failed'|'aborted'}>}
  */
-export async function checkPrompt({ text, register }, { model, effort, signal, onCost, timeoutMs = GUIDE_CHECK_TIMEOUT_MS } = {}) {
-  const t = String(text ?? '');
+export async function runGuideCall({ systemPrompt, prompt }, {
+  model, effort, signal, onCost, timeoutMs = GUIDE_CHECK_TIMEOUT_MS, mock = mockRun,
+} = {}) {
   const timeout = AbortSignal.timeout(timeoutMs);
   const sig = signal ? AbortSignal.any([signal, timeout]) : timeout;
   let cwd = null;
@@ -166,7 +167,7 @@ export async function checkPrompt({ text, register }, { model, effort, signal, o
     const root = join(worcaHome(), 'tmp', 'guide-check');
     mkdirSync(root, { recursive: true });
     cwd = mkdtempSync(join(root, 'g-'));
-    const call = auxTextCall({ ...guideCheckPrompt({ text: t, register }), model }, {
+    const call = auxTextCall({ systemPrompt, prompt, model }, {
       ...GUIDE_CALL_OPTS,
       tools: [...GUIDE_CALL_OPTS.tools],
       settingSources: [...GUIDE_CALL_OPTS.settingSources],
@@ -175,13 +176,11 @@ export async function checkPrompt({ text, register }, { model, effort, signal, o
       cwd,
       signal: sig,
       onCost,
-      run: guideRunner(),
+      run: guideRunner(mock),
     });
     call.catch(() => {});
     const reply = await Promise.race([call, rejectOnAbort(sig)]);
-    const parsed = parseCheckReply(reply);
-    if (!parsed) return { ok: false, reason: 'unreadable reply' };
-    return { ok: true, result: normalizeGuideCheck(parsed, { register, text: t }) };
+    return { ok: true, reply };
   } catch (err) {
     if (signal?.aborted) return { ok: false, reason: 'aborted' };
     if (timeout.aborted) return { ok: false, reason: 'timeout' };
@@ -190,4 +189,17 @@ export async function checkPrompt({ text, register }, { model, effort, signal, o
   } finally {
     if (cwd) { try { rmSync(cwd, { recursive: true, force: true }); } catch { /* a leftover empty folder is harmless */ } }
   }
+}
+
+/**
+ * Check one prompt on `model`. Never throws.
+ * @returns {Promise<{ok:true, result:object}|{ok:false, reason:'timeout'|'unreadable reply'|'model call failed'|'aborted'}>}
+ */
+export async function checkPrompt({ text, register }, { model, effort, signal, onCost, timeoutMs = GUIDE_CHECK_TIMEOUT_MS } = {}) {
+  const t = String(text ?? '');
+  const r = await runGuideCall(guideCheckPrompt({ text: t, register }), { model, effort, signal, onCost, timeoutMs });
+  if (!r.ok) return r;
+  const parsed = parseCheckReply(r.reply);
+  if (!parsed) return { ok: false, reason: 'unreadable reply' };
+  return { ok: true, result: normalizeGuideCheck(parsed, { register, text: t }) };
 }

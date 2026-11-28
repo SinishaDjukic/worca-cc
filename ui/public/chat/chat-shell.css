@@ -22,6 +22,11 @@
 .ask-guide-q{flex:none;color:var(--ink-2);}
 .ask-guide-chev{flex:none;}
 .ask-guide-fold[aria-expanded="true"] .ask-guide-chev{transform:rotate(180deg);}
+/* Write it out, Stop and Undo: the app's quiet small button at the line's right end, after a flexible spacer. The
+   written words' " · check them" never shrinks; their size words give way first. */
+.ask-guide-sp{flex:1 1 0;}
+.ask-guide-mid{flex:none;white-space:pre;}
+.ask-guide > .ask-guide-do{flex:none;}
 /* Guide rows (design system, Composer bar): the five checks under the line, built by buildCheckRows; an open Add field wraps under its label. */
 .ask-guide-rows{margin:0 6px;font-size:var(--fs-body);}
 .ask-guide-rows .plan-check-row.ok .plan-check-mark{color:var(--ink-2);}

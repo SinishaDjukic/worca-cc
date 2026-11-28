@@ -805,7 +805,9 @@ alone: no chat, no files, no role name and no tools, from an empty folder. It ch
 the asker's wording, plain for Product, UX and Compliance and technical otherwise: who it is for,
 what they get, what starts it, its limits and how you know it worked. For each check it returns
 covered or one open question, plus a size of small, medium or large. A prompt over 8000 characters
-is not sent, and with the Guide switch off nothing is sent.
+is not sent, and with the Guide switch off nothing is sent. Write it out asks the same model for one short line per
+open gap and nothing else; it never returns the prompt, so the written text is your prompt unchanged plus one
+"(suggested)" line per filled gap.
 
 The *Requirements interview* helper (the Requirements page's product briefs, code looks and interview
 rounds) runs on Claude only and is set per user. Unlike Memory defragment, it takes an effort without a

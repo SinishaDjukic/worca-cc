@@ -86,7 +86,8 @@ back. Workflows has its own chat and no button.
   button opens that chat, as the Chat row does.
 - **Guide.** The docked composer follows the same rule as Chat's: with the Shaper pin set and Guide on, its Guide
   line checks the prompt 2 seconds after you stop typing and shows the same result and size words, such as
-  "Clear enough · Small: one run". With no Shaper pin it asks nothing.
+  "Clear enough · Small: one run". Write it out, Stop and Undo work the same there. With no Shaper pin it asks
+  nothing.
 
 ## Scope from a pasted link
 

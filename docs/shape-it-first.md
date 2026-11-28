@@ -655,6 +655,17 @@ Escape closes the field and returns to the prompt. A check result that lands whi
 closes. A draft closed without Add (Escape, typing in the prompt, shutting the rows, Send) is dropped. Add is not
 announced: the moved focus and the fold's new words are its only confirmation. Send works as it is with a field open.
 
+**Write it out.** While a result has a gap open, the line ends in one quiet "Write it out" button. It sends your draft
+to the Guide model, which fills only the open gaps; the line reads "Writing it out…" with "Stop". Stop, or typing in the
+prompt, ends it at once and keeps your words exactly as you left them, the typed letter included. When it lands, your
+text stays word for word at the start of the prompt and each filled gap follows on its own line, ending in
+"(suggested)": plain text you keep, change or delete. The caret goes right after the first "(suggested)". The line then
+reads "Guide filled 4 gaps · check them" with the size words and "Undo", which puts your text from before the write back
+exactly, line breaks and spaces included. Undo lasts until your first edit; after that the line shows the result again
+and the browser's own undo (Cmd/Ctrl+Z) undoes your edits. Send works as it is in both states: while writing it sends
+what you typed, and once written it sends the prompt as you see it. A failed write leaves the prompt untouched and
+brings "Write it out" back.
+
 ### The card's steps
 
 The feature has one card, and its step heads read as the card shows them:

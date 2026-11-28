@@ -13,12 +13,20 @@
 // open gap has the hollow mark and an Add that opens one field; its answer joins the prompt as "<question>: <answer>"
 // (the question the row shows, without its closing question mark, else the label), and the point counts as covered at
 // once. While an Add field is open, results are held and applied when it closes.
+// Write it out: while a result has an open gap, one quiet "Write it out" sits at the line's right end. A click sends
+// one POST /api/shape/guide/write; the line reads "Writing it out…" with "Stop", and the person's typing, Stop, a send
+// or Guide off abort it. The answer is the prompt unchanged plus one "(suggested)" line per filled gap; the line then
+// reads "Guide filled 3 gaps · check them" with the size words and "Undo", which gives the exact pre-write text back
+// until the person's first edit. Model text reaches the DOM only as the field's value.
 import { registerComposerAddon } from './extensions.mjs';
 import { makeSwitch } from '../switch.mjs';
 import { flagOn as liveFlagOn, onFlagChange as liveOnFlagChange } from '../flags.mjs';
 import { buildCheckRows, fold } from '../shape/check-row.mjs';
 import { icon } from '../icons.mjs';
 import { GUIDE_CHECK_IDS, GUIDE_DEFAULT_QUESTIONS, GUIDE_PROMPT_MAX, GUIDE_SIZES } from '../../../src/shared/prompt-check/assessment.mjs';
+import { SUGGESTED, appendAnswer } from '../../../src/shared/prompt-check/write-out.mjs';
+
+export { appendAnswer };
 
 export const GUIDE_ADDON_ID = 'guide';
 export const LINE_TITLE = 'Sending works as it is.';
@@ -38,6 +46,10 @@ export const OPEN_MODELS = 'Open Models';
 export const MODELS_HREF = '#models/jobs/helpers';
 export const ADD_TEXT = 'Add';
 export const ADD_PLACEHOLDER = 'Your answer';
+export const WRITE_TEXT = 'Write it out';
+export const WRITING_TEXT = 'Writing it out…';
+export const STOP_TEXT = 'Stop';
+export const UNDO_TEXT = 'Undo';
 
 const FLAG = 'shaperSmallRuns';
 
@@ -72,6 +84,31 @@ export function resultSpeech(check) {
   return `${w.head.replace(/(\d+)\/(\d+)/, '$1 of $2')}${w.rest.replace(/^ · /, ', ')}`;
 }
 
+/** The written words: `{ head, mid, rest }`, "Guide filled 4 gaps", " · check them" (" · check it" for one) and the
+ *  shown result's size in words ('' for an unknown size), never a number of runs. */
+export function filledWords(n, size) {
+  const one = n === 1;
+  const rest = typeof size === 'string' && Object.hasOwn(SIZE_WORDS, size) ? ` · ${SIZE_WORDS[size]}` : '';
+  return { head: `Guide filled ${n} ${one ? 'gap' : 'gaps'}`, mid: one ? ' · check it' : ' · check them', rest };
+}
+
+/** The words a screen reader hears for a landed write: "Guide filled 4 gaps, check them". */
+export function filledSpeech(n) {
+  const w = filledWords(n, null);
+  return `${w.head}${w.mid.replace(/^ · /, ', ')}`;
+}
+
+/** Where the field scrolls after a write: the line of the first "(suggested)" at or after `from`, with one line above
+ *  it, in px; never below 0, and 0 for a line height that is not a positive number. */
+export function suggestedScrollTop(value, from, lineHeightPx) {
+  if (!(lineHeightPx > 0)) return 0;
+  const v = String(value ?? '');
+  const at = v.indexOf(SUGGESTED, from);
+  if (at < 0) return 0;
+  const lineIndex = v.slice(0, at).split('\n').length - 1;
+  return Math.max(0, (lineIndex - 1) * lineHeightPx);
+}
+
 /** Which failure line a check's code gets: 'no-model', null (no line: Guide off elsewhere, an abort, a superseded
  *  check), or 'failed' for every other code. */
 export function failureKind(code) {
@@ -80,12 +117,14 @@ export function failureKind(code) {
   return 'failed';
 }
 
-/** What the line shows, first match: off, a result (with "checking…" on a re-check), the first check, a failure, the
- *  offer, empty. */
-export function lineState({ on, offerSeen, offerGone, prompt, result, checking, failure = null }) {
+/** What the line shows, first match: off, writing it out, written out, a result (with "checking…" on a re-check, and
+ *  `write` while a gap is open), the first check, a failure, the offer, empty. */
+export function lineState({ on, offerSeen, offerGone, prompt, result, checking, failure = null, writing = false, written = null }) {
   if (!on) return { kind: 'off' };
+  if (writing) return { kind: 'writing' };
+  if (written) return { kind: 'written', words: filledWords(written.n, written.size) };
   const words = result ? resultWords(result) : null;
-  if (words) return { kind: 'result', words, recheck: checking === true };
+  if (words) return { kind: 'result', words, recheck: checking === true, write: result.checks.some((c) => !c || c.covered !== true) };
   if (checking) return { kind: 'checking' };
   if (failure) return { kind: 'failure', failure };
   return lineText({ on, offerSeen, offerGone, prompt }) === OFFER_TEXT ? { kind: 'offer' } : { kind: 'empty' };
@@ -108,12 +147,6 @@ export function shownQuestion(check) {
 /** What Add writes: "<head>: <answer>", the answer trimmed and its whitespace runs collapsed to one space. */
 export function addLine(head, answer) {
   return `${head}: ${String(answer).trim().replace(/\s+/g, ' ')}`;
-}
-
-/** The prompt with `line` appended: nothing in front of an empty prompt or after a line break, else one line break. */
-export function appendAnswer(value, line) {
-  if (value === '' || value.endsWith('\n')) return `${value}${line}`;
-  return `${value}\n${line}`;
 }
 
 /** A copy of a check body where every id in `ids` is covered, without a question. The input is never changed. */
@@ -170,14 +203,12 @@ export function guideRows(doc, check, { open = null, onAdd, onCommit, onCancel }
   return buildCheckRows(doc, { items });
 }
 
-/** POST /api/shape/guide/check with `{ prompt, role }`. Never rejects: `{ ok: true, check }` or `{ ok: false, code }`
- *  (the route's error code, 'ABORTED', 'NETWORK', or 'BAD_REPLY' for a body that does not parse). */
-export async function checkGuide({ prompt, role = null }, { signal, fetchFn = (...a) => globalThis.fetch(...a) } = {}) {
+/** One Guide POST. Never rejects: `{ ok: true, body }` or `{ ok: false, code }` (the route's error code, 'ABORTED',
+ *  'NETWORK', or 'BAD_REPLY' for a body that does not parse). */
+async function postGuide(url, payload, { signal, fetchFn }) {
   let res;
   try {
-    res = await fetchFn('/api/shape/guide/check', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, role: role ?? null }), signal,
-    });
+    res = await fetchFn(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), signal });
   } catch (err) {
     return { ok: false, code: err && err.name === 'AbortError' ? 'ABORTED' : 'NETWORK' };
   }
@@ -185,9 +216,29 @@ export async function checkGuide({ prompt, role = null }, { signal, fetchFn = (.
   try { body = await res.json(); } catch (err) {
     return { ok: false, code: err && err.name === 'AbortError' ? 'ABORTED' : 'BAD_REPLY' };
   }
-  if (res.ok) return { ok: true, check: body };
+  if (res.ok) return { ok: true, body };
   const code = body && body.error && typeof body.error.code === 'string' ? body.error.code : 'BAD_REPLY';
   return { ok: false, code };
+}
+
+/** POST /api/shape/guide/check with `{ prompt, role }`. Never rejects: `{ ok: true, check }` or `{ ok: false, code }`
+ *  (the route's error code, 'ABORTED', 'NETWORK', or 'BAD_REPLY' for a body that does not parse). */
+export async function checkGuide({ prompt, role = null }, { signal, fetchFn = (...a) => globalThis.fetch(...a) } = {}) {
+  const r = await postGuide('/api/shape/guide/check', { prompt, role: role ?? null }, { signal, fetchFn });
+  return r.ok ? { ok: true, check: r.body } : r;
+}
+
+/** POST /api/shape/guide/write with `{ prompt, role, gaps }`. Never rejects: `{ ok: true, written: { text, filled } }`
+ *  or `{ ok: false, code }` as checkGuide, with 'BAD_REPLY' also for a 200 whose text does not start with exactly the
+ *  sent prompt or whose `filled` is not a non-empty list of distinct known ids. */
+export async function writeGuide({ prompt, role = null, gaps }, { signal, fetchFn = (...a) => globalThis.fetch(...a) } = {}) {
+  const r = await postGuide('/api/shape/guide/write', { prompt, role: role ?? null, gaps }, { signal, fetchFn });
+  if (!r.ok) return r;
+  const b = r.body;
+  const filled = b && Array.isArray(b.filled) ? b.filled : null;
+  const good = b && typeof b.text === 'string' && typeof prompt === 'string' && b.text.startsWith(prompt)
+    && filled && filled.length > 0 && new Set(filled).size === filled.length && filled.every((id) => GUIDE_CHECK_IDS.includes(id));
+  return good ? { ok: true, written: { text: b.text, filled: [...filled] } } : { ok: false, code: 'BAD_REPLY' };
 }
 
 async function json(res) {
@@ -211,6 +262,7 @@ export async function saveGuidePrefs(patch, fetchFn = (...a) => globalThis.fetch
  *   load?: () => Promise<object>, save?: (patch: object) => Promise<object>,
  *   timers?: { setTimeout: Function, clearTimeout: Function },
  *   check?: (body: { prompt: string, role: string|null }, opts: { signal: AbortSignal }) => Promise<object>,
+ *   write?: (body: { prompt: string, role: string|null, gaps: string[] }, opts: { signal: AbortSignal }) => Promise<object>,
  *   role?: () => string|null }} deps
  * @returns {{ addon: { id: string, mount(leadEl, ctx) }, refresh(): void, prefs(): object|null }}
  */
@@ -222,6 +274,7 @@ export function createGuideLine({
   save = (patch) => saveGuidePrefs(patch),
   timers = { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (id) => clearTimeout(id) },
   check = (body, opts) => checkGuide(body, opts),
+  write = (body, opts) => writeGuide(body, opts),
   role = () => null,
 } = {}) {
   const mounts = new Set();
@@ -255,6 +308,9 @@ export function createGuideLine({
     let held = null;        // { req, out } of a landing held while an Add field is open
     let selfWrite = false;  // Add is writing the prompt: its input event is not the person's typing
     let rowsSig = null;     // what the rows were last built from: rebuilt only when it changes
+    let writeFlight = null; // { ctl, before, gaps, size, prior } of the one write out
+    let written = null;     // { text, before, n, size, prior } of a landed write: Undo exists while the field holds `text`
+    let guideSets = false;  // a write or Undo is setting the field: its input event is not the person's edit
 
     const sw = makeSwitch(doc, { label: 'Guide', rowClass: 'ask-guide-sw', inputClass: 'ask-guide-sw-input' });
     const line = doc.createElement('div');
@@ -311,6 +367,29 @@ export function createGuideLine({
     };
     const retryBtn = action(TRY_AGAIN, () => retry());
     const modelsBtn = action(OPEN_MODELS, () => { const win = doc.defaultView; if (win) win.location.hash = MODELS_HREF; });
+    // Write it out, Stop and Undo: built once per mount, at the line's right end after a flexible spacer.
+    const spacer = doc.createElement('span');
+    spacer.className = 'ask-guide-sp';
+    const doButton = (label, onClick) => {
+      const b = doc.createElement('button');
+      b.type = 'button';
+      b.className = 'btn btn-sm btn-quiet ask-guide-do';
+      b.textContent = label;
+      b.addEventListener('click', onClick);
+      return b;
+    };
+    const writeBtn = doButton(WRITE_TEXT, () => startWrite());
+    const stopBtn = doButton(STOP_TEXT, () => stopWrite());
+    const undoBtn = doButton(UNDO_TEXT, () => undoWrite());
+    const filledHead = doc.createElement('b');
+    filledHead.className = 'ask-guide-head';
+    const filledMid = doc.createElement('span');
+    filledMid.className = 'ask-guide-mid';
+    const filledRest = doc.createElement('span');
+    filledRest.className = 'ask-guide-rest';
+    const filledSum = doc.createElement('span');
+    filledSum.className = 'ask-guide-sum';
+    filledSum.append(filledHead, filledMid, filledRest);
 
     const queue = (patch) => {
       const p = chain.then(() => save(patch));
@@ -365,7 +444,9 @@ export function createGuideLine({
     function paintLineNow() {
       // A shown result for text the field no longer holds (a recall, a code write: no input event) is checked again.
       // Not for text whose answer was just superseded or aborted: only a real input asks for that again.
-      if (result && field && pending === null && inflight === null) {
+      // A written text changed with no input event ends Undo for good.
+      if (written && (!field || field.value !== written.text)) written = null;
+      if (result && field && pending === null && inflight === null && writeFlight === null) {
         const now = field.value.trim();
         if (now !== result.text && now !== dropped) onInput();
       }
@@ -373,6 +454,7 @@ export function createGuideLine({
       const shownCheck = result ? withAnswered(result.check, answered) : null;
       const state = lineState({
         on: prefs.on, offerSeen: prefs.offerSeen, offerGone, prompt, result: shownCheck, checking: inflight !== null, failure,
+        writing: writeFlight !== null, written,
       });
       const bar = box ? box.querySelector(':scope > .ask-composer-row') : null;
       if (state.kind === 'off' || !bar) {
@@ -394,8 +476,20 @@ export function createGuideLine({
         (folds ? head : sumHead).textContent = h;
         (folds ? rest : sumRest).textContent = r;
         const want = state.recheck ? [shownEl, quiet] : [shownEl];
+        if (state.write && prompt.length <= GUIDE_PROMPT_MAX) want.push(spacer, writeBtn);   // the route takes the exact text
         if (line.children.length !== want.length || want.some((el, i) => line.children[i] !== el)) line.replaceChildren(...want);
         words.removeAttribute('title');
+      } else if (state.kind === 'writing') {
+        const want = [words, spacer, stopBtn];
+        if (line.children.length !== want.length || want.some((el, i) => line.children[i] !== el)) line.replaceChildren(...want);
+        words.textContent = WRITING_TEXT;
+        words.removeAttribute('title');
+      } else if (state.kind === 'written') {
+        filledHead.textContent = state.words.head;
+        filledMid.textContent = state.words.mid;
+        filledRest.textContent = state.words.rest;
+        const want = [filledSum, spacer, undoBtn];
+        if (line.children.length !== want.length || want.some((el, i) => line.children[i] !== el)) line.replaceChildren(...want);
       } else if (state.kind === 'failure') {
         const noModel = state.failure === 'no-model';
         const want = [words, noModel ? modelsBtn : retryBtn];
@@ -434,10 +528,15 @@ export function createGuideLine({
     function abortFlight() {
       if (inflight) { inflight.ctl.abort(); inflight = null; }
     }
-    /** Nothing of a check is left: no pause, no request, no result, and the next input checks. */
+    function abortWrite() {
+      if (writeFlight) { writeFlight.ctl.abort(); writeFlight = null; }
+    }
+    /** Nothing of a check or a write is left: no pause, no request, no result, no Undo, and the next input checks. */
     function reset() {
       clearPending();
       abortFlight();
+      abortWrite();
+      written = null;
       addOpen = null;
       held = null;
       answered.clear();
@@ -555,6 +654,96 @@ export function createGuideLine({
       const input = rows.querySelector('.ask-guide-ans input');
       if (input) input.focus();
     }
+    /** Guide sets the field (a landed write, Undo): a bubbling input event so the panel resizes it and keeps Send on;
+     *  Guide's own handler ignores it. */
+    function setField(value) {
+      guideSets = true;
+      try {
+        field.value = value;
+        field.dispatchEvent(new (doc.defaultView || globalThis).Event('input', { bubbles: true }));
+      } finally {
+        guideSets = false;
+      }
+    }
+    /** The focus may move to the prompt only from the prompt, the page body or the line itself. */
+    function focusMayMove() {
+      const a = doc.activeElement;
+      return !a || a === doc.body || a === field || line.contains(a);
+    }
+    /** Write it out: one write of the field's exact text for the shown result's open gaps. The pause is cleared, a check
+     *  in flight aborted and an open Add field closed (its draft and any held landing dropped). */
+    function startWrite() {
+      if (destroyed || !shown || !prefs.on || !field || !result || writeFlight || written || writeBtn.parentNode !== line) return;
+      if (field.value.length > GUIDE_PROMPT_MAX) return;
+      const gaps = withAnswered(result.check, answered).checks.filter((c) => c && c.covered !== true).map((c) => c.id);
+      if (gaps.length === 0) return;
+      clearPending();
+      if (inflight) { abortFlight(); asked = null; }
+      if (held) { held = null; asked = null; }
+      addOpen = null;
+      const prior = { result, answered: new Set(answered), asked };
+      const req = { ctl: new AbortController(), before: field.value, gaps, size: result.check.size, prior };
+      writeFlight = req;
+      let out;
+      try { out = Promise.resolve(write({ prompt: req.before, role: role() ?? null, gaps }, { signal: req.ctl.signal })); } catch { out = Promise.resolve({ ok: false, code: 'NETWORK' }); }
+      out.then((o) => landWrite(req, o), () => landWrite(req, { ok: false, code: 'NETWORK' }));
+      paintLine();
+      focusPrompt();
+    }
+    /** Stop: the write is aborted and the result from before it is back; the field is untouched. */
+    function stopWrite() {
+      if (!writeFlight) return;
+      abortWrite();
+      paintLine();
+      focusPrompt();
+    }
+    /** A write's answer: applied only while it is the write out and the field still holds the exact text it sent. */
+    function landWrite(req, out) {
+      if (writeFlight !== req) return;
+      writeFlight = null;
+      const mayFocus = focusMayMove();
+      if (!field || field.value !== req.before) { paintLine(); return; }
+      if (!out || out.ok !== true) {
+        const kind = failureKind(out ? out.code : 'BAD_REPLY');
+        paintLine();
+        if (mayFocus && !line.contains(doc.activeElement)) focusPrompt();
+        if (kind && typeof ctx.announce === 'function') ctx.announce(kind === 'no-model' ? NO_MODEL_TEXT : FAIL_TEXT);
+        return;
+      }
+      const { text, filled } = out.written;
+      const covered = new Set([...req.prior.answered, ...filled]);
+      result = { text: text.trim(), check: withAnswered(req.prior.result.check, covered) };
+      answered.clear();
+      // A result older than the text that was written (a re-check was out) leaves the written text to be checked once.
+      asked = req.prior.asked === req.before.trim() ? result.text : null;
+      dropped = null;
+      failure = null;
+      written = { text, before: req.before, n: filled.length, size: req.size, prior: req.prior };
+      setField(text);
+      paintLine();
+      const at = text.indexOf(SUGGESTED, req.before.length);
+      if (mayFocus) {
+        focusPrompt();
+        if (at >= 0 && typeof field.setSelectionRange === 'function') field.setSelectionRange(at + SUGGESTED.length, at + SUGGESTED.length);
+      }
+      const win = doc.defaultView;
+      const lh = win && typeof win.getComputedStyle === 'function' ? parseFloat(win.getComputedStyle(field).lineHeight) : NaN;
+      field.scrollTop = suggestedScrollTop(text, req.before.length, lh);
+      if (typeof ctx.announce === 'function') ctx.announce(filledSpeech(filled.length));
+    }
+    /** Undo: only while the field holds the written text; the pre-write text and result come back exactly. */
+    function undoWrite() {
+      if (!written || !field || field.value !== written.text) { if (written) paintLine(); return; }
+      const w = written;
+      written = null;
+      result = w.prior.result;
+      answered.clear();
+      for (const id of w.prior.answered) answered.add(id);
+      asked = w.prior.asked;
+      setField(w.before);
+      paintLine();
+      focusPrompt();
+    }
     function detach() {
       reset();
       shown = false;
@@ -614,7 +803,13 @@ export function createGuideLine({
     const onField = () => paintLine();
     const FIELD_EVENTS = ['input', 'keyup', 'focus'];
     // The person's own typing in the prompt closes an open Add field; Add's own write does not.
-    const onFieldInput = () => { if (addOpen !== null && !selfWrite) closeField(); onInput(); };
+    // During a write it is aborted (the field keeps everything typed); a written text's first edit ends Undo.
+    const onFieldInput = () => {
+      if (guideSets) return;
+      if (!selfWrite) { abortWrite(); written = null; }
+      if (addOpen !== null && !selfWrite) closeField();
+      onInput();
+    };
     if (field) field.addEventListener('input', onFieldInput);   // before the repaint, so it paints what onInput decided
     if (field) for (const type of FIELD_EVENTS) field.addEventListener(type, onField);
     // Never on send: Enter and a click on Send clear the pause before the send runs; the intent's send signal for this

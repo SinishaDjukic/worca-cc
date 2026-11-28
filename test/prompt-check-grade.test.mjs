@@ -211,6 +211,44 @@ test('guideRunner: runClaude by default, a mock that spawns nothing under WORCA_
   });
 });
 
+test('guideRunner(mock) takes the given mock under WORCA_MOCK only, and the test override over both', async (t) => {
+  _setGuideCheckForTest(null);
+  t.after(() => _setGuideCheckForTest(null));
+  const mine = async () => ({ text: '{}' });
+  await withMockEnv(undefined, () => assert.equal(guideRunner(mine), runClaude));
+  await withMockEnv('1', () => {
+    assert.equal(guideRunner(mine), mine);
+    const run = replying([]);
+    _setGuideCheckForTest({ run });
+    assert.equal(guideRunner(mine), run);
+  });
+});
+
+test('R-arch-10: runGuideCall resolves the raw reply of the locked-down call, or a reason, and never throws', async (t) => {
+  const { runGuideCall } = await import('../src/core/prompt-check/grade.mjs');
+  const parts = { systemPrompt: 'system', prompt: 'ask' };
+  const seen = [];
+  withRunner(t, async (o) => { seen.push({ ...o, cwdExists: existsSync(o.cwd) }); return { text: 'raw words' }; });
+  assert.deepEqual(await runGuideCall(parts, { model: MODEL }), { ok: true, reply: 'raw words' });
+  assert.equal(seen[0].prompt, 'ask');
+  assert.equal(seen[0].systemPrompt, 'system');
+  for (const [k, v] of Object.entries(GUIDE_CALL_OPTS)) assert.deepEqual(seen[0][k], v, k);
+  assert.equal(seen[0].cwdExists, true);
+  assert.equal(existsSync(seen[0].cwd), false, 'the folder is removed after the call');
+
+  withRunner(t, async () => { throw new Error('boom'); });
+  assert.deepEqual(await runGuideCall(parts, { model: MODEL }), { ok: false, reason: 'model call failed' });
+  withRunner(t, hanging);
+  const early = new AbortController();
+  early.abort();
+  assert.deepEqual(await runGuideCall(parts, { model: MODEL, signal: early.signal }), { ok: false, reason: 'aborted' });
+  // One ref'd timer while the runner hangs: AbortSignal.timeout's own does not hold the event loop open.
+  const hold = setTimeout(() => {}, 5000);
+  t.after(() => clearTimeout(hold));
+  withRunner(t, () => new Promise(() => {}));
+  assert.deepEqual(await runGuideCall(parts, { model: MODEL, timeoutMs: 50 }), { ok: false, reason: 'timeout' });
+});
+
 test('slots: one per person, a cap overall', (t) => {
   _setGuideCheckForTest(null);
   t.after(() => _setGuideCheckForTest(null));

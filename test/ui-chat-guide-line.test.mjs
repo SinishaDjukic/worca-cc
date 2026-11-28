@@ -8,7 +8,9 @@
 // /api/shape/guide/check (never on send, one in flight, a stale answer dropped). The line reads "Checking your prompt…",
 // then the result: a fold button "Prompt 2/5 · 3 gaps", or with no gap the size in words. A failed check says so with one
 // action: "Try again", or "Open Models" when Guide has no model. Each new result is spoken once through ctx.announce.
-// Every test injects the timer and the check, so nothing waits and no route is called.
+// Write it out: with a gap open the line has one quiet "Write it out"; it reads "Writing it out…" with "Stop", then
+// "Guide filled 4 gaps · check them" with the size words and "Undo", which exists until the first edit.
+// Every test injects the timer, the check and the write, so nothing waits and no route is called.
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -92,6 +94,17 @@ function checker() {
   return { calls, check };
 }
 
+/** The write as a spy, like checker(): it answers only when the test says so and ignores the signal on purpose. */
+function writer() {
+  const calls = [];
+  const write = (body, opts = {}) => {
+    const d = deferred();
+    calls.push({ body, signal: opts.signal, resolve: d.resolve });
+    return d.promise;
+  };
+  return { calls, write };
+}
+
 /** The check route's body with the first `covered` of the five checks covered. */
 function answer(covered = 2, size = 'large', register = 'technical') {
   const checks = GUIDE_CHECK_IDS.map((id, i) => ({
@@ -150,11 +163,12 @@ function page({ bar = true } = {}) {
 
 /** `page()` plus the real intent add-on, the real role picker and the Guide add-on with every dependency injected. */
 function setup({ flag = true, prefs = {}, load = null, save = null, pin = null, picker = true, measureWraps = () => false, value = '', bar = true,
-  timers = manualTimers(), check = null, role = null, before = null } = {}) {
+  timers = manualTimers(), check = null, role = null, before = null, write = null } = {}) {
   const p = page({ bar });
   p.input.value = value;
   if (before) before(p, timers);   // listeners that must be in place before the add-ons mount
   const checks = checker();
+  const writes = writer();
   const state = { picker: flag, guide: flag, pickerSubs: new Set(), subs: new Set(), flagOffs: 0, intentOffs: 0, sendSubs: new Set(), role };
   const calls = { load: 0, save: [] };
   const stored = { ...PREFS, ...prefs };
@@ -184,6 +198,7 @@ function setup({ flag = true, prefs = {}, load = null, save = null, pin = null, 
     },
     timers,
     check: check || checks.check,
+    write: write || writes.write,
     role: () => state.role,
     flagOn: (k) => k === 'shaperSmallRuns' && state.guide,
     onFlagChange: (k, fn) => {
@@ -208,7 +223,9 @@ function setup({ flag = true, prefs = {}, load = null, save = null, pin = null, 
   const act = () => p.doc.querySelector('.ask-guide .ask-guide-act');
   /** What Guide announced: the shared spy also hears the intent chip say "Shaper" when the pin is set. */
   const spoken = () => p.said.filter((t) => t !== 'Shaper');
-  return { ...p, state, calls, stored, intent, intentHandle, ctl, handle, setFlag, shaper, timers, checks: checks.calls, wait, reply, refuse, fold, quiet, act, spoken };
+  /** The line's Write it out, Stop or Undo button. */
+  const doBtn = () => p.doc.querySelector('.ask-guide .ask-guide-do');
+  return { ...p, state, calls, stored, intent, intentHandle, ctl, handle, setFlag, shaper, timers, checks: checks.calls, wait, reply, refuse, fold, quiet, act, spoken, writes: writes.calls, doBtn };
 }
 
 const PROMPT = 'Export runs as CSV';
@@ -505,6 +522,15 @@ test('R-ux-2: the line\'s height is the same with the offer shown and with nothi
   assert.equal(s.fold()?.textContent, GAPS);
   assert.equal(height(), '33px', 'a result');
   assert.equal(s.line(), line, 'the same element');
+  // Writing it out, and written out: still the same element at the same height.
+  await press(s, WRITE);
+  assert.equal(s.text(), WRITING);
+  assert.equal(height(), '33px', 'writing it out');
+  assert.equal(s.line(), line, 'writing: the same element');
+  await land(s, 0, written(s.input.value));
+  assert.equal(s.doBtn()?.textContent, 'Undo');
+  assert.equal(height(), '33px', 'written out');
+  assert.equal(s.line(), line, 'written: the same element');
   // Both failures: still the same element at the same height.
   for (const [n, code, words, state] of [[1, 'GUIDE_MODEL_FAILED', FAIL, 'failed'], [2, 'GUIDE_NO_MODEL', NO_MODEL, 'no-model']]) {
     s.type(`${PROMPT} ${n}`);
@@ -783,13 +809,18 @@ test('resultWords: null for a body that is not five checks and a known size', ()
   ]) assert.equal(guide.resultWords(body), null, name);
 });
 
-test('lineState, first match over result, checking, failure, offer and empty (off is off)', () => {
+test('lineState, first match over writing, written, result, checking, failure, offer and empty (off is off)', () => {
   // `base` is offer-eligible: Guide on, the offer unseen, the prompt empty.
-  const base = { on: true, offerSeen: false, offerGone: false, prompt: '', result: null, checking: false, failure: null };
+  const base = { on: true, offerSeen: false, offerGone: false, prompt: '', result: null, checking: false, failure: null, writing: false, written: null };
   const result = answer();
   const typed = { prompt: PROMPT };
+  const done = { n: 4, size: 'large' };
   for (const [row, over, kind, more = {}] of [
-    ['off outranks everything', { on: false, result, checking: true, failure: 'failed' }, 'off'],
+    ['writing it out', { writing: true, written: done, result, checking: true, failure: 'failed' }, 'writing'],
+    ['off outranks everything', { on: false, writing: true, written: done, result, checking: true, failure: 'failed' }, 'off'],
+    ['writing it out over the offer', { writing: true }, 'writing'],
+    ['written over result, checking and failure', { ...typed, written: done, result, checking: true, failure: 'failed' }, 'written'],
+    ['written over the offer', { written: done }, 'written'],
     ['result over checking and failure', { ...typed, result, checking: true, failure: 'failed' }, 'result', { recheck: true }],
     ['result over failure', { ...typed, result, failure: 'failed' }, 'result', { recheck: false }],
     ['a result alone', { ...typed, result }, 'result', { recheck: false }],
@@ -810,6 +841,18 @@ test('lineState, first match over result, checking, failure, offer and empty (of
     for (const [key, value] of Object.entries(more)) assert.equal(got[key], value, `${row}: ${key}`);
   }
   assert.deepEqual(guide.lineState({ ...base, ...typed, result }).words, guide.resultWords(result));
+  assert.deepEqual(guide.lineState({ ...base, ...typed, result, written: done }).words, guide.filledWords(4, 'large'));
+});
+
+test('lineState: a result offers the write only while a gap is open', () => {
+  const base = { on: true, offerSeen: true, offerGone: false, prompt: PROMPT, checking: false };
+  for (const [body, write] of [
+    [answer(0), true], [answer(2), true], [answer(4, 'small'), true],
+    [answer(5, 'large'), false], [answer(5, 'medium'), false], [answer(5, 'small'), false],
+  ]) {
+    assert.equal(guide.lineState({ ...base, result: body }).write, write, JSON.stringify(guide.resultWords(body)));
+    assert.equal(guide.lineState({ ...base, result: body, checking: true }).write, write, 'the same while it is checked again');
+  }
 });
 
 test('checkGuide: one POST /api/shape/guide/check with the prompt, the role (null for none) and the signal', async () => {
@@ -1292,7 +1335,7 @@ test('R-po-2 example: "Export runs as CSV" reads "Prompt 2/5 · 3 gaps" on a rea
   assert.ok(b, 'the fold button');
   assert.ok(b.matches('button.btn.plan-fold.ask-guide-fold[type="button"]'));
   assert.equal(b.textContent, GAPS);
-  assert.equal(s.line().textContent, GAPS, 'nothing else on the line');
+  assert.equal(s.line().textContent, `${GAPS}Write it out`, 'the fold and Write it out, nothing else on the line');
   assert.equal(b.querySelector(':scope > span.plan-fold-text > b.ask-guide-head')?.textContent, 'Prompt 2/5');
   assert.equal(b.querySelector(':scope > span.plan-fold-text > span.ask-guide-rest')?.textContent, ' · 3 gaps');
   const chev = b.querySelector(':scope > .ask-guide-chev');
@@ -1366,7 +1409,7 @@ test('the line moves between the fold and the plain words as results change', as
   s.type(LONGER);
   await s.wait();
   await s.reply(1);
-  assert.equal(s.line().textContent, GAPS);
+  assert.equal(s.line().textContent, `${GAPS}Write it out`);
   assert.equal(s.doc.querySelector('.ask-guide-sum'), null);
   s.type(PROMPT);
   await s.wait();
@@ -1449,7 +1492,7 @@ test('the next check after a failure reads "Checking your prompt…" with no act
   await s.reply(1);
   assert.equal(s.fold()?.textContent, GAPS);
   assert.equal(s.act(), null);
-  assert.equal(s.line().textContent, GAPS, 'nothing of the failure stays');
+  assert.equal(s.line().textContent, `${GAPS}Write it out`, 'nothing of the failure stays');
 });
 
 test('model text is set as text: markup in a reply creates no element', async () => {
@@ -1761,13 +1804,22 @@ test('announce: an answer for text the field no longer holds is not spoken', asy
   assert.deepEqual(s.spoken(), [SPOKEN], 'the control: the answer that is shown is spoken');
 });
 
-test('a result, checking and re-checking leave Send on and give the add-on no say in a send', async () => {
+test('a result, checking, re-checking, writing it out and written out leave Send on and give the add-on no say in a send', async () => {
   const s = await withResult();
   s.type(LONGER);
   await s.wait();
-  assert.equal(s.doc.querySelector('.ask-send').disabled, false);
-  assert.equal(s.handle.beforeSend, undefined);
-  assert.equal(s.handle.transformSend, undefined);
+  const free = (why) => {
+    assert.equal(s.doc.querySelector('.ask-send').disabled, false, why);
+    assert.equal(s.handle.beforeSend, undefined, why);
+    assert.equal(s.handle.transformSend, undefined, why);
+  };
+  free('re-checking');
+  await press(s, WRITE);
+  assert.equal(s.text(), WRITING);
+  free('writing it out');
+  await land(s, 0, written(LONGER));
+  assert.equal(s.doBtn()?.textContent, 'Undo');
+  free('written out');
 });
 
 // ── the stylesheet (chat-shell.css, the mock's classes) ──
@@ -2700,4 +2752,603 @@ test('a row with an open Add field wraps, so the field sits under its label', as
     .flatMap((r) => r.body.split(';'));
   assert.ok(matching(rowOf(s, 'who')).includes('flex-wrap:wrap'), 'the row wraps');
   assert.ok(matching(rowOf(s, 'who').querySelector('.plan-check-text')).includes('flex-basis:12em'), 'its text keeps 12em');
+});
+
+// ── Write it out, Stop and Undo ──
+const WRITE = 'Write it out';
+const WRITING = 'Writing it out…';
+/** The person's two lines, with trailing spaces and a last line of spaces: Undo gives these exact bytes back. */
+const TWO_LINES = 'Line one  \nLine two \n  ';
+const WRITE_ROUTE_CODES = [
+  ...ROUTE_CODES.filter(([code]) => code !== 'GUIDE_CHECK_FAILED'), ['GUIDE_BAD_GAPS', 400], ['GUIDE_WRITE_FAILED', 500],
+];
+
+/** What the write route answers for `prompt` and the gaps `ids`: the prompt, then one "(suggested)" line per gap. */
+function written(prompt, ids = GUIDE_CHECK_IDS.slice(2), { register = 'technical', fill = (id) => `fill for ${id}` } = {}) {
+  const lines = ids.map((id) => `${GUIDE_CHECK_LABELS[register][id]}: ${fill(id)} (suggested)`);
+  return { text: `${prompt}${prompt.endsWith('\n') ? '' : '\n'}${lines.join('\n')}`, filled: [...ids] };
+}
+/** The person activates the line's button named `label`. */
+async function press(s, label) {
+  const b = s.doBtn();
+  assert.equal(b?.textContent, label, `a "${label}" button on the line`);
+  b.focus();
+  b.click();
+  await settle();
+  return b;
+}
+/** Answer write call `n` with a written text. */
+async function land(s, n, body) {
+  assert.ok(s.writes[n], `write call ${n}`);
+  s.writes[n].resolve({ ok: true, written: body });
+  await settle();
+}
+const failWrite = async (s, n, code) => { s.writes[n].resolve({ ok: false, code }); await settle(); };
+/** A Shaper composer showing the result of one check of `prompt`. */
+async function resultFor(prompt, body = answer(), opts = {}) {
+  const s = setup(opts);
+  await s.shaper();
+  s.type(prompt);
+  await s.wait();
+  await s.reply(0, body);
+  return s;
+}
+/** A write of `prompt` that is out. */
+async function midWrite(prompt = PROMPT, body = answer(), opts = {}) {
+  const s = await resultFor(prompt, body, opts);
+  await press(s, WRITE);
+  assert.equal(s.writes.length, 1, 'one write is out');
+  return s;
+}
+/** A landed write of `prompt`; `s.landed` is what the route answered. */
+async function writtenOut(prompt = PROMPT, body = answer(), opts = {}) {
+  const s = await midWrite(prompt, body, opts);
+  const out = written(prompt, s.writes[0].body.gaps);
+  await land(s, 0, out);
+  assert.equal(s.input.value, out.text, 'the written text is in the field');
+  return Object.assign(s, { landed: out });
+}
+/** The line is a result again, with its one "Write it out". */
+function resultBack(s, words = GAPS, why = '') {
+  assert.equal(s.fold()?.textContent, words, why);
+  assert.equal(s.line().textContent, `${words}${WRITE}`, why);
+  assert.equal(s.doc.querySelectorAll('.ask-guide-do').length, 1, why);
+}
+/** No Undo and nothing of a written text on the line. */
+function noUndo(s, why = '') {
+  assert.doesNotMatch(s.line()?.textContent ?? '', /Undo|Guide filled/, why);
+  assert.equal([...s.doc.querySelectorAll('.ask-guide-do')].filter((b) => b.textContent === 'Undo').length, 0, why);
+}
+const isQuietDo = (b) => b.matches('button.btn.btn-sm.btn-quiet.ask-guide-do[type="button"]') && !b.classList.contains('ask-guide-act') && !b.disabled;
+
+test('Write it out: the words of the three buttons and of the writing line', () => {
+  assert.equal(guide.WRITE_TEXT, WRITE);
+  assert.equal(guide.WRITING_TEXT, WRITING);
+  assert.equal(guide.STOP_TEXT, 'Stop');
+  assert.equal(guide.UNDO_TEXT, 'Undo');
+});
+
+test('filledWords and filledSpeech: the gaps filled, "check it" for one, and the size in words, never a number of runs', () => {
+  assert.deepEqual(guide.filledWords(4, 'large'), { head: 'Guide filled 4 gaps', mid: ' · check them', rest: ' · Large: several runs' });
+  assert.deepEqual(guide.filledWords(1, 'small'), { head: 'Guide filled 1 gap', mid: ' · check it', rest: ' · Small: one run' });
+  assert.deepEqual(guide.filledWords(2, 'medium'), { head: 'Guide filled 2 gaps', mid: ' · check them', rest: ' · Medium: a few runs' });
+  assert.equal(guide.filledWords(3, 'huge').rest, '');
+  assert.equal(guide.filledWords(3, undefined).rest, '');
+  assert.equal(guide.filledSpeech(4), 'Guide filled 4 gaps, check them');
+  assert.equal(guide.filledSpeech(1), 'Guide filled 1 gap, check it');
+});
+
+test('suggestedScrollTop: the line of the first "(suggested)" at or after `from`, one line above it, never below 0', () => {
+  const own = 'mine (suggested)\ntwo\nthree';
+  const value = `${own}\nWho calls it: a (suggested)\nConstraints: b (suggested)`;
+  assert.equal(guide.suggestedScrollTop(value, own.length, 20), 40, 'line 3, minus one line; the person\'s own one is skipped');
+  assert.equal(guide.suggestedScrollTop('Who calls it: a (suggested)', 0, 20), 0, 'the first line');
+  assert.equal(guide.suggestedScrollTop('x\nWho calls it: a (suggested)', 1, 18), 0, 'the second line');
+  for (const lineHeight of [NaN, 0, -20]) assert.equal(guide.suggestedScrollTop(value, own.length, lineHeight), 0, String(lineHeight));
+});
+
+test('writeGuide: one POST /api/shape/guide/write with the prompt, the role (null for none), the gaps and the signal', async () => {
+  const asked = [];
+  const out = written(TWO_LINES, ['who', 'done']);
+  const fetchFn = async (url, init) => {
+    asked.push({ url, init });
+    return { ok: true, status: 200, json: async () => ({ ...out, model: { id: 'm', label: 'M' } }) };
+  };
+  const ctl = new AbortController();
+  assert.deepEqual(await guide.writeGuide({ prompt: TWO_LINES, role: 'product', gaps: ['who', 'done'] }, { signal: ctl.signal, fetchFn }),
+    { ok: true, written: out });
+  await guide.writeGuide({ prompt: TWO_LINES, gaps: ['who', 'done'] }, { fetchFn });
+  assert.equal(asked[0].url, '/api/shape/guide/write');
+  assert.equal(asked[0].init.method, 'POST');
+  assert.equal(asked[0].init.headers['Content-Type'], 'application/json');
+  assert.equal(asked[0].init.signal, ctl.signal);
+  assert.deepEqual(asked.map((a) => JSON.parse(a.init.body)), [
+    { prompt: TWO_LINES, role: 'product', gaps: ['who', 'done'] }, { prompt: TWO_LINES, role: null, gaps: ['who', 'done'] },
+  ]);
+});
+
+test('writeGuide never rejects: every route code, an abort, a network error and a reply that does not parse resolve with a code', async () => {
+  const run = (fetchFn) => guide.writeGuide({ prompt: PROMPT, role: null, gaps: ['who'] }, { fetchFn });
+  for (const [code, status] of WRITE_ROUTE_CODES) {
+    const refused = async () => ({ ok: false, status, json: async () => ({ error: { code, message: 'x' } }) });
+    assert.deepEqual(await run(refused), { ok: false, code }, code);
+  }
+  assert.deepEqual(await run(async () => { throw new DOMException('This operation was aborted', 'AbortError'); }), { ok: false, code: 'ABORTED' });
+  assert.deepEqual(await run(async () => { throw new TypeError('Failed to fetch'); }), { ok: false, code: 'NETWORK' });
+  const unparsable = async () => { throw new SyntaxError('Unexpected token <'); };
+  assert.deepEqual(await run(async () => ({ ok: true, status: 200, json: unparsable })), { ok: false, code: 'BAD_REPLY' });
+  assert.deepEqual(await run(async () => ({ ok: false, status: 502, json: unparsable })), { ok: false, code: 'BAD_REPLY' });
+});
+
+test('writeGuide: a 200 whose text does not start with the sent prompt, or that filled no known gap, is BAD_REPLY', async () => {
+  const good = written(TWO_LINES, ['who']);
+  for (const [name, body] of [
+    ['nothing', null], ['an empty body', {}], ['no text', { filled: ['who'] }], ['a text that is not a string', { ...good, text: 7 }],
+    ['a rewritten text', { ...good, text: 'REWRITTEN' }], ['the prompt trimmed', { ...good, text: `${TWO_LINES.trim()}\nx (suggested)` }],
+    ['no filled', { text: good.text }], ['an empty filled', { ...good, filled: [] }], ['an unknown id', { ...good, filled: ['admin'] }],
+    ['filled that is not a list', { ...good, filled: 'who' }],
+  ]) {
+    const got = await guide.writeGuide({ prompt: TWO_LINES, gaps: ['who'] }, { fetchFn: async () => ({ ok: true, status: 200, json: async () => body }) });
+    assert.deepEqual(got, { ok: false, code: 'BAD_REPLY' }, name);
+  }
+});
+
+test('with no write injected the composer asks the real write route through the page\'s fetch', async () => {
+  const asked = [];
+  globalThis.fetch = async (url, init) => {
+    asked.push([init?.method, url, init?.body]);
+    return { ok: true, status: 200, json: async () => (url.endsWith('/write') ? written(PROMPT) : answer()) };
+  };
+  const p = page();
+  const intent = createIntentAddon();
+  intent.addon.mount(p.lead, p.ctx);
+  const timers = manualTimers();
+  const ctl = createGuideLine({
+    intent, timers, flagOn: () => true, onFlagChange: () => () => {}, load: async () => ({ ...PREFS }), save: async () => ({}),
+  });
+  const handle = ctl.addon.mount(p.lead, p.ctx);
+  try {
+    intent.set('shape', { focus: false });
+    await settle();
+    p.type(PROMPT);
+    timers.advance(2000);
+    await settle();
+    const b = p.doc.querySelector('.ask-guide .ask-guide-do');
+    assert.equal(b?.textContent, WRITE);
+    b.click();
+    await settle();
+    assert.deepEqual(asked.at(-1).slice(0, 2), ['POST', '/api/shape/guide/write']);
+    assert.deepEqual(JSON.parse(asked.at(-1)[2]), { prompt: PROMPT, role: null, gaps: ['trigger', 'limits', 'done'] });
+    assert.equal(p.input.value, written(PROMPT).text);
+  } finally { handle.destroy(); }
+});
+
+test('"Write it out" shows once, a quiet button at the right end after the spacer, while a gap is open', async () => {
+  const s = await withResult();
+  const all = s.doc.querySelectorAll('.ask-guide-do');
+  assert.equal(all.length, 1);
+  const b = all[0];
+  assert.ok(isQuietDo(b), `the app's quiet small button: ${b.outerHTML}`);
+  assert.equal(b.textContent, WRITE);
+  assert.equal(b.querySelector('svg'), null, 'a labelled button, no icon');
+  assert.ok(b.previousElementSibling?.matches('.ask-guide-sp'), 'after the spacer');
+  assert.deepEqual([...s.line().children], [s.fold(), b.previousElementSibling, b], 'fold, spacer, button');
+  s.handle.update(null);
+  await settle();
+  assert.equal(s.doBtn(), b, 'built once per mount');
+  s.type(LONGER);
+  await s.wait();
+  assert.equal(s.quiet()?.textContent, 'checking…');
+  assert.deepEqual([...s.line().children], [s.fold(), s.quiet(), b.previousElementSibling, b], 'after "checking…" on a re-check');
+  assert.equal(s.doc.querySelectorAll('.ask-guide-do').length, 1);
+});
+
+test('"Write it out" is absent with no gap open, on the failure lines, while first checking, and on an empty line', async () => {
+  for (const size of GUIDE_SIZES) {
+    const s = await withResult(answer(5, size));
+    assert.equal(s.doBtn(), null, `no gap, ${size}`);
+    s.handle.destroy();
+  }
+  for (const code of ['GUIDE_MODEL_FAILED', 'GUIDE_NO_MODEL']) {
+    const s = await withFailure(code);
+    assert.equal(s.doBtn(), null, code);
+    s.handle.destroy();
+  }
+  const s = setup();
+  await s.shaper();
+  assert.equal(s.doBtn(), null, 'the offer');
+  s.type(PROMPT);
+  assert.equal(s.doBtn(), null, 'empty');
+  await s.wait();
+  assert.equal(s.doBtn(), null, 'checking');
+  await s.reply(0);
+  assert.equal(s.doBtn()?.textContent, WRITE, 'the control: a result with a gap');
+});
+
+test('"Write it out" goes once Add has answered the last open gap', async () => {
+  const s = await withRows(product({ covered: ['what', 'trigger', 'limits', 'done'] }));
+  assert.equal(s.doBtn()?.textContent, WRITE);
+  await openAdd(s, 'who');
+  await answerWith(s, TEAM);
+  assert.equal(s.doBtn(), null);
+});
+
+test('R-po-4: one click makes exactly one write with the field\'s exact text, the role and the open gaps', async () => {
+  const s = await resultFor(TWO_LINES, answer(1), { role: 'product' });
+  const b = await press(s, WRITE);
+  b.click();                           // the button is not on the line any more: a second click does nothing
+  await settle();
+  assert.equal(s.writes.length, 1);
+  assert.deepEqual(s.writes[0].body, { prompt: TWO_LINES, role: 'product', gaps: ['what', 'trigger', 'limits', 'done'] });
+  assert.equal(s.writes[0].signal.aborted, false);
+  assert.equal(s.input.value, TWO_LINES, 'nothing changes before the answer');
+  await s.wait(5000);
+  assert.equal(s.writes.length, 1);
+  assert.equal(s.checks.length, 1);
+});
+
+test('"Writing it out…" with Stop: the result and its rows leave the line, and the focus is in the prompt', async () => {
+  const s = await withRows(answer());
+  await press(s, WRITE);
+  assert.equal(s.text(), WRITING);
+  assert.equal(s.line().textContent, `${WRITING}Stop`);
+  const stop = s.doBtn();
+  assert.ok(isQuietDo(stop), stop.outerHTML);
+  assert.ok(stop.previousElementSibling?.matches('.ask-guide-sp'));
+  assert.equal(s.fold(), null);
+  assert.equal(s.quiet(), null);
+  assert.equal(rowsEl(s), null, 'the rows are gone while writing');
+  assert.equal(s.doc.activeElement, s.input);
+  assert.equal(s.doc.querySelector('.ask-send').disabled, false);
+  await press(s, 'Stop');
+  assertRows(s, true, 'the rows come back as the person left them');
+});
+
+test('a write clears a pending pause: no check goes out while writing', async () => {
+  const s = await withResult();
+  s.type(LONGER);
+  await s.wait(1000);
+  await press(s, WRITE);
+  await s.wait(5000);
+  assert.equal(s.checks.length, 1);
+  assert.equal(s.writes[0].body.prompt, LONGER, 'the field\'s current text');
+});
+
+test('a write during a re-check aborts that check, whose late answer changes nothing', async () => {
+  const s = await withResult();
+  s.type(LONGER);
+  await s.wait();
+  await press(s, WRITE);
+  assert.equal(s.checks[1].signal.aborted, true);
+  assert.deepEqual(s.writes[0].body, { prompt: LONGER, role: null, gaps: ['trigger', 'limits', 'done'] });
+  await s.reply(1, answer(4));
+  assert.equal(s.text(), WRITING);
+  assert.equal(s.fold(), null);
+  assert.deepEqual(s.spoken(), [SPOKEN]);
+});
+
+test('a write asks only for the gaps Add left open, closes an open Add field and drops its draft', async () => {
+  const s = await withRows(product());
+  await openAdd(s, 'who');
+  await answerWith(s, TEAM);           // the field moves on to "What they get"
+  typeAnswer(s, 'half a thought');
+  const before = s.input.value;
+  await press(s, WRITE);
+  assert.deepEqual(s.writes[0].body, { prompt: before, role: null, gaps: ['what', 'done'] });
+  assert.equal(fields(s), 0);
+  assert.equal(s.input.value, before, 'the draft never reaches the prompt');
+  await s.wait(5000);
+  assert.equal(s.checks.length, 1, 'the pause Add armed is cleared');
+  await land(s, 0, written(before, ['what', 'done'], { register: 'plain' }));
+  assert.equal(s.doc.querySelector('.ask-guide-head')?.textContent, 'Guide filled 2 gaps');
+  await press(s, 'Undo');
+  assert.equal(s.input.value, before, 'Add\'s answer stays: it was there before the write');
+  assert.equal(s.fold()?.textContent, THREE_OF_FIVE, 'and its point stays covered');
+});
+
+test('a write drops a check result held behind an open Add field', async () => {
+  const s = await fieldOpenMidCheck();
+  await s.reply(1, product({ covered: [...GUIDE_CHECK_IDS] }));
+  await press(s, WRITE);
+  await press(s, 'Stop');
+  assert.equal(s.fold()?.textContent, GAPS, 'the held result is not applied');
+  assert.equal(fields(s), 0);
+});
+
+test('R-qa-4 example: typing a letter mid-write aborts the request; the field keeps the text plus the letter', async () => {
+  const s = await midWrite(TWO_LINES);
+  s.type(`${TWO_LINES}x`);
+  await settle();
+  assert.equal(s.writes[0].signal.aborted, true);
+  assert.equal(s.input.value, `${TWO_LINES}x`);
+  resultBack(s, GAPS, 'the result is back');
+  await land(s, 0, written(TWO_LINES));
+  assert.equal(s.input.value, `${TWO_LINES}x`, 'a late write answer changes nothing');
+  noUndo(s, 'late answer');
+  assert.deepEqual(s.spoken(), [SPOKEN]);
+  await s.wait();
+  assert.equal(s.checks.length, 2, 'the typed text is checked as usual');
+  assert.equal(s.checks[1].body.prompt, `${TWO_LINES}x`.trim());
+});
+
+test('R-qa-4: Stop aborts the request, the field is byte-identical and the result is back with "Write it out"', async () => {
+  const s = await midWrite(TWO_LINES);
+  await press(s, 'Stop');
+  assert.equal(s.writes[0].signal.aborted, true);
+  assert.equal(s.input.value, TWO_LINES);
+  resultBack(s);
+  assert.equal(s.doc.activeElement, s.input);
+  await land(s, 0, written(TWO_LINES));
+  assert.equal(s.input.value, TWO_LINES, 'a late write answer changes nothing');
+  resultBack(s, GAPS, 'after the late answer');
+  assert.deepEqual(s.spoken(), [SPOKEN], 'Stop says nothing');
+  await s.wait(5000);
+  assert.equal(s.checks.length, 1, 'unchanged text is not checked again');
+  await press(s, WRITE);
+  assert.equal(s.writes.length, 2, 'and it can be written again');
+  assert.equal(s.writes[1].signal.aborted, false);
+});
+
+test('R-po-4: the landing writes the text, reads "Guide filled 3 gaps · check them · Large: several runs" with Undo, and is spoken once', async () => {
+  let inputs = 0;
+  const s = await midWrite(PROMPT);
+  s.input.addEventListener('input', () => { inputs += 1; });
+  const out = written(PROMPT);
+  await land(s, 0, out);
+  assert.equal(s.input.value, out.text);
+  assert.ok(inputs >= 1, 'the field says it changed, so the panel resizes it and keeps Send on');
+  const words = 'Guide filled 3 gaps · check them · Large: several runs';
+  assert.equal(s.line().textContent, `${words}Undo`);
+  const sum = s.line().querySelector(':scope > .ask-guide-sum');
+  assert.equal(sum?.textContent, words);
+  assert.equal(sum.querySelector(':scope > b.ask-guide-head')?.textContent, 'Guide filled 3 gaps');
+  assert.equal(sum.querySelector(':scope > .ask-guide-mid')?.textContent, ' · check them');
+  assert.equal(sum.querySelector(':scope > .ask-guide-rest')?.textContent, ' · Large: several runs');
+  const undo = s.doBtn();
+  assert.ok(isQuietDo(undo), undo.outerHTML);
+  assert.ok(undo.previousElementSibling?.matches('.ask-guide-sp'));
+  assert.equal(s.fold(), null);
+  assert.equal(rowsEl(s), null);
+  assert.deepEqual(s.spoken(), [SPOKEN, 'Guide filled 3 gaps, check them']);
+  s.handle.update(null);
+  s.input.dispatchEvent(new s.win.KeyboardEvent('keyup', { key: 'ArrowUp', bubbles: true }));
+  await s.wait(5000);
+  assert.equal(s.doBtn(), undo, 'a repaint keeps Undo');
+  assert.equal(s.checks.length, 1, 'the written text counts as checked');
+  assert.equal(s.spoken().length, 2);
+  assert.doesNotMatch(s.line().textContent, /small runs|\d+ runs?\b/i);
+});
+
+test('the written line counts the gaps filled, one reading "check it", with the shown result\'s size', async () => {
+  const some = await midWrite(PROMPT, answer(2, 'medium'));
+  await land(some, 0, written(PROMPT, ['limits']));
+  assert.equal(some.line().textContent, 'Guide filled 1 gap · check it · Medium: a few runs' + 'Undo');
+  assert.equal(some.spoken().at(-1), 'Guide filled 1 gap, check it');
+  some.type(`${some.input.value}!`);
+  await settle();
+  resultBack(some, 'Prompt 3/5 · 2 gaps', 'only the filled point is covered');
+});
+
+test('the caret lands right after the first "(suggested)" past the person\'s own words', async () => {
+  const own = 'Keep the (suggested) retries as they are';
+  const s = await writtenOut(own);
+  const at = s.landed.text.indexOf('(suggested)', own.length) + '(suggested)'.length;
+  assert.ok(at > own.length, 'fixture');
+  assert.equal(s.input.selectionStart, at);
+  assert.equal(s.input.selectionEnd, at);
+  assert.equal(s.doc.activeElement, s.input);
+});
+
+test('R-po-4: the field scrolls to the first "(suggested)"', async () => {
+  const own = Array.from({ length: 12 }, (_, i) => `line ${i}`).join('\n');
+  const s = await midWrite(own);
+  s.input.style.lineHeight = '20px';
+  await land(s, 0, written(own));
+  assert.equal(s.input.scrollTop, 220, 'the thirteenth line, with one line above it');
+});
+
+test('a landing never takes the focus from elsewhere on the page', async () => {
+  const s = await midWrite(PROMPT);
+  const other = s.doc.querySelector('#elsewhere');
+  other.focus();
+  const focused = focusSpy(s);
+  await land(s, 0, written(PROMPT));
+  assert.equal(s.doc.activeElement, other);
+  assert.equal(focused(), 0);
+});
+
+test('a landing with the focus on Stop puts it in the prompt', async () => {
+  const s = await midWrite(PROMPT);
+  s.doBtn().focus();
+  assert.equal(s.doc.activeElement, s.doBtn(), 'fixture');
+  await land(s, 0, written(PROMPT));
+  assert.equal(s.doc.activeElement, s.input);
+});
+
+test('R-qa-10 / R-po-4 example: "Guide filled 4 gaps · check them", Undo, and the two lines are back byte for byte', async () => {
+  const s = await writtenOut(TWO_LINES, answer(1));
+  assert.match(s.line().textContent, /^Guide filled 4 gaps · check them · Large: several runs/);
+  assert.notEqual(s.input.value, TWO_LINES);
+  let inputs = 0;
+  s.input.addEventListener('input', () => { inputs += 1; });
+  await press(s, 'Undo');
+  assert.equal(s.input.value, TWO_LINES);
+  assert.ok(inputs >= 1, 'the field says it changed');
+  resultBack(s, 'Prompt 1/5 · 4 gaps', 'the result from before the write');
+  noUndo(s, 'after Undo');
+  assert.equal(s.doc.activeElement, s.input);
+  await s.wait(5000);
+  assert.equal(s.checks.length, 1, 'the restored text was already checked');
+  await press(s, WRITE);
+  assert.deepEqual(s.writes[1].body.gaps, ['what', 'trigger', 'limits', 'done']);
+  assert.equal(s.writes[1].body.prompt, TWO_LINES);
+});
+
+test('R-qa-11: after the first edit there is no Undo, the line is the result again and the edit is checked', async () => {
+  const s = await writtenOut();
+  const undo = s.doBtn();
+  const edited = `${s.landed.text}!`;
+  s.type(edited);
+  await settle();
+  noUndo(s, 'after one letter');
+  assert.equal(s.fold()?.textContent, 'Prompt 5/5 · Large: several runs');
+  assert.equal(s.line().textContent, 'Prompt 5/5 · Large: several runs', 'no gap left, so no button');
+  undo.click();
+  await settle();
+  assert.equal(s.input.value, edited, 'a stale Undo changes nothing');
+  await s.wait(1999);
+  assert.equal(s.checks.length, 1);
+  await s.wait(1);
+  assert.equal(s.checks.length, 2, 'exactly one check of the edited text');
+  assert.equal(s.checks[1].body.prompt, edited);
+});
+
+test('the browser\'s own undo back to the written text brings no Undo back and makes no check', async () => {
+  const s = await writtenOut();
+  s.type(`${s.landed.text}!`);
+  await settle();
+  s.input.value = s.landed.text;
+  s.input.dispatchEvent(new s.win.InputEvent('input', { bubbles: true, inputType: 'historyUndo' }));
+  await settle();
+  noUndo(s, 'after a native undo');
+  assert.equal(s.fold()?.textContent, 'Prompt 5/5 · Large: several runs');
+  assert.equal(s.input.value, s.landed.text);
+  await s.wait(5000);
+  assert.equal(s.checks.length, 1);
+});
+
+test('a written text changed with no input event (a recall, a code write) ends Undo for good', async () => {
+  const s = await writtenOut();
+  const undo = s.doBtn();
+  s.input.value = LONGER;
+  s.handle.update(null);
+  await settle();
+  noUndo(s, 'a recall');
+  undo.click();
+  await settle();
+  assert.equal(s.input.value, LONGER);
+  s.input.value = s.landed.text;
+  s.handle.update(null);
+  await settle();
+  noUndo(s, 'recalled back');
+});
+
+test('Undo clicked after a change nobody announced restores nothing', async () => {
+  const s = await writtenOut();
+  s.input.value = LONGER;              // no input event and no repaint yet
+  s.doBtn().click();
+  await settle();
+  assert.equal(s.input.value, LONGER);
+});
+
+test('a write answer for text the field no longer holds is dropped', async () => {
+  const s = await midWrite(PROMPT);
+  s.input.value = LONGER;              // a recall, a code write: no input event
+  await land(s, 0, written(PROMPT));
+  assert.equal(s.input.value, LONGER);
+  assert.doesNotMatch(s.line().textContent, /Writing|Guide filled|Undo/);
+  assert.deepEqual(s.spoken(), [SPOKEN]);
+});
+
+test('R-qa-12: write output holding markup lands as those characters and creates no element', async () => {
+  const s = await midWrite(PROMPT);
+  const out = written(PROMPT, ['trigger', 'limits', 'done'], { fill: () => XSS });
+  await land(s, 0, out);
+  assert.equal(s.input.value, out.text);
+  assert.ok(s.input.value.includes('<img src=x onerror=alert(1)>'));
+  assert.equal(s.doc.querySelector('img'), null);
+});
+
+test('a failed write leaves the field byte-identical, shows the result with "Write it out" and announces the failure once', async () => {
+  for (const [code, words] of [
+    ['GUIDE_MODEL_FAILED', FAIL], ['GUIDE_NO_MODEL', NO_MODEL], ['GUIDE_COST_LIMIT', FAIL], ['GUIDE_BUSY', FAIL],
+    ['GUIDE_WRITE_FAILED', FAIL], ['NETWORK', FAIL], ['BAD_REPLY', FAIL],
+  ]) {
+    const s = await midWrite(TWO_LINES);
+    await failWrite(s, 0, code);
+    assert.equal(s.input.value, TWO_LINES, code);
+    resultBack(s, GAPS, code);
+    assert.equal(s.act(), null, `${code}: no failure action`);
+    s.handle.update(null);
+    await settle();
+    assert.deepEqual(s.spoken(), [SPOKEN, words], code);
+    await press(s, WRITE);
+    assert.equal(s.writes.length, 2, `${code}: the button works again`);
+    s.handle.destroy();
+  }
+});
+
+test('a superseded, aborted or Guide-off write changes nothing and announces nothing', async () => {
+  for (const code of ['GUIDE_SUPERSEDED', 'ABORTED', 'GUIDE_OFF']) {
+    const s = await midWrite(TWO_LINES);
+    await failWrite(s, 0, code);
+    assert.equal(s.input.value, TWO_LINES, code);
+    assert.doesNotMatch(s.line()?.textContent ?? '', /Writing|Guide filled|Undo/, code);
+    assert.deepEqual(s.spoken(), [SPOKEN], code);
+    if (code !== 'GUIDE_OFF') resultBack(s, GAPS, code);
+    s.handle.destroy();
+  }
+});
+
+/** What ends a write and its Undo from outside the person's typing. */
+const WRITE_ENDS = [
+  ['a send', (s) => { s.intentHandle.transformSend(s.input.value); s.input.value = ''; s.handle.update(null); }],
+  ['Guide switched off', (s) => s.swInput().click()],
+  ['the Shaper pin removed', (s) => s.intent.clear()],
+  ['the flag turned off', (s) => s.setFlag(false)],
+  ['a prompt cut below 12 characters', (s) => s.type('Export')],
+  ['destroy()', (s) => s.handle.destroy()],
+];
+for (const [name, end] of WRITE_ENDS) {
+  test(`${name} mid-write aborts it, and its late answer changes nothing`, async () => {
+    const s = await midWrite(PROMPT);
+    end(s);
+    await settle();
+    assert.equal(s.writes[0].signal.aborted, true);
+    const held = s.input.value;
+    await land(s, 0, written(PROMPT));
+    assert.equal(s.input.value, held);
+    assert.doesNotMatch(s.line()?.textContent ?? '', /Writing|Guide filled|Undo/);
+    assert.deepEqual(s.spoken(), [SPOKEN]);
+  });
+
+  test(`${name} removes Undo from a written text`, async () => {
+    const s = await writtenOut();
+    const undo = s.doBtn();
+    end(s);
+    await settle();
+    noUndo(s, name);
+    const held = s.input.value;
+    undo.click();
+    await settle();
+    assert.equal(s.input.value, held);
+  });
+}
+
+test('a written text past the check\'s limit stays in the field with Undo; the next edit clears the result', async () => {
+  const long = 'x'.repeat(GUIDE_PROMPT_MAX - 10);
+  const s = await writtenOut(long);
+  assert.ok(s.input.value.length > GUIDE_PROMPT_MAX, 'fixture');
+  s.handle.update(null);
+  await settle();
+  assert.equal(s.doBtn()?.textContent, 'Undo');
+  s.type(`${s.input.value}!`);
+  await s.wait(3000);
+  noUndo(s, 'edited');
+  emptyLine(s, 'over the limit');
+  assert.equal(s.checks.length, 1);
+});
+
+test('a prompt checked within the limit but past it with its trailing whitespace offers no write and sends none', async () => {
+  const s = await resultFor(`${'x'.repeat(GUIDE_PROMPT_MAX)}\n`);
+  assert.equal(s.fold()?.textContent, GAPS, 'the result is shown');
+  assert.equal(s.doc.querySelectorAll('.ask-guide-do').length, 0, 'no Write it out');
+  assert.equal(s.writes.length, 0, 'no write request');
+});
+
+test('the stylesheet has the spacer, the middle words that never shrink and the buttons that never shrink', () => {
+  const { base } = cssParts();
+  holds(base, '.ask-guide-sp', ['flex:1 1 0']);
+  holds(base, '.ask-guide-mid', ['flex:none', 'white-space:pre']);
+  holds(base, '.ask-guide > .ask-guide-do', ['flex:none']);
 });

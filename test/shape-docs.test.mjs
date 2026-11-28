@@ -697,3 +697,39 @@ test('slice 7: the design system\'s Composer bar part describes the Guide rows p
   assert.deepEqual(missing(bar, ['.ask-guide-rows', '.ask-guide-ans', '--ink-2', 'Add: who is it for']), []);
   assert.doesNotMatch(bar, HOME_PATH);
 });
+
+// Shaper ask screens, slice 8: Write it out, with Stop and Undo.
+test('slice 8: a Write it out paragraph, right after Guide rows, names the button, Stop, "(suggested)", the written line and Undo', () => {
+  const small = section(read('shape-it-first.md'), 'Small runs (`shaperSmallRuns`)');
+  const paragraphs = small.split(/\n\s*\n/).map((p) => p.trim());
+  const rows = paragraphs.findIndex((p) => p.startsWith('**Guide rows.**'));
+  assert.ok(rows >= 0, 'the "**Guide rows.**" paragraph');
+  const text = flat(paragraphs[rows + 1] || '');
+  assert.ok(text.startsWith('**Write it out.**'), 'a "**Write it out.**" paragraph after **Guide rows.**');
+  assert.deepEqual(missing(text, ['Write it out', 'Writing it out…', 'Stop', '(suggested)', 'Guide filled 4 gaps · check them', 'Undo']), []);
+  assert.doesNotMatch(text, /small runs/i);
+  assert.doesNotMatch(text, HOME_PATH);
+});
+
+test('slice 8: chat-home\'s Guide bullet says Write it out, Stop and Undo work in the docked chat', () => {
+  const beside = section(read('chat-home.md'), 'Ask worca beside the page');
+  const bullet = flat(beside.split(/\n(?=- |\n|## )/).find((b) => b.startsWith('- **Guide.**')) || '');
+  assert.ok(bullet, 'a "- **Guide.**" bullet');
+  assert.deepEqual(missing(bullet, ['Write it out', 'Stop', 'Undo']), []);
+  assert.doesNotMatch(bullet, /small runs/i);
+  assert.doesNotMatch(bullet, HOME_PATH);
+});
+
+test('slice 8: the design system\'s Composer bar part describes the line\'s Write it out, Stop and Undo buttons', () => {
+  const bar = designPart('Composer bar');
+  assert.deepEqual(missing(bar, ['.ask-guide-do', '.ask-guide-sp', '.ask-guide-mid', 'Write it out', 'Stop', 'Undo', '(suggested)']), []);
+  assert.doesNotMatch(bar, HOME_PATH);
+});
+
+test('slice 8: the Guide paragraph of docs/models.md says what a write asks for and returns', () => {
+  const doc = read('models.md');
+  const at = doc.indexOf('\n*Guide* is ');
+  const end = doc.indexOf('\nThe *Requirements interview* helper', at);
+  assert.ok(at >= 0 && end > at, 'the Guide paragraph, before the Requirements interview one');
+  assert.deepEqual(missing(flat(doc.slice(at, end)), [/\bwrit(e|es|ing|ten)\b/i, /\bgaps?\b/i]), []);
+});

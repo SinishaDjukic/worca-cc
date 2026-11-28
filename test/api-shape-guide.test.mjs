@@ -531,3 +531,244 @@ test('a check leaves settings.json byte-identical', on(async () => {
   assert.equal((await check({ prompt: PROMPT, role: 'product' })).status, 200);
   assert.equal(settingsBytes(), was);
 }));
+
+// ---------------------------------------------------------------------------------------------------------------------
+// "Write it out": POST /api/shape/guide/write, with the model stubbed through the same _setGuideCheckForTest seam. The
+// model returns only fills; the route composes the written text from the prompt, so the person's words stay as sent.
+
+const writeOut = (body, headers = {}) => send('POST', '/api/shape/guide/write', body, headers);
+/** A person's prompt with an answer of their own, trailing spaces and a line break included. */
+const OWN = 'Who is it for: people on the team  \nWeekly digest of open reviews';
+const ASKED = ['what', 'done'];
+/** The stub also tries to fill a gap that was not asked and to return its own text. */
+const WRITE_REPLY = JSON.stringify({
+  text: 'REWRITTEN',
+  fills: { who: 'NOT ASKED', what: 'one email per lead (suggested)', done: 'it arrives\non Monday' },
+});
+const writing = async () => ({ text: WRITE_REPLY });
+const writtenText = (prompt, labels) => `${prompt}\n${labels[1]}: one email per lead (suggested)\n${labels[4]}: it arrives on Monday (suggested)`;
+const GUIDE_FAILED = ['GUIDE_MODEL_FAILED', 'Guide is not answering right now.'];
+const SUPERSEDED = ['GUIDE_SUPERSEDED', 'A newer check replaced this one.'];
+/** 200 with `{ text, filled, model }`. */
+async function wrote(r, prompt, labels) {
+  assert.equal(r.status, 200, 'write');
+  const j = await r.json();
+  assert.deepEqual(Object.keys(j).sort(), ['filled', 'model', 'text']);
+  assert.equal(j.text, writtenText(prompt, labels));
+  assert.deepEqual(j.filled, ASKED);
+  assert.ok(j.model.id && j.model.label, 'the model it ran on');
+  return j;
+}
+
+test('R-qa-7 / R-arch-7: write: flag off is 404 with no model call', async () => {
+  let picks = 0;
+  const calls = await stubModel(writing, { pickModel: async () => { picks += 1; return { model: 'claude-sonnet-5-5', effort: null }; } });
+  await withFlags(undefined, async () => {
+    for (const body of [{ prompt: PROMPT, gaps: ASKED }, { prompt: PROMPT, role: 'admin' }, {}]) {
+      const r = await writeOut(body);
+      assert.equal(r.status, 404, JSON.stringify(body));
+      assert.deepEqual(await r.json(), { error: 'not found' });
+    }
+  });
+  assert.equal(calls.length, 0);
+  assert.equal(picks, 0);
+  await withFlags('shaperSmallRuns', async () => {
+    assert.equal((await writeOut({ prompt: PROMPT, gaps: ASKED })).status, 200, 'registered: the 404 above is the flag\'s');
+  });
+  assert.doesNotMatch(readFileSync(new URL('../ui/server.mjs', import.meta.url), 'utf8'), /guide\/write/);
+});
+
+test('R-qa-7 / R-sec-1: write refusals (role, prompt, gaps) never pick or call the model', on(async () => {
+  seed({ answererProfiles: {} });
+  let picks = 0;
+  const calls = await stubModel(writing, { pickModel: async () => { picks += 1; return { model: 'claude-sonnet-5-5', effort: null }; } });
+  const ROLE = ['GUIDE_BAD_ROLE', 'Guide does not know that role.'];
+  const EMPTY = ['GUIDE_BAD_PROMPT', 'Guide needs a prompt to check.'];
+  const LONG = ['GUIDE_PROMPT_TOO_LONG', 'The prompt is longer than Guide checks (8000 characters).'];
+  const GAPS = ['GUIDE_BAD_GAPS', 'Guide needs the gaps to fill.'];
+  for (const [body, status, [code, message]] of [
+    [{ prompt: PROMPT, role: 'admin', gaps: ASKED }, 400, ROLE],
+    [{ prompt: PROMPT, role: 7, gaps: ASKED }, 400, ROLE],
+    [{ prompt: PROMPT, role: {}, gaps: ASKED }, 400, ROLE],
+    [{ prompt: 'a'.repeat(8001), gaps: ASKED }, 413, LONG],
+    [{ prompt: 'a'.repeat(9000), role: 'admin', gaps: [] }, 400, ROLE],
+    [{ prompt: '   ', gaps: ['admin'] }, 400, EMPTY],
+    [{ gaps: ASKED }, 400, EMPTY],
+    [{ prompt: PROMPT }, 400, GAPS],
+    [{ prompt: PROMPT, gaps: [] }, 400, GAPS],
+    [{ prompt: PROMPT, gaps: ['who', 'who'] }, 400, GAPS],
+    [{ prompt: PROMPT, gaps: ['admin'] }, 400, GAPS],
+    [{ prompt: PROMPT, gaps: 'who' }, 400, GAPS],
+  ]) {
+    await refused(await writeOut(body), status, code, message, `${code}: ${JSON.stringify(body).slice(0, 60)}`);
+  }
+  assert.equal(calls.length, 0, 'the stubbed model is never called');
+  assert.equal(picks, 0, 'refused before a model is picked');
+}));
+
+test('R-qa-8 / R-po-4: the written text keeps the person\'s answers word for word, and every filled gap ends in "(suggested)"', on(async () => {
+  seed({ answererProfiles: { '': { lead: 'qa' } } });
+  const calls = await stubModel(writing);
+  const j = await wrote(await writeOut({ prompt: OWN, role: 'product', gaps: ['done', 'what'] }), OWN, PLAIN);
+  assert.ok(j.text.startsWith(OWN), 'the exact prompt first, byte for byte');
+  for (const line of j.text.slice(OWN.length).split('\n').filter(Boolean)) assert.ok(line.endsWith(' (suggested)'), line);
+  assert.doesNotMatch(j.text, /REWRITTEN|NOT ASKED/);
+  assert.equal(calls.length, 1);
+  assert.ok(calls[0].prompt.includes(OWN) && calls[0].prompt.includes('What they get'));
+  assert.doesNotMatch(calls[0].prompt, /What starts it|Who calls it/, 'only the asked gaps, in the role\'s wording');
+}));
+
+test('write: no role is accepted and reads the technical labels', on(async () => {
+  seed({ answererProfiles: { '': { lead: 'product' } } });   // the saved role does not decide: the request's does
+  const calls = await stubModel(writing);
+  for (const extra of [{}, { role: null }, { role: '' }, { role: 'devops' }]) {
+    await wrote(await writeOut({ prompt: PROMPT, gaps: ASKED, ...extra }), PROMPT, TECHNICAL);
+  }
+  assert.equal(calls.length, 4);
+}));
+
+test('write: no model is 503; a throwing model, an unreadable reply and zero usable fills are 502', on(async () => {
+  seed({ answererProfiles: {} });
+  const none = await stubModel(writing, { pickModel: async () => ({ model: null, effort: null, source: 'default', stale: null }) });
+  await refused(await writeOut({ prompt: PROMPT, gaps: ASKED }), 503, 'GUIDE_NO_MODEL', 'Guide has no model to run on.');
+  assert.equal(none.length, 0, 'no model: nothing is called');
+  for (const [note, answer] of [
+    ['a throwing model', async () => { throw new Error('boom'); }],
+    ['an unreadable reply', async () => ({ text: 'sure!' })],
+    ['no fills', async () => ({ text: '{"fills":{}}' })],
+    ['a rewrite alone', async () => ({ text: '{"text":"REWRITTEN"}' })],
+    ['fills for gaps not asked', async () => ({ text: '{"fills":{"who":"x"}}' })],
+  ]) {
+    (await grade())._setGuideCheckForTest(null);
+    const calls = await stubModel(answer);
+    await refused(await writeOut({ prompt: PROMPT, gaps: ASKED }), 502, ...GUIDE_FAILED, note);
+    assert.equal(calls.length, 1, note);
+  }
+}));
+
+test('write: with the viewer\'s Guide off it is 409 GUIDE_OFF with no model pick or call', on(async () => {
+  seed({ answererProfiles: {} });
+  let picks = 0;
+  const calls = await stubModel(writing, { pickModel: async () => { picks += 1; return { model: 'claude-sonnet-5-5', effort: null }; } });
+  assert.equal((await putPrefs({ on: false })).status, 200);
+  await refused(await writeOut({ prompt: PROMPT, gaps: ASKED }), 409, 'GUIDE_OFF', 'Guide is off.');
+  assert.equal((await writeOut({ prompt: PROMPT, gaps: [] })).status, 400, 'the input gate comes before the switch');
+  assert.equal(calls.length, 0);
+  assert.equal(picks, 0);
+  seed({ answererProfiles: {} });
+}));
+
+test('write: a reached cost limit is 429 GUIDE_COST_LIMIT before the model pick', on(async () => {
+  const { recordCostDelta, budgetStatus } = await import('../src/core/cost-budget.mjs');
+  const { getDb } = await import('../src/core/db.mjs');
+  seed({ answererProfiles: {}, totalCostLimitUsd: 1 });
+  try {
+    recordCostDelta({ pipelineId: 'guide-write-budget', amountUsd: 2 });
+    assert.equal(budgetStatus().blocked, true, 'fixture: the window is spent');
+    let picks = 0;
+    const calls = await stubModel(writing, { pickModel: async () => { picks += 1; return { model: 'claude-sonnet-5-5' }; } });
+    await refused(await writeOut({ prompt: PROMPT, gaps: ASKED }), 429, 'GUIDE_COST_LIMIT', 'The cost limit is reached; Guide waits until it resets.');
+    assert.equal(calls.length, 0);
+    assert.equal(picks, 0);
+  } finally {
+    seed({ answererProfiles: {}, totalCostLimitUsd: undefined });
+    getDb().exec('DELETE FROM cost_ledger');
+  }
+}));
+
+test('write: it runs on the Guide job\'s model and effort, and its spend is booked as utility cost kind "guide"', on(async () => {
+  const { utilityTotals } = await import('../src/core/cost-budget.mjs');
+  const count = () => utilityTotals(0, Date.now() + 60_000).guide?.count ?? 0;
+  try {
+    seed({ answererProfiles: {}, guideModel: { model: 'claude-opus-5-5', effort: 'high' }, commandSummaryModel: { model: 'claude-sonnet-5-5' } });
+    const was = count();
+    const calls = await stubModel(async (o) => {
+      o.onEvent({ type: 'result', costUsd: 0.002, usage: { input_tokens: 100, output_tokens: 20 } });
+      return { text: WRITE_REPLY };
+    });
+    const j = await wrote(await writeOut({ prompt: PROMPT, gaps: ASKED }), PROMPT, TECHNICAL);
+    assert.equal(calls[0].model, 'claude-opus-5-5');
+    assert.equal(calls[0].effort, 'high');
+    assert.deepEqual(j.model, { id: 'claude-opus-5-5', label: 'Opus 5.5' });
+    assert.equal(count(), was + 1);
+  } finally { seed({ guideModel: undefined, commandSummaryModel: undefined }); }
+}));
+
+test('R-arch-10: a check and a write share one slot per viewer: the newer one supersedes the older, and the cap holds', on(async () => {
+  seed({ answererProfiles: {} });
+  /** Holds a HOLDMARK prompt; answers a write prompt with fills and a check prompt with checks. */
+  const both = (held) => (o) => (o.prompt.includes('HOLDMARK') ? held.answer(o)
+    : Promise.resolve({ text: o.prompt.includes('"fills"') ? WRITE_REPLY : REPLY }));
+
+  const heldWrite = holding();
+  await stubModel(both(heldWrite));
+  const write = writeOut({ prompt: `HOLDMARK ${PROMPT}`, gaps: ASKED });
+  await heldWrite.reached(write);
+  const newerCheck = check({ prompt: PROMPT });
+  await refused(await write, 409, 'GUIDE_SUPERSEDED', 'A newer check or write replaced this one.', 'a check replaces a held write');
+  await checked(await newerCheck, 'technical', TECHNICAL);
+
+  (await grade())._setGuideCheckForTest(null);
+  const heldCheck = holding();
+  await stubModel(both(heldCheck));
+  const older = check({ prompt: `HOLDMARK ${PROMPT}` });
+  await heldCheck.reached(older);
+  const newerWrite = writeOut({ prompt: PROMPT, gaps: ASKED });
+  await refused(await older, 409, ...SUPERSEDED, 'a write replaces a held check');
+  await wrote(await newerWrite, PROMPT, TECHNICAL);
+
+  (await grade())._setGuideCheckForTest(null);
+  await withIdentity(async () => {
+    const held = holding();
+    const calls = await stubModel(both(held), { maxInflight: 1 });
+    const first = check({ prompt: `HOLDMARK ${PROMPT}` }, as('first@example.com'));
+    await held.reached(first);
+    await refused(await writeOut({ prompt: PROMPT, gaps: ASKED }, as('second@example.com')), 429, 'GUIDE_BUSY', 'Guide is busy; try again in a moment.');
+    assert.equal(calls.length, 1);
+    held.release();
+    await checked(await first, 'technical', TECHNICAL);
+    assert.equal((await writeOut({ prompt: PROMPT, gaps: ASKED }, as('second@example.com'))).status, 200, 'the finished check freed its slot');
+    assert.equal((await writeOut({ prompt: PROMPT, gaps: ASKED }, as('first@example.com'))).status, 200, 'the finished write freed its slot');
+  });
+}));
+
+test('write: nothing logs the prompt text, and a broken route answers a fixed 500 body', on(async () => {
+  seed({ answererProfiles: {} });
+  const SENTINEL = 'SENTINEL-write-93ab';
+  const lines = [];
+  const methods = ['log', 'info', 'warn', 'error', 'debug', 'trace'];
+  const originals = methods.map((m) => console[m]);
+  methods.forEach((m) => { console[m] = (...args) => { lines.push(args.map((a) => String(a?.stack ?? (typeof a === 'string' ? a : JSON.stringify(a)))).join(' ')); }; });
+  const bodies = [];
+  try {
+    const body = { prompt: `Digest ${SENTINEL}`, gaps: ASKED };
+    await stubModel(writing);
+    assert.equal((await writeOut(body)).status, 200);
+
+    (await grade())._setGuideCheckForTest(null);
+    await stubModel(async () => { throw new Error(`boom ${SENTINEL}`); });
+    const failed = await writeOut(body);
+    assert.equal(failed.status, 502);
+    bodies.push(await failed.text());
+
+    (await grade())._setGuideCheckForTest(null);
+    const calls = await stubModel(writing, { pickModel: async () => { throw new Error(`pick broke ${SENTINEL}`); } });
+    const broken = await writeOut(body);
+    assert.equal(broken.status, 500);
+    const text = await broken.text();
+    assert.deepEqual(JSON.parse(text), { error: { code: 'GUIDE_WRITE_FAILED', message: 'Guide could not write the prompt out.' } });
+    bodies.push(text);
+    assert.equal(calls.length, 0);
+  } finally { methods.forEach((m, i) => { console[m] = originals[i]; }); }
+  assert.deepEqual(lines.filter((l) => l.includes(SENTINEL)), []);
+  for (const b of bodies) assert.doesNotMatch(b, /SENTINEL|boom|pick broke/, 'no error body carries err.message');
+}));
+
+test('a write and a refused write leave settings.json byte-identical', on(async () => {
+  seed({ answererProfiles: { '': { lead: 'qa', guideOfferSeen: true } } });
+  await stubModel(writing);
+  const was = settingsBytes();
+  assert.equal((await writeOut({ prompt: PROMPT, role: 'product', gaps: ASKED })).status, 200);
+  assert.equal((await writeOut({ prompt: PROMPT, role: 'admin', gaps: ASKED })).status, 400);
+  assert.equal(settingsBytes(), was);
+}));
