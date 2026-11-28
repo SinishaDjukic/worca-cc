@@ -156,7 +156,8 @@ test('a failing PR lookup leaves a working page that says so', async () => {
   await settle(tick);
   const doc = window.document;
   assert.equal(doc.querySelectorAll('#tm-timeline .tl-item').length, 2);
-  assert.match(doc.querySelector('#tm-timeline .tl-note').textContent, /GitHub did not answer for some pull requests: boom/);
+  assert.match(doc.querySelector('#tm-timeline .tl-note').textContent, /Worca could not look up pull requests: boom/);
+  assert.doesNotMatch(doc.querySelector('#tm-timeline .tl-note').textContent, /GitHub/, 'a failed request to Worca blames no git host');
   assert.equal(doc.querySelector('#tm-timeline .tl-tile .stat-label span').textContent, 'Completed');
 });
 
@@ -174,5 +175,7 @@ test('mergePrStatus keeps an earlier batch\'s Azure notice', async () => {
   assert.equal(m({ ...base, azure: 'unauthenticated' }, { ...base }).azure, 'unauthenticated', 'an older server without the field');
   assert.deepEqual(m({ ...base, azureTruncated: ['dev.azure.com/a/p/r'] }, { ...base, azureTruncated: [] }).azureTruncated, ['dev.azure.com/a/p/r'], 'a cut-off repo stays named');
   assert.equal(m({ ...base, bitbucket: 'missing' }, { ...base, bitbucket: 'unused' }).bitbucket, 'missing', 'an earlier Bitbucket notice is kept');
+  assert.deepEqual(m({ ...base, bitbucketTruncated: ['bitbucket.org/a/b'] }, { ...base, bitbucketTruncated: [] }).bitbucketTruncated, ['bitbucket.org/a/b'], 'a cut-off Bitbucket repo stays named');
+  assert.equal(m({ ...base, worcaError: 'HTTP 502' }, { ...base }).worcaError, 'HTTP 502', 'a failed request to Worca survives the next chunk');
   assert.equal(m({ ...base, bitbucketError: 'Bitbucket 500: boom' }, { ...base }).bitbucketError, 'Bitbucket 500: boom');
 });

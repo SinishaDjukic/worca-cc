@@ -148,6 +148,14 @@ test('helpers: tierRank, semverAtLeast, looksLikeSecret', () => {
   assert.equal(looksLikeSecret('abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrst'), true);
 });
 
+test('metrics.showLevels is a bool of the default kind', () => {
+  const e = fieldMeta('metrics.showLevels');
+  assert.equal(e.type, 'bool'); assert.deepEqual(e.kinds, ['default']); assert.equal(e.group, 'runs');
+  assert.equal(validateValue(e, true), null);
+  assert.equal(validateValue(e, false), null);
+  assert.match(validateValue(e, 'yes'), /./);
+});
+
 test('ask.webEnabled / ask.webAllowedDomains', () => {
   const e = fieldMeta('ask.webEnabled');
   assert.equal(e.type, 'bool'); assert.deepEqual(e.kinds, ['soft']); assert.equal(e.group, 'ask');

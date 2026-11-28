@@ -247,7 +247,8 @@ function fromBitbucketPr(slug, coords, p, merged) {
 /**
  * Bitbucket's BBQL filters by source branch: one query per 10 branches of each repo, every state. A MERGED PR's merge
  * date costs one more read (D8) and is cached for good with it.
- * @returns {Promise<{results: Map<string, object[]>, error: string|null, auth: 'unauthenticated'|null}>}
+ * @returns {Promise<{results: Map<string, object[]>, error: string|null, auth: 'unauthenticated'|null, truncated: string[]}>}
+ *   truncated: the repos whose cut-off listing left a branch unknown (the Azure n8 rule).
  */
 export async function lookupBranchesViaBitbucket(lookups, { coordsFor = bitbucketCoordsForSlug } = {}) {
   const byRepo = new Map();
@@ -257,6 +258,7 @@ export async function lookupBranchesViaBitbucket(lookups, { coordsFor = bitbucke
     byRepo.set(l.repo, g);
   }
   const results = new Map();
+  const truncated = [];
   let error = null;
   let auth = null;
   await mapWithCap([...byRepo.values()], AZURE_CONCURRENCY, async (g) => {
@@ -266,18 +268,21 @@ export async function lookupBranchesViaBitbucket(lookups, { coordsFor = bitbucke
       const listing = await listPullRequestsForBranches(coords, [...g.branches]);
       const merged = new Map();
       for (const p of listing.prs) if (p?.state === 'MERGED' && Number.isInteger(p.id)) merged.set(p.id, await bitbucketMergedAt(coords, p));
+      let unset = false;
       for (const b of g.branches) {
         const found = listing.prs.filter((p) => p?.source?.branch?.name === b)
           .map((p) => fromBitbucketPr(g.slug, coords, p, merged.get(p.id) ?? null)).filter(Boolean);
         // A listing cut off by its page cap proves nothing about a branch it did not reach (M2): leave it unknown.
         if (found.length || listing.complete) results.set(`${lower(g.slug)}#${b}`, found);
+        else unset = true;
       }
+      if (unset) truncated.push(g.slug);         // n8: name the repo only when the cap actually left a branch unknown
     } catch (e) {
       if (e.kind === 'auth') auth = 'unauthenticated';
       error ||= String(e.message || e);
     }
   });
-  return { results, error, auth };
+  return { results, error, auth, truncated: truncated.sort() };
 }
 
 // ---- cache ---------------------------------------------------------------------------------
@@ -363,12 +368,12 @@ const sinkDir = (sink) => (typeof sink === 'string' ? worktreePath(sink) : reada
  * @returns {Promise<{ prs: Object<string, object[]|null>, status: object }>} status: gh/ghDetail/ghError;
  *   azure ('unused'|'missing'|'unauthenticated'|'ok'), azureError, azureTruncated (repos whose listing hit
  *   AZURE_MAX_PAGES and left a branch unknown); bitbucket ('unused'|'missing'|'unauthenticated'|'ok'),
- *   bitbucketError; actionRepos, unsupportedRepos, checked.
+ *   bitbucketError, bitbucketTruncated (the same for Bitbucket); actionRepos, unsupportedRepos, checked.
  */
 export async function resolveRunPrs({ runs = [], sinks = [], useGh = true, useAzure = true, useBitbucket = true, coordsFor = azureCoordsForSlug } = {}) {
   const now = _now();
   const lookups = runs.map(sanitizeLookup).filter(Boolean).slice(0, MAX_LOOKUPS);
-  const status = { gh: 'unused', ghDetail: null, ghError: null, azure: 'unused', azureError: null, azureTruncated: [], bitbucket: 'unused', bitbucketError: null, actionRepos: [], unsupportedRepos: [], checked: 0 };
+  const status = { gh: 'unused', ghDetail: null, ghError: null, azure: 'unused', azureError: null, azureTruncated: [], bitbucket: 'unused', bitbucketError: null, bitbucketTruncated: [], actionRepos: [], unsupportedRepos: [], checked: 0 };
 
   // 1. Action events, indexed by repo#branch and repo#number.
   const byBranch = new Map();
@@ -439,9 +444,10 @@ export async function resolveRunPrs({ runs = [], sinks = [], useGh = true, useAz
   if (useBitbucket && bbNeed.length) {
     if (readBitbucketCredentials().mode === 'none') status.bitbucket = 'missing';
     else {
-      const { results, error, auth } = await lookupBranchesViaBitbucket(bbNeed);
+      const { results, error, auth, truncated } = await lookupBranchesViaBitbucket(bbNeed);
       status.bitbucket = auth || 'ok';
       status.bitbucketError = auth ? null : error;
+      status.bitbucketTruncated = truncated;
       status.checked += results.size;
       for (const [key, prs] of results) cache.entries[key] = { prs, checkedAt: now };
       if (results.size) await saveCache(cache);

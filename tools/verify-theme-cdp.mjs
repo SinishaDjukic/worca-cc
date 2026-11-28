@@ -581,6 +581,9 @@ const states = [
     await cdp('Fetch.enable', { patterns: [{ urlPattern: '*/api/team-metrics/scopes*', requestStage: 'Request' }, { urlPattern: '*/api/team-metrics?*', requestStage: 'Request' }] });
     await go('team-metrics');
     await until(`document.querySelector('#tm-body table.tm-tbl')`, 'the team metrics tables');
+    // By person too: the leaderboard card is on screen (and remembered, so layout-widths reloads onto it).
+    await ev(`document.querySelector('#tm-view [data-tm-view="person"]').click();0`);
+    await until(`document.querySelector('#tm-body .tm-lb')`, 'the leaderboard');
   }],
   // The five slice-2 pages and the seven slice-3 pages at 290 / 375 / 1440 (R-qa-2), and the fresh loads (R-qa-3).
   ['layout-widths', async () => {
@@ -594,6 +597,7 @@ const states = [
         await waitEvent('Page.loadEventFired');
         await until('window.__np && window.__np.getRun', 'app boot');
         await until(`document.querySelector('[data-view=${JSON.stringify(view)}]:not(.hidden)')`, `view ${page}`);
+        if (page === 'team-metrics') await until(`document.querySelector('#tm-body .tm-lb')`, 'the leaderboard');   // By person is the remembered view
         await sleep(400); await ev(READY); await freeze(page);
         const m = await ev(`(() => { const d = document.scrollingElement; const main = document.querySelector('.main');
           return { doc: [d.scrollWidth, d.clientWidth], main: [main.scrollWidth, main.clientWidth] }; })()`);

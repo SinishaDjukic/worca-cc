@@ -11,7 +11,7 @@ import { createWorkspace, updateWorkspace } from '../src/core/workspaces.mjs';
 import {
   enableTeamMetrics, writeOutbox, flushSlug, worktreePath, metricsEvents, findLocalProjectBySlug, findLocalRepoBySlug, _testing as syncTesting,
 } from '../src/core/metrics/sync.mjs';
-import { readScope, readRecordsFromDir, fetchDecision, noteFetch, parseScopeParam, _testing as readTesting } from '../src/core/metrics/read.mjs';
+import { readScope, readRecordsFromDir, fetchDecision, noteFetch, parseScopeParam, viewerIdentityDir, _testing as readTesting } from '../src/core/metrics/read.mjs';
 import { writeTeamMetricsPrefs } from '../src/core/config.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { makeRecord } from './fixtures/team-metrics/records.mjs';
@@ -75,6 +75,19 @@ test('workspace scope groups by name across two homes (split choice tolerated)',
   const r = await readScope({ kind: 'workspace', id: ws.id });
   assert.deepEqual(r.records.map((x) => x.id).sort(), ['w1', 'w2']);
   assert.deepEqual(r.sinks.sort(), ['device-registry', 'gateway']);
+  // The viewer's git identity is read where a run records it (the first Git member), not from the metrics home.
+  const first = projectKey(gw) < projectKey(dr) ? gw : dr;   // a run's members are in project-key order
+  const other = first === gw ? dr : gw;
+  assert.equal(r.identityProjectDir, first);
+  await updateWorkspace(ws.id, { metricsProject: other });
+  const moved = await readScope({ kind: 'workspace', id: ws.id });
+  assert.equal(moved.rateProjectDir, other);
+  assert.equal(moved.identityProjectDir, first, 'a different metrics home does not change whose identity is read');
+  await updateWorkspace(ws.id, { metricsProject: null });
+  const homeless = await readScope({ kind: 'workspace', id: ws.id });
+  assert.equal(homeless.rateProjectDir, null);
+  assert.equal(homeless.identityProjectDir, first, 'no metrics home: the viewer is still known');
+  await updateWorkspace(ws.id, { metricsProject: gw });
 
   const p = (await listProjects()).find((x) => x.name === 'gateway');
   const pr = await readScope({ kind: 'project', id: p.key });
@@ -173,4 +186,17 @@ test('a project whose cached slug is the old Azure short form is found by the ca
   assert.equal((await findLocalRepoBySlug('dev.azure.com/acme/shop/shop'))?.name, 'az-short');
   assert.equal((await findLocalProjectBySlug('dev.azure.com/acme/shop'))?.name, 'az-short', 'and by the old slug (leftover outbox)');
   assert.equal(await findLocalProjectBySlug('dev.azure.com/acme/other/shop'), null);
+});
+
+test('viewerIdentityDir: the first member that is a Git checkout, as run recording picks it; a Folder member is never it', () => {
+  const mode = (p) => (p.includes('folder') ? 'folder' : 'git');
+  const opts = { workModeOf: mode, keyOf: (p) => p };
+  assert.equal(viewerIdentityDir(['/w/folder-a', '/w/repo-b', '/w/repo-c'], opts), '/w/repo-b');
+  const given = ['/w/repo-c', '/w/repo-b', '/w/folder-a'];
+  assert.equal(viewerIdentityDir(given, opts), '/w/repo-b', 'project-key order, as a run sorts its members');
+  assert.deepEqual(given, ['/w/repo-c', '/w/repo-b', '/w/folder-a'], 'the given list is left as it was');
+  assert.equal(viewerIdentityDir(['/w/repo-b'], opts), '/w/repo-b');
+  assert.equal(viewerIdentityDir(['/w/folder-a'], opts), null);
+  assert.equal(viewerIdentityDir([], opts), null);
+  assert.equal(viewerIdentityDir(undefined, opts), null);
 });

@@ -88,6 +88,15 @@ test('prNotice: Azure DevOps token, errors, cut-off listings and the unsupported
   assert.match(prNotice(doc, { status: { gh: 'ok', bitbucket: 'missing', actionRepos: [], unsupportedRepos: [] } }).textContent, /WORCA_BB_TOKEN/);
   assert.match(prNotice(doc, { status: { gh: 'ok', bitbucket: 'unauthenticated', actionRepos: [], unsupportedRepos: [] } }).textContent, /Bitbucket refused the token/);
   assert.match(prNotice(doc, { status: { gh: 'ok', bitbucket: 'ok', bitbucketError: 'Bitbucket 500: boom', actionRepos: [], unsupportedRepos: [] } }).textContent, /Bitbucket did not answer for some pull requests: Bitbucket 500: boom/);
+  assert.match(prNotice(doc, { status: { gh: 'ok', bitbucket: 'ok', bitbucketTruncated: ['bitbucket.org/acme/api'], actionRepos: [], unsupportedRepos: [] } }).textContent,
+    /bitbucket\.org\/acme\/api has more pull requests than one listing covers; older runs there may show without merge data/);
+  assert.equal(prNotice(doc, { status: { gh: 'ok', bitbucket: 'ok', bitbucketTruncated: [], actionRepos: [], unsupportedRepos: [] } }), null);
+});
+
+test('prNotice: a failed request to Worca is its own line and names no git host', () => {
+  const n = prNotice(doc, { status: { gh: 'unused', worcaError: 'HTTP 502', actionRepos: [], unsupportedRepos: [] } });
+  assert.match(n.textContent, /Worca could not look up pull requests: HTTP 502/);
+  assert.doesNotMatch(n.textContent, /GitHub|Azure|Bitbucket/);
 });
 
 test('popover: status, reason, PR links (http only), runs', () => {

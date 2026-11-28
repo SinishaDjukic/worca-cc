@@ -102,7 +102,7 @@ workspace runs follow that switch).
 ## Cost
 
 The Overview tab opens with three chips: **Overview** (the
-page as before), **By person** (the By actor table on its own) and **Cost**. Cost is the same Cost and
+page as before), **By person** (the leaderboard and the By actor table) and **Cost**. Cost is the same Cost and
 value report as Statistics › Cost (see [statistics.md](./statistics.md)): KPIs, a filter bar,
 Allocate by → then by, a stacked area chart, one expandable table, saved views and Download CSV, over
 every team record in the range. The chosen chip, the report's choices and its saved views are kept in
@@ -127,6 +127,52 @@ without `client`.
 **Download CSV** saves `team-metrics-<scope>-<range>-cost-<key>.csv` with the Statistics report's
 columns: the dimension(s), `spendUsd`, `runs`, `finished`, `stopped`, `failed`, `running`, `paused`,
 `prsOpened`, `prsMerged`, `humanHours`, `savedUsd`, `usdPerHour`.
+
+## Leaderboard and Worca levels
+
+**By person** opens with a **Worca Orchestrator Leaderboard** card: a friendly competition between the people
+who ran runs on the team. Its period has its own buttons (This month, Last month, Quarter, Year, All time; This
+month is the default and the choice is kept in this browser) and ignores the page's range, tag and row
+filters. Periods are calendar periods in UTC, the same as the page's range chips.
+
+**Score.** Out of 100: merged pull requests 35, success rate 35, runs 15, spend per run 15. Each part is compared with
+the best person on the team in the same period (a person's runs divided by the most runs anyone has, and so
+on; for spend per run, lower is better), so the score says how close someone is to the best of the team, not
+how big the team is. A card row shows the score with a bar split into the four parts, then each part's raw number
+with "points / weight" under it.
+Runs without a recorded cost are left out of spend per run only (the card says "N of M costed").
+
+**Who is ranked.** A person needs at least 3 runs started in the period; people with 1 or 2 are listed under
+**Not eligible yet** with "needs N more run(s)", and people with no run in the period are not listed. Equal
+scores (to one decimal) share a rank and are joint winners. An open period says **Leading so far** and
+"Ends in N days · ranking can still change", with the leader's avatar and score; a closed one (Last month) says **Winner** and the date it
+closed; All time says **All-time leader**. With no runs the card says "No winner yet", and when nobody has 3
+runs it says "No winner for this period".
+
+**Merged pull requests** are counted per person: the number of distinct merged pull requests behind their runs in
+the period, so two runs on one pull request count once, and a pull request shared by two people counts for each
+of them. (Earlier builds counted merged runs, so a number you saw before can be lower now.) Runs are matched to
+pull requests exactly as the [Timeline](#timeline) does (the Action's
+events, this machine's runs, GitHub through `gh`, Azure DevOps and Bitbucket through their tokens, and the
+cache). The card paints first with "Checking merged pull requests…" and repaints when the answer arrives.
+When GitHub, Azure DevOps or Bitbucket cannot be reached (no CLI or token, a refused token, or an error), runs
+whose pull request could not be checked count as not merged and the card names the provider and why: no sign-in
+on this machine, a refused sign-in, or could not be reached. It also names an Azure DevOps or Bitbucket repository
+with more pull requests than one listing covers (older runs there may count as not merged). When the request to
+Worca itself fails, the card says "Worca could not look up pull requests" and pull requests it could not check count as not merged; it names no
+git host.
+
+**Levels.** Levels are **off by default**: a team turns them on with the team-policy field
+`metrics.showLevels` ([Team policy](team-policy.md)), read from the policy this machine already holds (never
+fetched for this). Without it the Level column, the leaderboard avatars and the level lines are left out, and
+Team metrics reads no level. When on, each person in the By actor table (Overview and By person) and on the
+leaderboard shows a Worca level badge. A Worca level is worked out on each person's own machine and is private, so Team metrics only
+shows the real level (name and icon) for **you**; everyone else shows **Level unknown** with a neutral icon.
+You are found by your signed-in name, or, on a single-person install, by your git name or the key of your git
+email on the records (for a workspace, read from the first member that is a Git checkout, where its runs
+record it — not from the metrics home). If you have not reached a level yet the badge says "No level yet".
+Your level is the one the account menu shows, so a level-up appears on the leaderboard as it happens; **Refresh**
+reads it again, and when a read fails the level already on screen stays.
 
 ## Timeline
 

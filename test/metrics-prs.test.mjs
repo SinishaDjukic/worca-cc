@@ -416,5 +416,26 @@ test('Bitbucket: a refused token is status unauthenticated; a listing cut off by
     assert.equal(cut.status.bitbucket, 'ok');
     assert.equal(cut.prs.b3, null, 'a cut-off listing proves nothing about the branch');
     assert.equal(cut.status.checked, 0);
+    assert.deepEqual(cut.status.bitbucketTruncated, ['bitbucket.org/acme/api'], 'the notice names the cut-off repo');
+  } finally { bitbucketPr._testing.reset(); }
+});
+
+test('Bitbucket: a cut-off listing that still found every needed branch names no repo; a complete one names none', async () => {
+  freshCache();
+  _testing.setNow(() => NOW);
+  const runs = [{ id: 'b4', repos: ['bitbucket.org/acme/api'], branch: 'worca/d', endedAt: '2026-09-20T08:00:00Z' }];
+  const pr = { id: 9, state: 'OPEN', source: { branch: { name: 'worca/d' }, repository: { full_name: 'acme/api' } }, destination: { branch: { name: 'main' } } };
+  try {
+    let n = 1;
+    bitbucketPr._testing.setFetch(async () => ({ status: 200, ok: true, headers: { get: () => null },
+      json: async () => ({ values: n === 1 ? [pr] : [], next: `https://api.bitbucket.org/2.0/repositories/acme/api/pullrequests?page=${++n}` }) }));
+    const cut = await withEnv({ ...NO_ADO, WORCA_BB_TOKEN: 'bbtok' }, () => resolveRunPrs({ runs }));
+    assert.equal(cut.prs.b4[0].number, 9, 'the branch was inside the cap');
+    assert.deepEqual(cut.status.bitbucketTruncated, [], 'nothing was left unknown, so no notice');
+
+    freshCache();
+    bitbucketPr._testing.setFetch(async () => ({ status: 200, ok: true, headers: { get: () => null }, json: async () => ({ values: [pr] }) }));
+    const whole = await withEnv({ ...NO_ADO, WORCA_BB_TOKEN: 'bbtok' }, () => resolveRunPrs({ runs }));
+    assert.deepEqual(whole.status.bitbucketTruncated, []);
   } finally { bitbucketPr._testing.reset(); }
 });

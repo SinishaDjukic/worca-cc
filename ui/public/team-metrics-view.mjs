@@ -5,6 +5,7 @@
 import { niceScale, roundedTopBar, savedMultChip } from './stats-view.mjs';
 import { safeHttpUrl, recordTags } from '../../src/shared/team-metrics/aggregate.mjs';
 import { dimensionLabel } from '../../src/shared/tag-dimensions.mjs';
+import { renderLeaderboardCard, renderLevelBadge } from './team-metrics-leaderboard.mjs';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -363,8 +364,10 @@ function cellText(key, row) {
   }
 }
 
-export function renderBreakdownTable(dim, rows, { doc = globalThis.document, sort = null, activeKey = null, homeSlug = null } = {}) {
+export function renderBreakdownTable(dim, rows, { doc = globalThis.document, sort = null, activeKey = null, homeSlug = null, levelFor = null } = {}) {
   const spec = BREAKDOWN_SPECS[dim];
+  // The Level column is not a data column (nothing to sort on): added at render time, only for people.
+  const withLevel = dim === 'actor' && typeof levelFor === 'function';
   const card = h(doc, 'section', 'card chart-card tm-breakdown');
   const head = h(doc, 'div', 'card-head');
   head.append(h(doc, 'h2', null, spec.title), h(doc, 'small', 'hint', spec.sub));
@@ -377,6 +380,7 @@ export function renderBreakdownTable(dim, rows, { doc = globalThis.document, sor
     if (label) { th.dataset.sort = key; th.setAttribute('role', 'button'); th.tabIndex = 0; }
     if (sort && sort.key === key) th.setAttribute('aria-sort', sort.dir === 'asc' ? 'ascending' : 'descending');
     thr.append(th);
+    if (withLevel && key === 'label') thr.append(h(doc, 'th', null, 'Level'));
   }
   const thead = h(doc, 'thead');
   thead.append(thr);
@@ -412,13 +416,19 @@ export function renderBreakdownTable(dim, rows, { doc = globalThis.document, sor
       // Some runs in the row predate per-project file counts: the number covers the others.
       if (key === 'filesChanged' && r.filesUnknown > 0 && r.filesChanged != null) td.title = `${r.filesUnknown} older run${r.filesUnknown === 1 ? '' : 's'} without per-project file counts not included`;
       tr.append(td);
+      if (withLevel && key === 'label') {
+        const lv = h(doc, 'td');
+        lv.dataset.label = 'Level';
+        if (r.isNone) lv.textContent = '—'; else lv.append(renderLevelBadge(levelFor(r.label), { doc }));
+        tr.append(lv);
+      }
     }
     tbody.append(tr);
   }
   if (!sorted.length) {
     // `.hint{display:block}` (style.css:355) on a <td> takes the cell out of table layout and the
     // row collapses. Keep the class on an inner <small>.
-    const tr = h(doc, 'tr'); const td = h(doc, 'td'); td.colSpan = spec.cols.length;
+    const tr = h(doc, 'tr'); const td = h(doc, 'td'); td.colSpan = spec.cols.length + (withLevel ? 1 : 0);
     td.append(h(doc, 'small', 'hint', 'No runs in this range')); tr.append(td); tbody.append(tr);
   }
   table.append(tbody);
@@ -615,14 +625,15 @@ export function renderTmViewChips(view, { doc = globalThis.document } = {}) {
   return seg;
 }
 
-export function renderTeamMetricsBody(agg, { doc = globalThis.document, now = Date.now(), scopeKind = 'project', sort = {}, filter = {}, homeHint = null, runLimit = 50, tagKeys = [], tagDims = [], view = null, costEl = null } = {}) {
+export function renderTeamMetricsBody(agg, { doc = globalThis.document, now = Date.now(), scopeKind = 'project', sort = {}, filter = {}, homeHint = null, runLimit = 50, tagKeys = [], tagDims = [], view = null, costEl = null, levelFor = null, leaderboard = null, lbRange = null, mergedState = 'ok', mergedGaps } = {}) {
   const wrap = h(doc, 'div', 'tm-body');
   if (homeHint) wrap.append(homeHint);
   if (view) wrap.append(renderTmViewChips(view, { doc }));
   if (view === 'person') {
+    if (leaderboard) wrap.append(renderLeaderboardCard(leaderboard, { doc, levelFor: levelFor || undefined, now, mergedState, mergedGaps, lbRange }));
     const g = h(doc, 'div', 'charts-grid people-grid tm-breakdowns');
     if (agg.breakdowns.actor) {
-      g.append(renderBreakdownTable('actor', agg.breakdowns.actor, { doc, sort: sort.actor || null, activeKey: filter.actor ?? null, homeSlug: agg.homeSlug ?? null }));
+      g.append(renderBreakdownTable('actor', agg.breakdowns.actor, { doc, sort: sort.actor || null, activeKey: filter.actor ?? null, homeSlug: agg.homeSlug ?? null, levelFor }));
     } else {
       const card = h(doc, 'section', 'card chart-card tm-breakdown');
       const head = h(doc, 'div', 'card-head'); head.append(h(doc, 'h2', null, 'By actor'));
@@ -655,7 +666,7 @@ export function renderTeamMetricsBody(agg, { doc = globalThis.document, now = Da
   for (const dim of dims) {
     const rows = agg.breakdowns[dim];
     if (!rows) continue;
-    tables.append(renderBreakdownTable(dim, rows, { doc, sort: sort[dim] || null, activeKey: filter[dim] ?? null, homeSlug: agg.homeSlug ?? null }));
+    tables.append(renderBreakdownTable(dim, rows, { doc, sort: sort[dim] || null, activeKey: filter[dim] ?? null, homeSlug: agg.homeSlug ?? null, levelFor }));
   }
   wrap.append(tables);
   wrap.append(renderRunsTable(agg.runs, { doc, total: agg.runs.length, limit: runLimit }));

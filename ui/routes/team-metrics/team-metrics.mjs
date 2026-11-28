@@ -3,10 +3,33 @@
 import { effectiveHumanRateUsd } from '../../../src/core/human-rate.mjs';
 import { MAX_LOOKUPS as TM_MAX_PR_LOOKUPS, listPrEvents, resolveRunPrs } from '../../../src/core/metrics/prs.mjs';
 import { aggregate, isGroupBy, listScopes, parseScopeParam, readScope, resolveRange, scopeSources } from '../../../src/core/metrics/read.mjs';
-import { discoverAll, flushAll, flushProject, flushSlug, scheduleFlush, slugDirName } from '../../../src/core/metrics/sync.mjs';
+import { personKey } from '../../../src/core/metrics/record.mjs';
+import { discoverAll, flushAll, flushProject, flushSlug, gitUserEmail, gitUserName, scheduleFlush, slugDirName } from '../../../src/core/metrics/sync.mjs';
+import { isSharedIdentity, resolveIdentity } from '../../../src/core/identity.mjs';
 import { listProjects } from '../../../src/core/projects.mjs';
+import { scopePolicyValue } from '../../../src/core/policy/scope.mjs';
 import { parseTag } from '../../../src/shared/run-tags.mjs';
 import { badRequest, sendMetricsError } from '../../server.mjs';
+
+/**
+ * Who the page's viewer is, as the names and key their runs are recorded under — so the page can mark
+ * the viewer's own row. Only for an install that is one person (local, or an operator-named one): behind a
+ * per-person sign-in the page already knows the name (/api/whoami). A failing git call leaves that part out.
+ */
+async function viewerOf(req, projectDir) {
+  const who = resolveIdentity(req);
+  if (isSharedIdentity(who.source)) return { names: [], actorKey: null };
+  const names = [];
+  if (who.source === 'operator') names.push(who.name);
+  let gitName = null;
+  let gitEmail = null;
+  if (projectDir) {
+    try { gitName = await gitUserName(projectDir); } catch { /* the part is left out */ }
+    try { gitEmail = await gitUserEmail(projectDir); } catch { /* the part is left out */ }
+  }
+  if (gitName && !names.includes(gitName)) names.push(gitName);
+  return { names, actorKey: personKey(gitEmail) };
+}
 
 export function register(app) {
 
@@ -49,6 +72,9 @@ app.get('/api/team-metrics', async (req, res) => {
       sync: read.sync,
       refresh: read.refresh,
       fetchError: read.fetchError,
+      viewer: await viewerOf(req, read.identityProjectDir),
+      // What the page may show beyond the records. Levels are off unless the team policy says exactly true (cache-only read).
+      display: { levels: (await scopePolicyValue(scope, 'metrics.showLevels')) === true },
     });
   } catch (err) { sendMetricsError(res, err); }
 });

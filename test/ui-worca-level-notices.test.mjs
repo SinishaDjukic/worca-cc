@@ -96,3 +96,22 @@ test('at Runner the queue is dropped without a toast', async () => {
   await w.refreshNow();
   assert.equal(toasts.length, 0);
 });
+
+test('reload reads the view again and repaints; a failed read keeps the view that was held', async () => {
+  const answers = [viewAt(1, 1), new Error('offline'), viewAt(2, 3)];
+  let repaints = 0;
+  const w = createWorcaLevelWiring({
+    menu: { prepend() {}, querySelector: () => null, replaceChildren() {} }, repaint: () => { repaints += 1; }, isSettled: () => false, setupOpen: () => false,
+    notify() {}, fetchView: async () => { const a = answers.shift(); if (a instanceof Error) throw a; return a; }, doc: { getElementById: () => null },
+  });
+  await w.reload();
+  const held = w.state.view;
+  assert.equal(held.level.index, 1);
+  assert.equal(repaints, 1);
+  await w.reload();
+  assert.equal(w.state.view, held, 'a failed read never turns a known level into none');
+  assert.equal(repaints, 1);
+  await w.reload();
+  assert.equal(w.state.view.level.index, 2);
+  assert.equal(repaints, 2);
+});
