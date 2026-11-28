@@ -3,6 +3,9 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { renderShipCard, buildShipChatCard, shipSummaryLine, setShipDialogOpener } from '../ui/public/shape/ship-card.mjs';
+// Slice 7: the judged ledger, as the server builds it with the flag on.
+import { shipLedger } from '../src/shared/shape/ship-ledger.mjs';
+import { icon } from '../ui/public/icons.mjs';
 
 const doms = [];
 afterEach(() => { for (const d of doms.splice(0)) d.window.close(); });
@@ -258,10 +261,10 @@ const DONE_SR = SR({ ...READY_SR, order: [
   { index: 3, pipelineId: 'p3', title: 'Share', pr: { number: 12, url: 'https://x/pull/12' }, onto: 11 },
   { index: 2, pipelineId: 'p2', title: 'Search', pr: { number: 13, url: 'https://x/pull/13' }, onto: null }] });
 let srFeature = 0;
-const srCard = (sr, { phase = 'ready', onConfirm = async () => ({ ok: true }), countShown = false, titleShown = false, featureId = `feat_sr${++srFeature}` } = {}) => {
+const srCard = (sr, { phase = 'ready', onConfirm = async () => ({ ok: true }), onAcknowledge = async () => ({ ok: true }), countShown = false, titleShown = false, featureId = `feat_sr${++srFeature}` } = {}) => {
   const doc = docOf();
   const el = renderShipCard(doc, { phase, featureId, title: 'Charts', runs: 3, smallRuns: sr, result: phase === 'applied' ? { mode: 'stacked' } : null },
-    { onConfirm, countShown, titleShown });
+    { onConfirm, onAcknowledge, countShown, titleShown });
   doc.body.appendChild(el);
   return { el, doc };
 };
@@ -449,6 +452,39 @@ test('D1 done: N PRs open, no step head, the Care row once above one .srows row 
   assert.equal(el.querySelectorAll('a[href]').length, 0, 'no raw links');
 });
 
+// ---- A feature shipped as one PR: every run holds the same url, and the card counts it once (R-po-1) ----
+const ONE_URL = 'https://x/pull/40';
+const ONE_SR = SR({ ...READY_SR, base: 'main', order: [1, 2, 3, 4, 5].map((i) => ({ index: i, pipelineId: `p${i}`, title: `Slice ${i}`,
+  pr: { number: 40, url: ONE_URL }, onto: null })) });
+const oneApplied = (sr, handlers = {}) => {
+  const doc = docOf();
+  const el = renderShipCard(doc, { phase: 'applied', featureId: `feat_one${++srFeature}`, title: 'Charts', runs: 5, smallRuns: sr, shipMode: 'one',
+    result: { mode: 'one' } }, handlers);
+  doc.body.appendChild(el);
+  return el;
+};
+
+test('small-runs done card after a One ship: 1 PR open, one row for runs 1–5, one PR holding every run', () => {
+  for (const sr of [ONE_SR, { ...ONE_SR, along: true }]) {
+    const el = oneApplied(sr);
+    assert.equal(el.querySelector('.ask-shipcard-done').textContent, '1 PR open');
+    assert.deepEqual([...el.querySelectorAll('.ask-shipcard-stats')].map((x) => x.textContent), ['one PR holding every run']);
+    const rows = [...el.querySelectorAll('.ask-shipcard-prs .plan-check-row')];
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].querySelector('.plan-check-id').textContent, '#40');
+    assert.equal(rows[0].querySelector('.plan-check-label').textContent, 'runs 1–5', 'the feature title is in the head, not repeated');
+    assert.equal(rows[0].querySelector('.plan-check-detail').textContent, 'into main');
+    assert.equal(el.querySelectorAll('.rd-kv-row[data-fact="care"]').length, 1);
+    assert.ok(el.querySelector('[data-act="ship-view-prs"]'));
+  }
+});
+
+test('small-runs done card after a One ship in the chat (countShown): no count line of its own, still one row', () => {
+  const el = oneApplied(ONE_SR, { countShown: true });
+  assert.equal(el.querySelector('.ask-shipcard-done'), null);
+  assert.equal(el.querySelectorAll('.ask-shipcard-prs .plan-check-row').length, 1);
+});
+
 // ---- Slice 4 (D11): `along` says the server listed the PRs along the real branches ----
 test('small-runs done card with `along`: the stats line reads "stacked along the real branches" above the same rows', () => {
   const read = (sr) => {
@@ -465,8 +501,8 @@ test('small-runs done card with `along`: the stats line reads "stacked along the
 
 // ---- Small runs D3 (D5): the rows read the server's one `shown` status when it is there ----
 const SHOWN = (owner, word, mark, role = null, text = `${owner} · ${word}`) => ({ owner, role, word, text, mark });
-test('small-runs rows with shown: owned note shown.text, a marked confirmed note keeps D1\'s text, a waiting one still reads `confirmed by a person · Compliance`; without shown D1\'s notes stay', () => {
-  const waiting = SR({ confirmed: [{ ...SR_ROW('waiting'), shown: SHOWN('confirmed by a person', 'Compliance', 'wait', 'Compliance', 'confirmed by a person · Compliance') }],
+test('small-runs rows with shown: owned note shown.text, a marked confirmed note keeps D1\'s text, a waiting one reads its shown.text; without shown D1\'s notes stay', () => {
+  const waiting = SR({ confirmed: [{ ...SR_ROW('waiting'), shown: SHOWN('confirmed by a person', 'waiting for you to confirm', 'wait', 'Compliance', 'waiting for you to confirm · Compliance') }],
     owned: [{ id: 'R-po-1', text: 'People see it', run: 1, status: 'holds', shown: SHOWN('run 1', 'met', 'check') },
       { id: 'R-po-2', text: 'People pin it', run: 2, status: 'holds', shown: SHOWN('run 2', 'being built', 'live') }] });
   const { el } = srCard(waiting);
@@ -475,7 +511,7 @@ test('small-runs rows with shown: owned note shown.text, a marked confirmed note
   assert.deepEqual(owned.map((r) => r.querySelector('.plan-check-mark').getAttribute('aria-label')), ['met', 'being built']);
   assert.ok(owned[1].querySelector('.plan-check-mark').classList.contains('is-live'), 'the mark is shown.mark');
   assert.equal(owned[1].title, 'R-po-2 · People pin it · run 2 · being built');
-  assert.equal(el.querySelector('.ask-shipcard-confirmed .plan-check-detail').textContent, 'confirmed by a person · Compliance');
+  assert.equal(el.querySelector('.ask-shipcard-confirmed .plan-check-detail').textContent, 'waiting for you to confirm · Compliance');
   const at = '2026-11-22T16:55:00.000Z';
   const marked = SR({ ...READY_SR, confirmed: [{ ...SR_ROW('confirmed', at), shown: SHOWN('confirmed by a person', 'confirmed by Compliance', 'check', 'Compliance', 'confirmed by Compliance') }] });
   const d = new Date(at);
@@ -506,4 +542,261 @@ test('D1 done: "1 PR open"; the Not met / Dropped rows under the PRs; countShown
   const shown = srCard(DONE_SR, { phase: 'applied', countShown: true }).el;
   assert.equal(shown.querySelector('.ask-shipcard-done'), null);
   assert.doesNotMatch(shown.textContent, /PRs open/);
+});
+
+// ---- Slice 5 (R-po-2): the ready card names the carried runs; the button counts the pull requests Ship will open ----
+const CARRIED_LINE = "Run 2's work ships in run 3's pull request (#40 is open)";
+const pr = (n) => ({ number: n, url: `https://x/pull/${n}`, state: 'OPEN' });
+const listedRun = (index, p = null) => ({ index, pipelineId: `p${index}`, title: `Slice ${index}`, pr: p, onto: null });
+/** Runs 1, 3, 4, 5 and 7 listed (run 7 has its own open PR), runs 2 and 6 carried: 4 new pull requests. The second
+ *  line is not the words the entry's fields would give: the card shows the server's line. */
+const CARRIED_SR = SR({ ...READY_SR, along: true, newPrs: 4, order: [listedRun(1), listedRun(3), listedRun(4), listedRun(5), listedRun(7, pr(47))],
+  carried: [{ index: 2, by: 3, title: 'Slice 2', pr: pr(40), line: CARRIED_LINE },
+    { index: 6, by: 7, title: 'Slice 6', pr: pr(46), line: 'the server\'s line for run 6' }] });
+const carriedLines = (el) => [...el.querySelectorAll('.ask-shipcard-carried li')].map((li) => li.textContent);
+const createLabel = (el) => el.querySelector('[data-act="ship-create"]').textContent;
+
+test('ready with a carried run: one .ask-shipcard-carried li per line, after the stats line, each with the merge icon; the button reads Create 4 PRs', () => {
+  const { el, doc } = srCard(CARRIED_SR);
+  const list = el.querySelector('.ask-shipcard-carried');
+  assert.ok(list, 'the ready card has the carried list');
+  assert.equal(list.tagName, 'UL');
+  assert.equal(el.querySelectorAll('.ask-shipcard-carried').length, 1);
+  assert.equal(el.querySelector('.ask-shipcard-stats').nextElementSibling, list, 'right after the state line');
+  assert.deepEqual(carriedLines(el), [CARRIED_LINE, 'the server\'s line for run 6']);
+  const merge = icon(doc, 'merge', 14);
+  for (const li of list.querySelectorAll('li')) {
+    assert.equal(li.firstElementChild.outerHTML, merge.outerHTML, 'each line leads with the 14px merge icon');
+    assert.equal(li.lastElementChild.tagName, 'SPAN');
+    assert.equal(li.lastElementChild.textContent, li.textContent);
+  }
+  assert.equal(createLabel(el), 'Create 4 PRs');
+  assert.equal(createLabel(srCard({ ...CARRIED_SR, newPrs: 1 }).el), 'Create PR');
+  // A blocked card is still before shipping: it names the carried runs too.
+  const blocked = srCard(SR({ newPrs: 4, carried: CARRIED_SR.carried })).el;
+  assert.deepEqual(carriedLines(blocked), carriedLines(el));
+});
+
+test('no carried: no .ask-shipcard-carried element; without newPrs the label is Create 3 PRs from order.length', () => {
+  for (const sr of [READY_SR, { ...READY_SR, newPrs: 3 }, { ...READY_SR, newPrs: 3, carried: [] }]) {
+    const { el } = srCard(sr);
+    assert.equal(el.querySelector('.ask-shipcard-carried'), null);
+    assert.equal(createLabel(el), 'Create 3 PRs');
+  }
+});
+
+test('applied card shows no carried list', () => {
+  assert.equal(carriedLines(srCard(CARRIED_SR).el).length, 2, 'the ready card of the same feature lists them');
+  const done = srCard({ ...CARRIED_SR, order: DONE_SR.order }, { phase: 'applied' }).el;
+  assert.equal(done.querySelector('.ask-shipcard-carried'), null);
+  assert.ok(!done.textContent.includes(CARRIED_LINE));
+});
+
+// ── Slice 7 (R-ux-2, R-arch-4, D16): the words name you, no chat says this page, #40 is named once ─────────────
+const S7_AGREED = [{ id: 'R-ux-2', text: 'The words say who confirms' }];
+const S7_KINDS = [{ id: 'R-ux-2', kind: 'confirmed', role: 'design' }];
+const s7Judged = (acceptance = []) => SR({ owned: [], ...shipLedger({ agreed: S7_AGREED, kinds: S7_KINDS, acceptance, runs: [{ index: 1, state: 'done' }] }) });
+
+test('s7 R-ux-2: the card\'s waiting row reads waiting for you to confirm · Design, a met one confirmed by you · Design', () => {
+  const { el } = srCard(s7Judged());
+  const note = (card) => card.querySelector('.ask-shipcard-confirmed .plan-check-detail').textContent;
+  assert.equal(note(el), 'waiting for you to confirm · Design');
+  assert.doesNotMatch(el.textContent, /confirmed by a person/);
+  const why = el.querySelector('.ask-shipcard-why');
+  assert.equal(why.textContent, 'Waiting for you to confirm R-ux-2');
+  assert.equal(why.querySelector('a'), null, 'plain text: it sits on the card it would link to');
+  assert.equal(el.querySelector('[data-act="ship-create"]').disabled, true);
+  const met = srCard(s7Judged([{ id: 'R-ux-2', mark: 'met', at: '2026-11-22T16:55:00.000Z' }])).el;
+  assert.match(note(met), /^confirmed by you · Design · \d\d:\d\d$/);
+});
+
+test('s7 R-arch-4: the waiting Ship card of a feature with no chat says "on this page."', () => {
+  const text = (over) => renderShipCard(docOf(), { phase: 'waiting', runs: 5, ...over }, {}).textContent;
+  assert.equal(text({ hasChat: false }), 'Ship card comes when all 5 runs are done, on this page.');
+  assert.equal(text({ hasChat: true }), 'Ship card comes when all 5 runs are done, here and in the chat.');
+  assert.equal(text({}), 'Ship card comes when all 5 runs are done, here and in the chat.');
+});
+
+test('s7: the card names #40 once', () => {
+  const sr = SR({ ...READY_SR, along: true, newPrs: 4, order: [listedRun(1), listedRun(3), listedRun(4), listedRun(5)],
+    carried: [{ index: 2, by: 3, title: 'Slice 2', pr: pr(40), line: CARRIED_LINE }] });
+  const { el } = srCard(sr);
+  assert.equal(el.textContent.split('#40').length - 1, 1, el.textContent);
+  assert.deepEqual(carriedLines(el), [CARRIED_LINE]);
+});
+
+// ── Slice 8 (R-po-3, D12): the Ship card lists each gap shipped as is ─────────────────────────────────────────
+const SHIP_GAP = { id: 'R-po-2', reason: 'covered by a later feature' };
+const gapLines = (el) => [...el.querySelectorAll('.ask-shipcard-gap')];
+
+test("the Ship card lists 'R-po-2 ships with a gap: covered by a later feature'", () => {
+  const { el } = srCard({ ...READY_SR, shippedGaps: [SHIP_GAP] });
+  const lines = gapLines(el);
+  assert.deepEqual(lines.map((l) => l.textContent), ['R-po-2 ships with a gap: covered by a later feature']);
+  assert.ok(lines[0].classList.contains('ask-shipcard-why'), 'the reason line\'s typography');
+  assert.deepEqual([...lines[0].querySelectorAll('.ask-shipcard-id')].map((x) => x.textContent), ['R-po-2'], 'the id is one unbreakable span');
+  assert.equal(el.textContent.split('covered by a later feature').length - 1, 1, 'the reason shows once');
+  assert.ok([...el.querySelectorAll('.ask-shipcard-owned .plan-check-detail')].some((d) => d.textContent === 'run 2 · gap accepted'), 'the row note stays');
+  assert.equal(el.querySelector('[data-act="ship-create"]').disabled, false, 'a shipped gap does not block Ship');
+});
+
+test('the Ship card lists one line per shipped gap from the ledger the server builds, and none without a shipped gap', () => {
+  const ledger = shipLedger({ agreed: [{ id: 'R-po-1', text: 'People see it' }, { id: 'R-po-2', text: 'People pin it' }, { id: 'R-ux-1', text: 'It is dense' }],
+    kinds: [1, 2, 3].map((n) => ({ id: ['R-po-1', 'R-po-2', 'R-ux-1'][n - 1], kind: 'owned', run: n })), acceptance: [],
+    verify: { state: 'accepted', gaps: [], shipped: [SHIP_GAP, { id: 'R-ux-1', reason: 'the next feature redraws it' }] },
+    runs: [1, 2, 3].map((index) => ({ index, state: 'done' })) });
+  const { el } = srCard(SR({ ...READY_SR, ...ledger }));
+  assert.deepEqual(gapLines(el).map((l) => l.textContent),
+    ['R-po-2 ships with a gap: covered by a later feature', 'R-ux-1 ships with a gap: the next feature redraws it']);
+  assert.equal(gapLines(srCard(READY_SR).el).length, 0);
+});
+
+
+// ── Slice 9 (R-po-4, D13/D14): the Verifier's notes, one Acknowledge each ─────────────────────────────────────
+const NOTE_TEXTS = ['the import test takes 40 s', 'the export has no retry'];
+const NOTE = (n, ack = null) => ({ id: `note-${n}`, text: NOTE_TEXTS[n - 1], ack });
+const ACKED = { by: 'ann', at: '2026-11-27T14:02:00.000Z' };
+const notesReason = (open) => `Acknowledge the Verifier's note${open === 1 ? '' : 's'} to ship`;
+/** READY_SR with `items` as the check's notes, blocked while one is open, as the server's ledger builds it. */
+const NOTED = (items, over = {}) => {
+  const open = items.filter((i) => !i.ack).length;
+  return { ...READY_SR, findings: { items, checkAt: '2026-11-27T10:00:00.000Z', open }, blocked: open > 0, reason: open ? notesReason(open) : null, ...over };
+};
+const noteRows = (el) => [...el.querySelectorAll('.ask-shipcard-notes .plan-check-row')];
+const ackButtons = (el) => [...el.querySelectorAll('.ask-shipcard-notes button')];
+const ackBtn = (el, n = 1) => el.querySelector(`[data-act="ship-ack-note-${n}"]`);
+const createBtn = (el) => el.querySelector('[data-act="ship-create"]');
+const stateLine = (el) => el.querySelector('.ask-shipcard-stats').textContent;
+/** The reason lines, the shipped-gap lines aside. */
+const whyLines = (el) => [...el.querySelectorAll('.ask-shipcard-why:not(.ask-shipcard-gap)')];
+const whyTexts = (el) => whyLines(el).map((w) => w.textContent);
+const saidNote = (el) => (el.textContent.match(/acknowledge the Verifier's notes?/gi) || []).length;
+const describedBy = (el) => createBtn(el).getAttribute('aria-describedby');
+
+test('s9: an open note is listed with the wait mark and one Acknowledge button; Create is disabled and described by the state line', () => {
+  const { el } = srCard(NOTED([NOTE(1)], { shippedGaps: [{ id: 'R-po-2', reason: 'covered by a later feature' }] }));
+  const list = el.querySelector('.ask-shipcard-notes');
+  assert.ok(list, 'the notes list');
+  for (const cls of ['plan-checks', 'srows']) assert.ok(list.classList.contains(cls), cls);
+  const rows = noteRows(el);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].querySelector('.plan-check-label').textContent, NOTE_TEXTS[0]);
+  assert.equal(rows[0].querySelector('.plan-check-detail').textContent, 'from the Verifier');
+  assert.ok(rows[0].querySelector('.plan-check-mark.is-wait'), 'the wait mark');
+  assert.deepEqual(ackButtons(el).map((b) => [b.textContent, b.type, b.dataset.act]), [['Acknowledge', 'button', 'ship-ack-note-1']]);
+  const b = ackBtn(el);
+  assert.ok(b.classList.contains('btn') && b.classList.contains('btn-sm') && !b.classList.contains('btn-primary'));
+  // The note is said once, by the state line: no reason line repeats it.
+  assert.deepEqual(whyTexts(el), []);
+  assert.equal(saidNote(el), 1, el.textContent);
+  const stats = el.querySelector('.ask-shipcard-stats');
+  assert.ok(stats.id, 'the state line has an id to be named by');
+  assert.deepEqual([createBtn(el).disabled, createBtn(el).classList.contains('btn-primary'), createBtn(el).getAttribute('aria-describedby')], [true, false, stats.id]);
+  assert.equal(stateLine(el), "Your turn: acknowledge the Verifier's note");
+  // After the shipped-gap lines, before Care.
+  const after = (a, c) => !!(a.compareDocumentPosition(c) & 4);
+  assert.ok(after(el.querySelector('.ask-shipcard-gap'), list), 'after the shipped-gap line');
+  assert.ok(after(list, el.querySelector('.rd-kv-row[data-fact="care"]')), 'before Care');
+});
+
+test('s9: two notes get a button each and the plural words; an acknowledged one reads its time, with a check mark and no button', () => {
+  const two = srCard(NOTED([NOTE(1), NOTE(2)])).el;
+  assert.deepEqual(ackButtons(two).map((b) => b.dataset.act), ['ship-ack-note-1', 'ship-ack-note-2']);
+  assert.equal(stateLine(two), "Your turn: acknowledge the Verifier's notes");
+  const { el, doc } = srCard(NOTED([NOTE(1, ACKED), NOTE(2)]));
+  const rows = noteRows(el);
+  assert.equal(rows.length, 2);
+  assert.match(rows[0].querySelector('.plan-check-detail').textContent, /^acknowledged · \d\d:\d\d$/);
+  assert.equal(rows[0].querySelector('.plan-check-mark').firstElementChild.outerHTML, icon(doc, 'check', 12).outerHTML);
+  assert.equal(rows[0].querySelector('.plan-check-mark.is-wait'), null);
+  assert.deepEqual(ackButtons(el).map((b) => b.dataset.act), ['ship-ack-note-2']);
+  assert.equal(createBtn(el).disabled, true, 'one is still open');
+});
+
+test('s9: Acknowledge posts once, every control is disabled while it is pending, and the answer opens Create', async () => {
+  const calls = []; let release;
+  const { el, doc } = srCard(NOTED([NOTE(1)]), { onAcknowledge: (...a) => { calls.push(a); return new Promise((r) => { release = r; }); } });
+  blurOnDisable(doc);
+  const b = ackBtn(el);
+  assert.ok(b, 'the Acknowledge button');
+  b.focus();
+  b.click(); b.click(); ackBtn(el)?.click();
+  assert.deepEqual(calls, [['note-1']]);
+  assert.deepEqual([...el.querySelectorAll('button')].filter((x) => !x.disabled && x.closest('.ask-shipcard-notes, .ask-shipcard-mark, .ask-mcard-actions'))
+    .map((x) => x.textContent), [], 'nothing can be pressed meanwhile');
+  assert.equal((el.dataset.focus || el.querySelector('[data-focus]')?.dataset.focus), 'ship-ack-note-1', 'a page repaint can give the focus back');
+  release({ ok: true, smallRuns: NOTED([NOTE(1, ACKED)]) });
+  await tick(); await tick();
+  assert.match(noteRows(el)[0].querySelector('.plan-check-detail').textContent, /^acknowledged · \d\d:\d\d$/);
+  assert.deepEqual(ackButtons(el), []);
+  assert.deepEqual([createBtn(el).disabled, createBtn(el).classList.contains('btn-primary'), createBtn(el).hasAttribute('aria-describedby')], [false, true, false]);
+  assert.equal(stateLine(el), 'Ready to ship');
+  assert.equal(el.querySelector('.ask-shipcard-why'), null);
+});
+
+test('s9: a refused acknowledgement shows in the error line, keeps the button and gives it the focus', async () => {
+  const error = 'the Verifier checked again: read its notes, then acknowledge';
+  const { el, doc } = srCard(NOTED([NOTE(1)]), { onAcknowledge: async () => ({ ok: false, error }) });
+  blurOnDisable(doc);
+  assert.ok(ackBtn(el), 'the Acknowledge button');
+  ackBtn(el).focus();
+  ackBtn(el).click();
+  await tick(); await tick();
+  assert.equal(el.querySelector('.ask-card-err').textContent, error);
+  assert.equal(ackBtn(el).disabled, false);
+  assert.equal(doc.activeElement, ackBtn(el));
+  assert.equal(createBtn(el).disabled, true);
+});
+
+test('s9: with no findings the card has no notes list and Create is enabled, as today', () => {
+  const { el } = srCard(READY_SR);
+  assert.equal(el.querySelector('.ask-shipcard-notes'), null);
+  assert.deepEqual([createBtn(el).disabled, stateLine(el)], [false, 'Ready to ship']);
+});
+
+test('s9: the state line names the notes only when they are all that blocks', () => {
+  // The reason a judged feature's ledger builds while a confirmed requirement waits.
+  const reason = 'Waiting for you to confirm R-comp-4';
+  const both = NOTED([NOTE(1)], { confirmed: [SR_ROW('waiting')], waiting: ['R-comp-4'], reason });
+  const { el } = srCard(both);
+  assert.equal(noteRows(el).length, 1, 'the note is listed beside the mark');
+  assert.equal(stateLine(el), 'Your turn: mark what only a person can');
+  assert.deepEqual(whyTexts(el), [reason], 'the other block keeps its reason line');
+  assert.deepEqual([createBtn(el).disabled, describedBy(el)], [true, whyLines(el)[0].id]);
+  assert.equal(stateLine(srCard(NOTED([NOTE(1)])).el), "Your turn: acknowledge the Verifier's note");
+});
+
+test('s15: two open notes say it once too: the state line, no reason line, and Create described by that line', () => {
+  const { el } = srCard(NOTED([NOTE(1), NOTE(2)]));
+  assert.equal(stateLine(el), "Your turn: acknowledge the Verifier's notes");
+  assert.deepEqual(whyTexts(el), []);
+  assert.equal(saidNote(el), 1, el.textContent);
+  const stats = el.querySelector('.ask-shipcard-stats');
+  assert.ok(stats.id, 'the state line has an id to be named by');
+  assert.deepEqual([createBtn(el).disabled, describedBy(el)], [true, stats.id]);
+});
+
+test('s15: a repaint moves the description between the state line and the reason line as the blocks change', async () => {
+  const reason = 'Waiting for you to confirm R-comp-4';
+  // The first answer reopens a mark beside the note; the second closes it again, leaving the note alone.
+  const answers = [NOTED([NOTE(1, ACKED), NOTE(2)], { confirmed: [SR_ROW('waiting')], waiting: ['R-comp-4'], reason }),
+    NOTED([NOTE(1, ACKED), NOTE(2)])];
+  const { el } = srCard(NOTED([NOTE(1), NOTE(2)]), { onAcknowledge: async () => ({ ok: true, smallRuns: answers.shift() }) });
+  const stats = el.querySelector('.ask-shipcard-stats');
+  assert.ok(stats.id, 'the state line has an id to be named by');
+  assert.deepEqual([whyTexts(el), describedBy(el)], [[], stats.id]);
+  ackBtn(el, 1).click();
+  await tick(); await tick();
+  assert.deepEqual(whyTexts(el), [reason]);
+  assert.equal(describedBy(el), whyLines(el)[0].id);
+  ackBtn(el, 2).click();
+  await tick(); await tick();
+  assert.deepEqual([whyTexts(el), describedBy(el)], [[], stats.id]);
+});
+
+test('s9: a note is drawn as text, never as markup', () => {
+  const text = '<img src=x onerror=alert(1)>';
+  const { el } = srCard(NOTED([{ id: 'note-1', text, ack: null }]));
+  assert.equal(noteRows(el)[0]?.querySelector('.plan-check-label').textContent, text);
+  assert.equal(el.querySelector('.ask-shipcard-notes img'), null);
 });

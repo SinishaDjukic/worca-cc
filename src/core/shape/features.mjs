@@ -16,7 +16,7 @@ import { prototypeView } from '../../shared/shape/prototype.mjs';
 import { planVersionOf, startsFromOf, ownsOf } from '../../shared/shape/run-facts.mjs';
 import { requirementsCheck } from '../../shared/review/requirements-coverage.mjs';
 import { acceptanceGate, ledgerCheck } from '../../shared/shape/acceptance.mjs';
-import { shipLedger, unownedReason, careOutcome, unmetLines } from '../../shared/shape/ship-ledger.mjs';
+import { shipLedger, unownedReason, confirmHold, findingsReason, careOutcome, unmetLines, newPrCount, carriedLine, needsNewPr } from '../../shared/shape/ship-ledger.mjs';
 import { rerunsOf } from '../../shared/shape/req-status.mjs';
 import { latestChecklist, checklistMarkdown } from '../../shared/shape/review-checklist.mjs';
 import { buildDecisionLog } from '../../shared/shape/feature-log.mjs';
@@ -27,7 +27,7 @@ import { PLAN_ASK_KIND } from './run.mjs';
 import { SHAPE_SLICE_REQ_WORKFLOW_ID, SHAPE_UX_SLICE_REQ_WORKFLOW_ID } from '../graph/builtin-workflows.mjs';
 import { roundsOf } from './rounds.mjs';
 import { refuseWhileShipping } from './ship-lock.mjs';
-import { verifyView, startVerifyCheck, stillFinishing, roundOpen, shipRuleOn } from './verifier.mjs';
+import { verifyView, startVerifyCheck, stillFinishing, roundOpen, shipRuleOn, checkFindings } from './verifier.mjs';
 import { getWatch, stoppedWatchFact } from '../pr-watch.mjs';
 import { clipTitle } from '../title.mjs';
 import { readRunTags } from '../run-tags-store.mjs';
@@ -278,6 +278,10 @@ export function acceptanceRefusal(view) {
   if (sr) {
     if (!sr.blocked) return null;
     const unowned = sr.unowned || [];
+    // Slice 9 (D9): the Verifier's notes are the only block.
+    if (sr.findings?.open > 0 && sr.reason === findingsReason(sr.findings.open)) {
+      return { error: sr.reason, code: 'FINDINGS_UNACKNOWLEDGED', missing: [], notes: sr.findings.items.filter((n) => !n.ack).map((n) => n.id) };
+    }
     return { error: sr.reason, code: 'ACCEPTANCE_INCOMPLETE', missing: [...sr.waiting, ...unowned],
       role: unowned.length ? null : sr.confirmed.find((c) => c.state === 'waiting')?.role || null };
   }
@@ -297,15 +301,32 @@ function smallRunsShip(f, slices, verify) {
   const root = featureRootSource(f.id);
   const chain = shipChainOf(f.id);
   const list = orderOf(f.id, slices, chain);
+  // Slice 5 (D3): with the flag on, each PR carries its state (a CLOSED one gets a new PR), and the view adds the count of
+  // new PRs and the carried runs' lines; with the flag off the object is the checkpoint's.
+  const on = shaperSmallRunsOn();
+  const prOf = (pr) => (pr && pr.url ? { number: pr.number ?? null, url: pr.url, ...(on ? { state: pr.state ?? null } : {}) } : null);
   const order = list.map((s, i) => {
     const base = i > 0 && s.pipelineId ? (chain ? chainBaseOf(chain, s.pipelineId) : smallRunsPrBase(s.pipelineId)) : null;
     const prev = list[i - 1];
-    return { index: s.index, pipelineId: s.pipelineId, title: s.title,
-      pr: s.pr && s.pr.url ? { number: s.pr.number ?? null, url: s.pr.url } : null,
+    return { index: s.index, pipelineId: s.pipelineId, title: s.title, pr: prOf(s.pr),
       onto: base && base !== root && prev && prev.pr && prev.pr.url ? (prev.pr.number ?? null) : null };
   });
+  const carried = on && chain ? carriedOf(chain, slices, prOf) : [];
   return { ...ledger, care: careOutcome(careOfRow(f), featureFigures(f.id), ledger.met), base: baseName(f.project_dir, root), order,
-    ...(chain ? { along: true } : {}) };
+    ...(chain ? { along: true } : {}), ...(on ? { newPrs: newPrCount(order) } : {}), ...(carried.length ? { carried } : {}) };
+}
+
+/** Slice 5 (D4, D5): `shipChain`'s carried runs as Ship shows them, in run order: `by` is the carrier's run index (an
+ *  entry whose run or carrier is not among the slices is dropped) and `line` is carriedLine's words. */
+function carriedOf(chain, slices, prOf) {
+  const byPid = new Map(slices.filter((s) => s.pipelineId).map((s) => [s.pipelineId, s]));
+  return chain.carried.flatMap((c) => {
+    const s = byPid.get(c.pipelineId);
+    const carrier = byPid.get(c.by);
+    if (!s || !carrier) return [];
+    const pr = prOf(s.pr);
+    return [{ index: s.index, by: carrier.index, title: s.title, pr, line: carriedLine({ index: s.index, by: carrier.index, pr }) }];
+  }).sort((a, b) => a.index - b.index);
 }
 
 /** The root source as the PR names it: `origin/dev` reads `dev` when `origin` is one of the project's remotes (git-info.mjs
@@ -328,10 +349,25 @@ const ledgerOf = (f, verify, status = {}) => shipLedger({ agreed: f.outline.agre
   acceptance: f.outline.acceptance, verify, ...status });
 
 /** Fail closed, for the Runs list: why a feature is not ready to ship although its runs are done (an agreed requirement
- *  has no run and no person), from its row alone; null when none. The caller checks the flag and the marker. */
+ *  has no run and no person), from its row alone; slice 7 (D1): else the confirmation that is still open
+ *  (confirmHold); null when none. The caller checks the flag and the marker. */
 export function shipHold(featureId) {
   const f = featureRow(featureId);
-  return f ? unownedReason(requirementKindsOf(j(f.requirement_kinds, null), f.outline).filter((k) => k.kind === 'owned' && k.run === null).map((k) => k.id)) : null;
+  if (!f) return null;
+  return unownedReason(requirementKindsOf(j(f.requirement_kinds, null), f.outline).filter((k) => k.kind === 'owned' && k.run === null).map((k) => k.id))
+    || confirmHold(ledgerOf(f, null)) || notesHold(f);
+}
+
+/** Slice 9 (D12): the hold while the Verifier's notes on the latest check (stored clean or accepted) are the only thing
+ *  Ship waits for; null otherwise. */
+function notesHold(f) {
+  const c = f.outline.verify && Array.isArray(f.outline.verify.checks) ? f.outline.verify.checks.at(-1) : null;
+  if (!c || (c.state !== 'clean' && c.state !== 'accepted')) return null;
+  const notes = checkFindings(c);
+  if (!notes.findings) return null;
+  const l = ledgerOf(f, { state: c.state, gaps: c.result && Array.isArray(c.result.gaps) ? c.result.gaps : [],
+    ...(Array.isArray(c.shipped) ? { shipped: c.shipped } : {}), ...notes });
+  return l.findings?.open > 0 && l.reason === findingsReason(l.findings.open) ? l.reason : null;
 }
 
 /** A feature's recorded figures (shape_feature_figures, one row), or null. Readable with the flag off; measure.mjs
@@ -393,7 +429,9 @@ export function liveSliceFrom({ runId, status, pendingQuestion = null, approved 
   const value = heldStop ? stopOptionOf(pq && pq.stop, heldStop.payload)?.value : null;
   const stop = pq && pq.stop ? { reason: pq.stop.reason, held: !!heldStop,
     ...(heldStop && Number.isInteger(heldStop.after) ? { after: heldStop.after } : {}), ...(value ? { value } : {}),
-    ...(refused ? { refused } : {}), ...(going ? { going: true } : {}) } : null;
+    ...(refused ? { refused } : {}), ...(going ? { going: true } : {}),
+    // Slice 11 (D14): a Verifier gate's gap count, so its check row and group line can say it.
+    ...(Array.isArray(pq.stop.gaps) ? { gapCount: pq.stop.gaps.length } : {}) } : null;
   return { runId, status: String(status || ''), waiting: plan, asking: !!pq && !plan, approved: !!approved,
     ask: pq ? { id: pq.id || null, kind: plan && pq.plan && pq.plan.outline ? 'outline' : pq.kind } : null, ...(stop ? { stop } : {}) };
 }
@@ -537,6 +575,8 @@ export function featureView(id, { live = () => null, finishing = () => false, on
     ...(ch.changes.length ? { change: ch.change, changes: ch.changes } : {}),
     // Small runs C5 (D12): the latest Verifier check as the card reads it; absent before the first check.
     ...(verify ? { verify } : {}),
+    // Shaper slice 7 (D10): whether a chat follows a marked feature (flag on); read each view, stored nowhere.
+    ...(shaperSmallRunsOn() && smallRunsOfFeature(f.id) ? { hasChat: featureThread(f.id) !== null } : {}),
   };
 }
 
@@ -575,6 +615,11 @@ function stopWords(f, rows, slices, live) {
     if (l && l.heldResume) s.heldResume = { after: l.heldResume.after };   // slice 7 (D10), read by run-status.mjs (s8)
   }
   if (shaperSmallRunsOn()) {
+    // Slice 16 (D4): why a held resume did not go on at its turn, read by run-status.mjs.
+    for (const s of slices) {
+      const l = s.pipelineId ? live(s.pipelineId) : null;
+      if (l && l.resumeRefused) s.resumeRefused = { code: l.resumeRefused.code ?? null, error: l.resumeRefused.error };
+    }
     const holdsByIndex = new Map();
     const rowBySlice = new Map(rows.map((r) => [r.sliceId, r]));
     // Slice 3 (D2): every slice's direct builds-on runs, started ones too (run-status.mjs namedWaits reduces by them).
@@ -613,7 +658,7 @@ function stopWords(f, rows, slices, live) {
 }
 
 /** Small runs: what each slice's one short word reads (run-agents.mjs cardShortWord), from the rows alone (no full view):
- *  index → {kind, state, stop?, waitsFor?, cannotStart?, nextTurn?, buildsOn?, heldResume?, resumeAfter?}, the words featureView's slices carry. */
+ *  index → {kind, state, stop?, waitsFor?, cannotStart?, nextTurn?, buildsOn?, heldResume?, resumeAfter?, resumeRefused?}, the words featureView's slices carry. */
 export function sliceWords(featureId, { live = () => null } = {}) {
   const f = featureRow(featureId);
   if (!f) return new Map();
@@ -688,13 +733,14 @@ export function appendFeatureRun(featureId, { title, goal, kind, by = null, requ
 }
 
 /** The tx-free body of appendFeatureRun (D6): the slice, its ticket, the grown outline and the held notes. `f` must be
- *  the fresh row: the outline written is `f.outline` plus the new slice. */
-function appendRunRows(f, rows, { title, goal, kind, by = null, requirementsFirst = false, requirements = null, now = Date.now() }) {
+ *  the fresh row: the outline written is `f.outline` plus the new slice. Slice 8 (D8): `dependsOn` (slice ids) is what
+ *  the run builds on; the Verifier gate's runs name the last run before them, every other append none. */
+function appendRunRows(f, rows, { title, goal, kind, by = null, requirementsFirst = false, requirements = null, dependsOn = [], now = Date.now() }) {
   const db = getDb();
   const index = rows.length + 1;
   const last = rows[rows.length - 1];
   const s = { id: `s${index}`, title: String(title).slice(0, 120), goal: String(goal || ''), inScope: [], outOfScope: [],
-    acceptance: [], dependsOn: [], estimate: null, ...(kind === 'change' && Array.isArray(requirements) ? { requirements: [...requirements] } : {}) };
+    acceptance: [], dependsOn: Array.isArray(dependsOn) ? [...dependsOn] : [], estimate: null, ...(kind === 'change' && Array.isArray(requirements) ? { requirements: [...requirements] } : {}) };
   const outline = { ...f.outline, slices: [...f.outline.slices, s] };
   const feature = { id: f.id, title: f.title };
   const chained = kind !== 'follow-up';
@@ -778,7 +824,8 @@ export function changeAgreedRequirementsIn(featureId, { changes, entries = [], r
   }
   const added = [];
   for (const a of appendFor) {
-    const r = appendRunRows(f, sliceRows(featureId), { title: a.title, goal: a.goal, kind: 'change', requirements: a.ids, by, now });
+    const r = appendRunRows(f, sliceRows(featureId), { title: a.title, goal: a.goal, kind: 'change', requirements: a.ids,
+      dependsOn: a.dependsOn, by, now });
     added.push({ ownerIndex: a.ownerIndex, index: r.index, ticketId: r.ticketId });
     f = featureRow(featureId);
   }
@@ -848,7 +895,9 @@ export async function featureShipInput(view) {
   // Slice 4: a carried run gets no PR, but its work ships inside a listed run's PR, so the changelog names it.
   const ids = new Set((shipChainOf(view.id)?.carried || []).map((c) => c.pipelineId));
   const carried = view.slices.filter((s) => s.pipelineId && ids.has(s.pipelineId)).map(inputOf);
-  return { id: view.id, title: view.title, slices, ...(carried.length ? { carried } : {}) };
+  // A marked feature's one PR opens with its Care line and its Not met / Dropped lines, once (slice PRs carry them each).
+  const f = smallRunsOfFeature(view.id) ? featureRow(view.id) : null;
+  return { id: view.id, title: view.title, slices, ...(carried.length ? { carried } : {}), ...(f ? { preamble: carePrLines(f) } : {}) };
 }
 
 /** F47: the newest feature in a Re-plan the rest chain (replaced_by), so a host pointed at an old feature shows the
@@ -973,7 +1022,10 @@ export function sliceOfPipeline(pipelineId, { live = () => null } = {}) {
   return { featureId: v.id, title: v.title, index: at.idx, total: v.total, sliceTitle: s ? s.title : '',
     state: s ? s.state : null, next: n ? { index: n.index, title: n.title, state: n.state } : null, ...(s && s.stop ? { stop: s.stop } : {}),
     ...(shaperSmallRunsOn() && smallRunsOfFeature(v.id)
-      ? { ...runFacts(v, at.idx, s), ...(s && Number.isInteger(s.resumeAfter) ? { resumeAfter: s.resumeAfter } : {}) } : {}) };
+      ? { ...runFacts(v, at.idx, s), ...(s && Number.isInteger(s.resumeAfter) ? { resumeAfter: s.resumeAfter } : {}),
+        // Slice 16 (D11): the run page's held words and refusal reason.
+        ...(s && s.heldResume ? { heldResume: { after: s.heldResume.after } } : {}),
+        ...(s && s.resumeRefused ? { resumeRefused: s.resumeRefused } : {}) } : {}) };
 }
 
 const branchOf = (pid) => (pid ? j(getDb().prepare('SELECT branch FROM pipelines WHERE id = ?').get(String(pid))?.branch, null) : null);
@@ -1450,6 +1502,10 @@ export function stackedPrBase(pipelineId, chain) {
   return smallRunsPrBase(pipelineId) ?? stackedPrBaseOf(pipelineId, chain);
 }
 
+/** Slice 5: a run Ship gives a new PR (none yet, or its PR was closed: openMemberPr opens past a CLOSED PR); the Ship
+ *  screens count with the same rule (newPrCount). */
+export const sliceNeedsPr = (s) => !!s.pipelineId && needsNewPr(s.pr);
+
 /** Feature D1 (D4): the order a feature's PRs are opened and marked ready: a marked feature's finished runs in finish
  *  order, then any others in index order; otherwise `view.slices` itself. */
 export function shipOrder(view) {
@@ -1482,6 +1538,7 @@ function shipChainOf(featureId) {
       const branch = workBranchOf(rec);
       return { index: s.index, pipelineId: s.pipelineId, branch: typeof branch === 'string' && branch ? branch : null,
         source: rec && typeof rec.source === 'string' && rec.source ? rec.source : null,
+        from: typeof rec?.sourceFrom === 'string' && rec.sourceFrom ? rec.sourceFrom : null,
         carries: [...names(rec?.tookIn), ...names(rec?.combined)],
         merged: readPrState(s.pipelineId)?.state === 'MERGED', pending: previousBranchesOf(s.pipelineId)?.pending === true };
     });

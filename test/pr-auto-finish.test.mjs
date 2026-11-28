@@ -387,8 +387,8 @@ test('one: 409 already shipping is a no-op; a 409 ACCEPTANCE_INCOMPLETE is held;
   assert.equal(w.notifs.length, 1);
 });
 
-test('one: a not-ready 409 (a round or extra run began during the account check) records nothing and the next settle ships', async () => {
-  for (const code of ['ROUND_LIVE', 'NOT_READY']) {
+test('one: a not-ready 409 (a round or extra run began during the account check, or the flag turned off) records nothing and the next settle ships', async () => {
+  for (const code of ['ROUND_LIVE', 'NOT_READY', 'STACKED_ONLY']) {
     const w = sliceWorld(feature());
     w.shipResult = () => ({ status: 409, body: { code, error: 'still going' } });
     await w.fin.afterSettled(slice('s2'));
@@ -538,15 +538,105 @@ test('small runs C5: a verify-exempt settle records "skipped" and calls the one-
   assert.equal(w.ships.length, 1, 'once');
 });
 
-test('D1: a marked feature with slices one: each settled slice and shipOne record a quiet skip; no waiting text, no ship', async () => {
-  const w = sliceWorld(feature({ marked: true }));
+// ── A feature planned in small runs ships as one pull request (R-arch-1) ──────────────────────────────────────────
+const FIVE = ['s1', 's2', 's3', 's4', 's5'];
+const PER_RUN = 'small runs ship a PR per run';   // the flag-off reason, word for word as before
+/** A marked 5-run feature set to `slices`, with the finisher's small-runs flag `on`. `done.ready`/`done.mode` drive its view. */
+function markedWorld({ on = true, slices: mode = 'one', setting = {} } = {}) {
+  const done = { ready: false, mode: null };
+  const f = feature({ pids: FIVE, marked: true, setting: SETTING({ slices: mode, ...setting }) });
+  f.view = () => ({ id: 'f1', title: 'Charts', ship: { ready: done.ready, mode: done.mode },
+    slices: FIVE.map((p, i) => ({ index: i + 1, pipelineId: p, kind: null })) });
+  const w = world({ runs: Object.fromEntries(FIVE.map((p) => [p, { pa: PA() }])), features: { f1: f } });
+  w.deps.smallRunsOn = () => on;
+  w.fin = createPrAutoFinisher(w.deps);
+  return { w, done };
+}
+const outcomes = (w) => FIVE.map((id) => w.runs[id].pa.outcome);
+
+test('a marked feature with slices one, flag on: no per-run PR, one ship, one feature outcome', async () => {
+  const { w, done } = markedWorld();
+  for (const id of FIVE.slice(0, 4)) await w.fin.afterSettled(slice(id));
+  assert.deepEqual(outcomes(w).slice(0, 4).map((o) => o.status), ['waiting', 'waiting', 'waiting', 'waiting']);
+  assert.equal(w.ships.length, 0, 'not every run is done');
+  done.ready = true;
+  await w.fin.afterSettled(slice('s5'));
+  assert.deepEqual(outcomes(w).map((o) => o.status), FIVE.map(() => 'waiting'), 'no run records a PR of its own');
+  assert.equal(w.members.length, 0, 'openMemberPr is never called');
+  assert.equal(w.opened.length, 0);
+  assert.deepEqual(w.ships.map((s) => [s.id, s.mode]), [['f1', 'one']]);
+  const o = w.features.f1.setting.outcome;
+  assert.deepEqual([o.status, o.final, o.urls], ['opened', true, ['https://github.com/o/r/pull/99']]);
+  // Shipped as One: neither a second look at the feature nor a run settling again opens anything.
+  done.mode = 'one'; done.ready = false;
+  await w.fin.maybeShipOne('f1');
+  delete w.runs.s1.pa.outcome;
   await w.fin.afterSettled(slice('s1'));
-  await w.fin.afterSettled(slice('s2'));
-  for (const id of ['s1', 's2']) assert.deepEqual([w.runs[id].pa.outcome.status, w.runs[id].pa.outcome.reason], ['skipped', 'small runs ship a PR per run']);
+  assert.equal(w.ships.length, 1);
+  assert.equal(w.members.length, 0);
+  assert.match(w.runs.s1.pa.outcome.reason, /^the feature already shipped as one PR/);
+});
+
+test('a marked feature with slices one, flag off, records skipped with the reason as before and calls shipFeatureNow 0 times', async () => {
+  const { w, done } = markedWorld({ on: false });
+  done.ready = true;
+  for (const id of FIVE) await w.fin.afterSettled(slice(id));
+  assert.deepEqual(outcomes(w).map((o) => [o.status, o.reason]), FIVE.map(() => ['skipped', PER_RUN]));
   assert.deepEqual(w.logs, [], 'quiet: no log line, never the one-PR waiting text');
-  assert.equal(w.ships.length, 0);
   await w.fin.maybeShipOne('f1');
   assert.equal(w.ships.length, 0);
-  assert.deepEqual([w.features.f1.setting.outcome.status, w.features.f1.setting.outcome.reason], ['skipped', 'small runs ship a PR per run']);
+  assert.equal(w.members.length, 0);
+  assert.deepEqual([w.features.f1.setting.outcome.status, w.features.f1.setting.outcome.reason], ['skipped', PER_RUN]);
   assert.deepEqual([w.notices, w.notifs, w.logs], [[], [], []]);
+});
+
+test('a marked feature with slices each still opens a PR per run', async () => {
+  const { w } = markedWorld({ slices: 'each' });
+  for (const id of FIVE) await w.fin.afterSettled(slice(id));
+  assert.deepEqual(w.members.map((m) => m.id), FIVE);
+  assert.equal(w.ships.length, 0);
+});
+
+test('a feature outcome recorded skipped under the old rule stays settled and is not rewritten', async () => {
+  const stored = { status: 'skipped', final: true, reason: 'small runs ship a PR per run', at: '2026-03-01T00:00:00.000Z' };
+  const { w, done } = markedWorld({ setting: { outcome: { ...stored } } });
+  done.ready = true;
+  await w.fin.maybeShipOne('f1');
+  assert.equal(w.ships.length, 0);
+  assert.deepEqual(w.features.f1.setting.outcome, stored);
+});
+
+// ── Slice 9 (R-po-4): an unacknowledged Verifier note holds the feature's one PR; only a person clears it ─────
+const notesRefusal = (n) => ({ error: `Acknowledge the Verifier's note${n === 1 ? '' : 's'} to ship`, code: 'FINDINGS_UNACKNOWLEDGED',
+  missing: [], notes: Array.from({ length: n }, (_, i) => `note-${i + 1}`) });
+const NOTES_HELD = (n) => `The feature's pull request waits for you to acknowledge the Verifier's note${n === 1 ? '' : 's'}. It opens once you do, or ship it from the Ship card.`;
+
+test('one: a FINDINGS_UNACKNOWLEDGED refusal is held with reason findings, ships nothing, notices once, and ships once acknowledged', async () => {
+  for (const n of [1, 2]) {
+    let open = n;
+    const w = sliceWorld(feature());
+    w.deps.acceptanceRefusal = () => (open ? notesRefusal(open) : null);
+    w.fin = createPrAutoFinisher(w.deps);
+    await w.fin.afterSettled(slice('s2'));
+    assert.equal(w.ships.length, 0, 'shipFeatureNow is never called');
+    const o = w.features.f1.setting.outcome;
+    assert.deepEqual([o.status, o.final, o.reason, o.left], ['held', false, 'findings', n]);
+    assert.deepEqual(w.notices.map((x) => x.text), [NOTES_HELD(n)]);
+    assert.ok(logTexts(w).includes(NOTES_HELD(n)), logTexts(w).join('\n'));
+    await w.fin.maybeShipOne('f1');
+    assert.deepEqual([w.ships.length, w.notices.length], [0, 1], 'still held: no second notice');
+    open = 0;
+    await w.fin.onAcceptanceChanged('f1');
+    assert.deepEqual([w.ships.length, w.features.f1.setting.outcome.status], [1, 'opened']);
+  }
+});
+
+test('one: a 409 FINDINGS_UNACKNOWLEDGED ship answer is held with reason findings, not blocked', async () => {
+  const w = sliceWorld(feature());
+  w.shipResult = () => ({ status: 409, body: notesRefusal(2) });
+  await w.fin.afterSettled(slice('s2'));
+  const o = w.features.f1.setting.outcome;
+  assert.deepEqual([o.status, o.final, o.reason, o.left], ['held', false, 'findings', 2]);
+  assert.deepEqual(w.notices.map((x) => x.text), [NOTES_HELD(2)]);
+  assert.equal(w.notifs.length, 0, 'no problem notification');
 });

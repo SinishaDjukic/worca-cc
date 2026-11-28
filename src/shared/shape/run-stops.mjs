@@ -9,9 +9,10 @@ import { concernFeedbackSection } from '../review/plan-concern.mjs';
 import { BLOCKING, normalizeSeverity } from '../graph/verdict.mjs';
 import { requirementChangedFeedback, oneLineText } from './req-change.mjs';
 import { noteTitle, noteClause } from './outline-note.mjs';
+import { verifyGateAnswer } from './verifier.mjs';
 
 export const STOP_REASONS = Object.freeze(['check', 'objection', 'requirement']);
-// Small runs C5: the Verifier's bound stop is a `check` stop of the same shape.
+// Small runs C5: the Verifier's gate stop is a `check` stop of the same shape (slice 8: `form: 'gaps'`).
 export { verifyStop } from './verifier.mjs';
 
 const plural = (n, one) => `${n} ${n === 1 ? one : `${one}s`}`;
@@ -163,8 +164,11 @@ export function stopOptionOf(stop, payload) {
   return (d ? optionsOf(stop).find((o) => o.payload.decision === d) : null) || null;
 }
 
-/** Membership only: the payload is exactly one of the stop's options (what the card sends). */
-export const stopAnswerOk = (stop, payload) => optionsOf(stop).some((o) => same(o.payload, payload));
+/** Membership: the payload is exactly one of the stop's options (what the card sends). Slice 8 (D4): a Verifier gap
+ *  stop (`form: 'gaps'`) takes only a complete answer, as verifyGateAnswer decides. */
+export const stopAnswerOk = (stop, payload) => (stop && stop.form === 'gaps'
+  ? verifyGateAnswer(stop, payload).ok
+  : optionsOf(stop).some((o) => same(o.payload, payload)));
 
 /** The one answered line: `Run 8: another cycle · decided by you`. */
 export function stopDoneText(stop, payload) {

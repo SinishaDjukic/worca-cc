@@ -126,16 +126,21 @@ const askName = (q) => (q.kind === 'prototype' ? `prototype:${q.prototype.moment
   : q.kind === 'plan' && q.plan?.outline ? 'outline' : q.kind);
 
 /** One Verifier round: a real wf_shape_verify run built from the check ticket's request, linked to the ticket, settled. */
-async function verifierRound(ticketId, deps) {
+async function verifierRound(ticketId, deps, { gaps = [] } = {}) {
   const t = getTicket(ticketId, { withRequest: true });
   assert.equal(t.request.workflowId, 'wf_shape_verify');
   const orch = createOrchestrator({ projectDir: t.request.projectDir, workflowId: t.request.workflowId, prompt: t.request.prompt,
     claude: { mock: true }, shape: t.request.shape, branch: { source: previousBranchesOf(t.after.id).sourceBranch } });   // as fireTicket does
   const asked = [];
-  orch.on('question', (q) => asked.push(q));
+  // Slice 8: a round with gaps asks before any run is added; this walk answers each with a fix run.
+  orch.on('question', (q) => {
+    asked.push(q);
+    if (q.stop?.form === 'gaps') setImmediate(() => orch.answer(q.id, { decision: 'answer', answers: q.stop.gaps.map((g) => ({ id: g.id, answer: 'fix' })) }));
+  });
   const res = await orch.run();
   assert.equal(res.status, 'done', res.error);
-  assert.deepEqual(asked, [], 'a round within Care\'s bound asks nothing');
+  assert.deepEqual(asked.map((q) => [q.stop?.form, q.stop?.gaps.map((g) => g.id)]), gaps.length ? [['gaps', gaps]] : [],
+    'one gap question for a round with gaps, none for a clean one');
   const pid = orch.getState().id;
   markTicketFired(ticketId, { pipelineId: pid });
   await verifyAfterSettled({ id: pid, status: 'done', pipelineDir: orch.pipeline.dir }, deps);
@@ -252,7 +257,7 @@ test('email for website X: Start to Ship with a stop, a change and a Verifier ga
     const c1 = checks()[0];
     assert.deepEqual(c1.head, { index: 3, pipelineId: r3.pid });
     assert.ok(getTicket(c1.ticketId, { withRequest: true }).request.shape.verify.owned.includes('R-ops-2'), 'the Verifier is sent R-ops-2');
-    await verifierRound(c1.ticketId, deps);
+    await verifierRound(c1.ticketId, deps, { gaps: ['R-ops-2'] });
     let v = featureView(fid);
     assert.equal(v.verify.state, 'gaps');
     assert.equal(v.ship.ready, false);
@@ -285,12 +290,14 @@ test('email for website X: Start to Ship with a stop, a change and a Verifier ga
     assert.equal(v.verify.state, 'clean');
     assert.equal(checks()[1].headSha, git(dir, 'rev-parse', branches[5]), 'the real Verifier run read the head Ship pushes');
     assert.equal(v.ship.ready, true);
-    assert.equal(oneCardModel({ own: null, card: { feature: v, smallRuns: true } }).word, VERIFY_WORDS.clean);
+    // Slice 7: R-comp-4 still waits for your mark, so the checked feature asks for it before it reads Ready to ship.
+    const asked = oneCardModel({ own: null, card: { feature: v, smallRuns: true } });
+    assert.deepEqual([asked.word, asked.detail], ['Needs you', 'Needs your confirmation: R-comp-4']);
 
     // ── 6: Compliance has not marked R-comp-4 yet; Not met needs a reason ──
     r = await ship(fid);
     const blocked = await r.json();
-    assert.deepEqual([r.status, blocked.code, blocked.role, blocked.error], [409, 'ACCEPTANCE_INCOMPLETE', 'compliance', 'Waiting for Compliance to confirm R-comp-4']);
+    assert.deepEqual([r.status, blocked.code, blocked.role, blocked.error], [409, 'ACCEPTANCE_INCOMPLETE', 'compliance', 'Waiting for you to confirm R-comp-4']);
     assert.deepEqual(ghOnly(seen), []);
     assert.equal((await confirm(fid, { id: 'R-comp-4', mark: 'not-met' })).status, 400);
     r = await confirm(fid, { id: 'R-comp-4', mark: 'not-met', reason: REASON });

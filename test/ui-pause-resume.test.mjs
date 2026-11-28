@@ -471,3 +471,126 @@ test('S8: flag off: the /slice stub answers resumeAfter 4, and the same paused r
     assert.equal(label(), 'Resume', `${page}: after a frame`);
   }
 });
+
+// ── Slice 16 (R-qa-4): "More ways to resume" says the run waits for its turn; a held or refused press says why ─────
+const MENU = { saved: '#hist-detail .hd-resume-menu .resume-on-saved small', live: '#run-detail .rd-resume-menu .resume-on-saved small' };
+const SIX_PAGES = [['saved', savedSix], ['live', liveSix]];
+
+test('s16: while run 6 is held after run 3, More ways to resume reads "Waiting for its turn after run 3", and "Where it left off" once the hold ends', async () => {
+  for (const [page, open] of SIX_PAGES) {
+    const ctx = await bootSliceSix({ slice: sliceSix({ heldResume: { after: 3 } }) });
+    const { label } = await open(ctx);
+    const small = () => ctx.window.document.querySelector(MENU[page]).textContent;
+    assert.equal(small(), 'Waiting for its turn after run 3', `${page}: held`);
+    assert.equal(label(), 'Resume', `${page}: the main Resume reads as today`);
+    ctx.box.slice = sliceSix();
+    await ctx.frame();
+    assert.equal(small(), 'Where it left off', `${page}: the hold ended`);
+    ctx.box.slice = sliceSix({ heldResume: { after: 3 } });
+    await ctx.frame();
+    assert.equal(small(), 'Waiting for its turn after run 3', `${page}: held again`);
+  }
+});
+
+test('s16: flag off, More ways to resume keeps "Where it left off" though the /slice stub answers a hold', async () => {
+  for (const [page, open] of SIX_PAGES) {
+    const ctx = await bootSliceSix({ slice: sliceSix({ heldResume: { after: 3 } }), flag: false });
+    await open(ctx);
+    await ctx.frame();
+    assert.equal(ctx.window.document.querySelector(MENU[page]).textContent, 'Where it left off', page);
+  }
+});
+
+/** The toasts on screen, as {tone, title, detail, action}. */
+const toasts = (ctx) => [...ctx.window.document.querySelectorAll('#toasts .toast')].map((t) => ({
+  tone: ['info', 'ok', 'warn', 'err'].find((c) => t.classList.contains(c)),
+  title: t.querySelector('.tt')?.textContent ?? '', detail: t.querySelector('.td')?.textContent ?? '',
+  action: t.querySelector('.toast-act')?.textContent ?? null,
+}));
+/** Press the paused run's Resume on `open`'s page, POST /api/resume answering `body` with `status`. → the toasts */
+async function pressSix(open, body, status = 200, boot = {}) {
+  const ctx = await bootSliceSix(boot);
+  const { btn } = await open(ctx);
+  ctx.box.resume = Promise.resolve(answer(body, status));
+  btn.click();
+  await ctx.settle(8);
+  assert.equal(ctx.fetchCalls.filter((c) => c.url.includes('/api/resume')).length, 1, 'one press, one POST');
+  return toasts(ctx);
+}
+const HELD_SAVING = { ok: true, held: true, pipelineId: 'p6', after: 3, saving: true };
+const HELD_TURN = { ok: true, held: true, pipelineId: 'p6', after: 3 };
+const CLASHED = { error: 'runs 2 and 3 clash in a.mjs', code: 'TAKE_IN_REFUSED' };
+const OVER_TOTAL = { error: 'total cost limit reached', budget: { blocked: true } };
+const info = (title, detail) => ({ tone: 'info', title, detail, action: null });
+const refusedToast = (detail) => ({ tone: 'err', title: 'Could not resume the run', detail, action: 'Retry' });
+
+test('s16: a press held while run 3 saves says "Run 3 is still saving its work" in an info toast', async () => {
+  for (const [page, open] of SIX_PAGES) {
+    assert.deepEqual(await pressSix(open, HELD_SAVING), [info('Waiting', 'Run 3 is still saving its work')], page);
+  }
+});
+
+test('s16: a press held behind run 3\'s turn says "Run 3 holds the turn" in an info toast', async () => {
+  for (const [page, open] of SIX_PAGES) {
+    assert.deepEqual(await pressSix(open, HELD_TURN), [info('Waiting for its turn', 'Run 3 holds the turn')], page);
+  }
+});
+
+test('s16: a press refused on a clash says "Not resumed: runs 2 and 3 clash in a.mjs", with Retry', async () => {
+  for (const [page, open] of SIX_PAGES) {
+    assert.deepEqual(await pressSix(open, CLASHED, 409), [refusedToast('Not resumed: runs 2 and 3 clash in a.mjs')], page);
+  }
+});
+
+test('s16: a press refused on cost says "Not resumed: the cost limit is reached", with Retry', async () => {
+  for (const [page, open] of SIX_PAGES) {
+    assert.deepEqual(await pressSix(open, OVER_TOTAL, 403), [refusedToast('Not resumed: the cost limit is reached')], page);
+  }
+});
+
+test('s16: flag off, an unmarked run, or before the slice info loads, the press keeps today\'s toast and a hold raises none', async () => {
+  const cases = [
+    ['flag off', { flag: false }],
+    ['not a slice', { slice: () => Promise.resolve(answer({ error: 'not a slice' }, 404)) }],
+    ['the info still loading', { slice: () => new Promise(() => {}) }],
+  ];
+  for (const [why, boot] of cases) {
+    for (const [page, open] of SIX_PAGES) {
+      assert.deepEqual(await pressSix(open, OVER_TOTAL, 403, boot), [refusedToast('total cost limit reached')], `${page}, ${why}: cost`);
+      assert.deepEqual(await pressSix(open, HELD_SAVING, 200, boot), [], `${page}, ${why}: held`);
+    }
+  }
+});
+
+test('s16: the hold\'s own feature frame clears the slice info before the reply lands, and the press still says why', async () => {
+  for (const [page, open] of SIX_PAGES) {
+    const ctx = await bootSliceSix();
+    const { btn } = await open(ctx);
+    // The server repaints the feature as it holds the resume: that frame (clearing SLICE_INFO) comes before the reply.
+    let reply;
+    ctx.box.resume = new Promise((r) => { reply = r; });
+    ctx.box.slice = () => new Promise(() => {});   // the info is asked again and has not answered yet
+    btn.click();
+    await ctx.settle(4);
+    await ctx.frame();
+    reply(answer(HELD_TURN));
+    await ctx.settle(8);
+    assert.deepEqual(toasts(ctx), [info('Waiting for its turn', 'Run 3 holds the turn')], page);
+  }
+});
+
+test('s16: right after a held press, More ways to resume reads "Waiting for its turn after run 3" though the frame cleared the info', async () => {
+  for (const [page, open] of SIX_PAGES) {
+    const ctx = await bootSliceSix();
+    const { btn } = await open(ctx);
+    let reply;
+    ctx.box.resume = new Promise((r) => { reply = r; });
+    ctx.box.slice = () => new Promise(() => {});   // the info, asked again after the frame, has not answered yet
+    btn.click();
+    await ctx.settle(4);
+    await ctx.frame();
+    reply(answer(HELD_TURN));
+    await ctx.settle(8);
+    assert.equal(ctx.window.document.querySelector(MENU[page]).textContent, 'Waiting for its turn after run 3', page);
+  }
+});

@@ -16,12 +16,13 @@ import { createChatContext } from '../src/core/chat/chat-context.mjs';
 import { createNotifier } from '../src/core/chat/notifier.mjs';
 import { chatPrefs, setChatPrefs } from '../src/core/settings.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { verifyStop } from '../src/shared/shape/verifier.mjs';
 
 useTempHome(after);
 
 const SCHEMA = [{ key: 'notifyChatIds', type: 'text', label: 'Notify', secret: false, required: false }];
 
-async function fixture({ prefs } = {}) {
+async function fixture({ prefs, whereToAnswer } = {}) {
   await writePluginConfig('tg-chat', SCHEMA, { notifyChatIds: '100, 200' });
   const sent = [];
   const channelHost = {
@@ -33,7 +34,8 @@ async function fixture({ prefs } = {}) {
   };
   const chatContext = createChatContext(join(worcaHome(), `cc-${Math.random().toString(36).slice(2)}.json`));
   const state = { prefs: prefs ?? { notify: { done: true, error: true, question: true, paused: true }, channels: {} } };
-  const notifier = createNotifier({ channelHost, getPrefs: () => state.prefs, chatContext, logger: () => {} });
+  const notifier = createNotifier({ channelHost, getPrefs: () => state.prefs, chatContext, logger: () => {},
+    ...(whereToAnswer ? { whereToAnswer } : {}) });
   const orch = new EventEmitter();
   orch.state = { totalCostUsd: 0.5, totalActiveMs: 60000 };
   const entry = { title: 'Notify me' };
@@ -252,4 +254,72 @@ test('Watch PR: notifyPrWatch renders started/published as info and needs-person
   notifier.notifyPrWatch({ kind: 'published', title: 'x', message: 'Pushed.' });
   await settle();
   assert.equal(sent.length, 0);
+});
+
+// Shaper small runs slice 10 (R-po-5): the gap gate reaches every chat with both requirement ids.
+test("a question event carrying a 2-gap Verifier stop is delivered to both chat ids with both requirement ids", async () => {
+  const { orch, sent, settle } = await fixture();
+  orch.emit('question', { id: 'verify-1', kind: 'gate', issues: [], stop: verifyStop({ gaps: [
+    { id: 'R-po-1', why: 'the export skips archived runs' }, { id: 'R-po-2', why: 'the list wraps onto two lines' }] }) });
+  await settle();
+  assert.deepEqual(sent.map((s) => s.chatId).sort(), ['100', '200']);
+  for (const s of sent) {
+    const text = s.message.body[0].value;
+    assert.match(text, /R-po-1/);
+    assert.match(text, /R-po-2/);
+    assert.match(text, /feature card/);
+  }
+});
+
+// Slice 18 (R-arch-4, D5, D6): whether a chat follows the feature is asked when the gap message is sent.
+const gapQuestion = () => ({ id: 'verify-1', kind: 'gate', issues: [], stop: verifyStop({ gaps: [
+  { id: 'R-po-1', why: 'the export skips archived runs' }, { id: 'R-po-2', why: 'the list wraps onto two lines' }] }) });
+
+test('s18 (R-arch-4): the gap message of a chat-less feature reaches both chat ids naming the feature page, never the card', async () => {
+  const asked = [];
+  const { orch, sent, settle } = await fixture({ whereToAnswer: (runId) => { asked.push(runId); return { hasChat: false }; } });
+  orch.emit('question', gapQuestion());
+  await settle();
+  assert.deepEqual(sent.map((s) => s.chatId).sort(), ['100', '200']);
+  for (const s of sent) {
+    const text = s.message.body[0].value;
+    assert.match(text, /answer on the feature page in the Worca UI/);
+    assert.doesNotMatch(text, /feature card/);
+    assert.match(text, /R-po-1/);
+  }
+  assert.deepEqual(asked, ['run-abcd9999'], 'one call for the one question, with the run id');
+});
+
+test('s18 (R-arch-4): the notifier asks where to answer once per gap stop and never for any other event', async () => {
+  let calls = 0;
+  const { orch, settle } = await fixture({ whereToAnswer: () => { calls += 1; return { hasChat: false }; } });
+  orch.emit('question', { id: 'gate-1', kind: 'gate', issues: [{ severity: 'major', summary: 'X' }] });
+  orch.emit('question', { id: 'q1', kind: 'clarify', questions: [{ id: 'k', question: 'Name?', options: [] }] });
+  orch.emit('error', { message: 'boom' });
+  orch.emit('done', { status: 'done' });
+  await settle();
+  assert.equal(calls, 0, 'no gap stop yet');
+  orch.emit('question', gapQuestion());
+  await settle();
+  assert.equal(calls, 1);
+});
+
+test('s18 (R-arch-4): with a chat, an unknown place or a throwing lookup the card words still reach both chat ids', async () => {
+  await checkRows([
+    { name: 'a chat follows the feature', lookup: () => ({ hasChat: true }) },
+    { name: 'the run cannot be placed', lookup: () => null },
+    { name: 'hasChat is no boolean', lookup: () => ({ hasChat: 'no' }) },
+    { name: 'the lookup throws', lookup: () => { throw new Error('db gone'); } },
+  ].map(({ name, lookup }) => ({ name, run: async () => {
+    let calls = 0;
+    const { orch, sent, settle } = await fixture({ whereToAnswer: (id) => { calls += 1; return lookup(id); } });
+    orch.emit('question', gapQuestion());
+    await settle();
+    assert.equal(calls, 1, 'the injected lookup is consulted');
+    assert.deepEqual(sent.map((s) => s.chatId).sort(), ['100', '200']);
+    for (const s of sent) {
+      assert.match(s.message.body[0].value, /answer on the feature card/);
+      assert.doesNotMatch(s.message.body[0].value, /feature page/);
+    }
+  } })));
 });

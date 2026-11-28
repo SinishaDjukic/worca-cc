@@ -6,6 +6,7 @@ import { getDb, tx } from './db.mjs';
 import { getTicket } from './scheduler.mjs';
 import { featureOfPipeline, ticketHeld, shipHold, sliceWords } from './shape/features.mjs';
 import { shaperSmallRunsOn, smallRunsOfFeature } from './shape/small-runs.mjs';
+import { checkRowsOf } from './shape/verifier.mjs';
 import { spendOfPipelines } from './stats.mjs';
 
 export class RunGroupError extends Error {
@@ -43,7 +44,9 @@ function pipelineRows(ids) {
  *  native members carry `slice` (sliceWords; `live` is the server's runs overlay): with the flag on, every member's
  *  `slice` carries `buildsOn` (number[], its direct builds-on runs), and a not-started
  *  member's `slice` also carries `waitsFor` (number[]) and `cannotStart` {run, reason}; the one run that goes on next
- *  (a run whose stop answer is held waiting its turn, else the scheduler's next start) carries `nextTurn`. */
+ *  (a run whose stop answer is held waiting its turn, else the scheduler's next start) carries `nextTurn`. Slice 11: a
+ *  marked feature with a priced Verifier round (`cost.checks`) also carries `checks`, one row per round, oldest first
+ *  (verifier.mjs checkRowsOf: {round, pipelineId, at, state, gaps}); a round is never one of `members`. */
 export function listRunGroups({ live = () => null } = {}) {
   const db = getDb();
   const small = shaperSmallRunsOn();
@@ -87,15 +90,22 @@ export function listRunGroups({ live = () => null } = {}) {
     return { id: f.id, kind: 'feature', title: f.title, projectKey: null, planning: planningOf(f, new Set(own.map((s) => s.pipeline_id).filter(Boolean))),
       members: withAfter(withAdhoc(f.id, own.map((s) => member(s.idx, s.title, s.pipeline_id, s.ticket_id, false))))
         .map((m) => (words && !m.adhoc && words.has(m.position) ? { ...m, slice: words.get(m.position) } : m)),
-      ...(marked ? { smallRuns: true, ...(hold ? { hold } : {}) } : {}) };
+      ...(marked ? { smallRuns: true, ...(hold ? { hold } : {}) } : {}), marked };
   });
   for (const u of users) out.push({ id: u.id, kind: 'user', title: u.title, nameSource: u.name_source || 'user', projectKey: u.project_key || null, planning: null, members: withAfter(withAdhoc(u.id, [])) });
-  return out.filter((g) => g.members.length).map((g) => ({ ...g, cost: groupCost(g) }));
+  return out.filter((g) => g.members.length).map(({ marked, ...g }) => {
+    const cost = groupCost(g, small);
+    // Slice 11 (D1–D3): a marked feature's priced Verifier rounds, as check rows after its members (never members).
+    return marked && cost.checks ? { ...g, cost, checks: checkRowsOf(g.id, cost.checks, { live }) } : { ...g, cost };
+  });
 }
 
 /** Every pipeline whose cost belongs to a feature (§2.4): its origin (planning) run, its slices' runs, earlier attempts
- *  of a slice (an old ticket whose request names the feature) and, walking `replaces`, every earlier round. */
-function featurePipelineIds(featureId, seen = new Set()) {
+ *  of a slice (an old ticket whose request names the feature) and, walking `replaces`, every earlier round. R-arch-2:
+ *  with `checks` (an object, given only with the shaperSmallRuns flag on), its Verifier rounds too, from the same scan
+ *  (a halted round is retried as a fresh ticket under the same round, and the old ticket keeps its pipeline); each one's
+ *  { round, at, status } goes into `checks`. A missing pipeline row gives no status. */
+function featurePipelineIds(featureId, seen = new Set(), checks = null) {
   if (!featureId || seen.has(featureId)) return [];
   seen.add(featureId);
   const db = getDb();
@@ -103,9 +113,19 @@ function featurePipelineIds(featureId, seen = new Set()) {
   if (!f) return [];
   const slices = db.prepare(`SELECT COALESCE(s.pipeline_id, t.pipeline_id) AS id FROM shape_feature_slices s
     LEFT JOIN scheduled_runs t ON t.id = s.ticket_id WHERE s.feature_id = ?`).all(String(featureId)).map((r) => r.id);
-  const tries = db.prepare(`SELECT pipeline_id AS id FROM scheduled_runs WHERE pipeline_id IS NOT NULL
+  const tries = checks
+    ? db.prepare(`SELECT scheduled_runs.pipeline_id AS id, json_extract(request, '$.shape.verify.round') AS round,
+        scheduled_runs.created_at AS at, p.status AS status, json_extract(request, '$.shape.verify.featureId') AS verify
+        FROM scheduled_runs LEFT JOIN pipelines p ON p.id = scheduled_runs.pipeline_id WHERE scheduled_runs.pipeline_id IS NOT NULL
+        AND (json_extract(request, '$.shape.slice.feature') = ? OR json_extract(request, '$.shape.verify.featureId') = ?)`)
+      .all(String(featureId), String(featureId))
+      .map((r) => {
+        if (r.verify === String(featureId)) checks[r.id] = { round: Number(r.round), at: r.at, ...(r.status ? { status: r.status } : {}) };
+        return r.id;
+      })
+    : db.prepare(`SELECT pipeline_id AS id FROM scheduled_runs WHERE pipeline_id IS NOT NULL
     AND json_extract(request, '$.shape.slice.feature') = ?`).all(String(featureId)).map((r) => r.id);
-  return [f.origin_pipeline_id, ...slices, ...tries, ...featurePipelineIds(f.replaces, seen)].filter(Boolean);
+  return [f.origin_pipeline_id, ...slices, ...tries, ...featurePipelineIds(f.replaces, seen, checks)].filter(Boolean);
 }
 
 /** Watch PR fix runs started for any of these runs' PRs. */
@@ -115,10 +135,15 @@ function fixRunIds(ids) {
     WHERE r.pipeline_id IS NOT NULL AND w.pipeline_id IN (${qs(ids)})`).all(...ids).map((r) => r.id);
 }
 
-/** §2.4: the group's cost with Statistics' per-row rule: { usd, byPipeline }. */
-function groupCost(g) {
-  const base = [...(g.kind === 'feature' ? featurePipelineIds(g.id) : []), ...g.members.map((m) => m.pipelineId).filter(Boolean)];
-  return spendOfPipelines([...base, ...fixRunIds([...new Set(base)])]);
+/** §2.4: the group's cost with Statistics' per-row rule: { usd, byPipeline }. R-arch-2 (flag on): plus `checks`
+ *  { [pipelineId]: { round, at, status } } only when the feature has a priced Verifier round, so every other cost keeps
+ *  dev's shape. */
+function groupCost(g, small = false) {
+  const checks = small ? {} : null;
+  const base = [...(g.kind === 'feature' ? featurePipelineIds(g.id, new Set(), checks) : []), ...g.members.map((m) => m.pipelineId).filter(Boolean)];
+  const cost = spendOfPipelines([...base, ...fixRunIds([...new Set(base)])]);
+  const kept = Object.entries(checks || {}).filter(([id]) => id in cost.byPipeline);
+  return kept.length ? { ...cost, checks: Object.fromEntries(kept) } : cost;
 }
 
 function groupExists(id) {

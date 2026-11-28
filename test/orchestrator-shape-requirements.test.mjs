@@ -859,7 +859,7 @@ test('a re-plan of a marked feature carries every requirement no finished run ow
   const ship = () => withSmallRuns(true, () => featureView(f2.id));
   let v = await ship();
   assert.equal('unowned' in v.ship.smallRuns, false);
-  assert.deepEqual([v.ship.smallRuns.waiting, v.ship.smallRuns.reason], [[lastId], `Waiting for Compliance to confirm ${lastId}`], 'the old mark is not carried');
+  assert.deepEqual([v.ship.smallRuns.waiting, v.ship.smallRuns.reason], [[lastId], `Waiting for you to confirm ${lastId}`], 'the old mark is not carried');
   setFeatureAcceptance(f2.id, [{ id: lastId, mark: 'met', role: 'compliance', by: 'ann', at: new Date().toISOString() }]);
   v = await ship();
   assert.equal(v.ship.smallRuns.blocked, false);

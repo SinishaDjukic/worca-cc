@@ -30,7 +30,8 @@ export function shipChangelogSlices(feature) {
 }
 
 /**
- * @param {{feature:{id,title,slices:Array<{index,title,pipelineId,pr:{url}|null, summary?:string, checklistMd?:string}>, carried?:Array},
+ * @param {{feature:{id,title,slices:Array<{index,title,pipelineId,pr:{url}|null, summary?:string, checklistMd?:string}>, carried?:Array,
+ *   preamble?:string},
  *   mode:'stacked'|'one', maxBody?:number, headPipelineId?:string|null}} input
  * @param {{commitChangelog(pipelineId, update):Promise<{ok,error?,kind?}>, push(pipelineId):Promise<{ok,error?}>,
  *   openOnePr({pipelineId, title, body}):Promise<{ok,url?,existed?,error?}>, adoptOnePr({url, pipelineId, body}):Promise<{ok,error?}>,
@@ -64,18 +65,24 @@ export async function shipFeature({ feature, mode, maxBody = Infinity, headPipel
     for (const s of slices) await Promise.resolve(deps.refreshBody(s.pr.url, s.pipelineId)).catch(() => warnings.push(`slice ${s.index}: links not refreshed`));
     return { ok: true, mode, prUrl: null, warnings };
   }
-  const one = await deps.openOnePr({ pipelineId: last.pipelineId, title: feature.title, body: onePrBody(slices, null, { maxChars: maxBody }) });
+  // One: a carried run's work ships in this PR too, so it keeps its section and Satisfies line, and its draft is closed.
+  const carried = (feature.carried || []).map((s) => (s.pr && s.pr.state === 'CLOSED' ? { ...s, pr: null } : s));
+  const all = shipChangelogSlices({ ...feature, slices, carried });
+  const preamble = typeof feature.preamble === 'string' && feature.preamble ? feature.preamble : '';
+  const bodyOf = (keptUrl) => (preamble ? `${preamble}\n\n${onePrBody(all, keptUrl, { maxChars: Math.max(0, maxBody - preamble.length - 2) })}`
+    : onePrBody(all, keptUrl, { maxChars: maxBody }));
+  const one = await deps.openOnePr({ pipelineId: last.pipelineId, title: feature.title, body: bodyOf(null) });
   if (!one.ok) return { ok: false, status: 500, error: `could not create the PR: ${one.error}` };
   // P16: the forge answered with an open PR from the same head into the same base (the last slice's draft already
   // targets the root): that PR is the one PR. Make it ready and give it the combined body; never close it.
   let kept = null;
   if (one.existed) {
     kept = one.url;
-    const a = await deps.adoptOnePr({ url: one.url, pipelineId: last.pipelineId, body: onePrBody(slices, kept, { maxChars: maxBody }) });
+    const a = await deps.adoptOnePr({ url: one.url, pipelineId: last.pipelineId, body: bodyOf(kept) });
     if (!a.ok) return { ok: false, status: 500, error: `could not mark the pull request ready: ${a.error}` };
   }
   let closed = 0;
-  for (const s of slices) {
+  for (const s of all) {
     if (!s.pr || !s.pr.url || s.pr.url === kept) continue;   // a slice without a PR has nothing to close
     const c = await deps.close(s.pr.url, `Shipped as one pull request: ${one.url}`, s.pipelineId);
     if (c.ok) closed++;
@@ -107,10 +114,13 @@ export function shipCardVerb(body) {
 /**
  * Shaper small runs slice 4 (D1, D2, D3, D5): the PRs a marked feature's Ship lists, along the real branches. Pure.
  * `rows` are the finished runs in finish order (the last is the head Ship ships):
- *   {index, pipelineId, branch (work branch), source (recorded base), carries (branches taken in or combined),
+ *   {index, pipelineId, branch (work branch), source (recorded base), from (fire-time base, optional),
+ *    carries (branches taken in or combined),
  *    merged (its PR is MERGED), pending (its branch still merges back)}.
  * The walk goes back from the head to the run whose branch is the current run's source (the later finisher on a tie),
- * then is reversed. A run off the walk is carried when a listed run, or a run it carries, names its branch.
+ * then is reversed. A run off the walk is carried when a listed run, or a run it carries, names its branch. When that
+ * leaves runs uncovered, a run is also carried when a covered run started from its branch (`from`, the fire-time base)
+ * or recorded it as its source: the covered run's branch contains that branch's commits as of its start.
  * → { order: [{index, pipelineId, base}], carried: [{index, pipelineId, by}] }, or null when a finished run is neither
  *   listed nor carried (the caller then keeps the finish order).
  */
@@ -146,7 +156,22 @@ export function shipChain(rows, { root = null } = {}) {
       queue.push([m, by]);
     }
   }
-  if (walk.length + carriedBy.size < list.length) return null;
+  if (walk.length + carriedBy.size < list.length) {
+    // The ancestry pass (A2): a covered run's branch holds the commits of the branch it started from (`from`) and of its
+    // recorded source, as of its start, so a run on one of those branches is carried by the same carrier. Only reached
+    // when the first closure leaves rows uncovered, so a chain that resolves without it is unchanged.
+    const anc = [...walk.map((k) => [k, list[k].pipelineId]), ...carriedBy];
+    while (anc.length) {
+      const [k, by] = anc.shift();
+      const bases = [name(list[k].from), name(list[k].source)].filter(Boolean);
+      for (let m = 0; m < list.length; m++) {
+        if (seen.has(m) || carriedBy.has(m) || !bases.includes(name(list[m].branch))) continue;
+        carriedBy.set(m, by);
+        anc.push([m, by]);
+      }
+    }
+    if (walk.length + carriedBy.size < list.length) return null;
+  }
   const carried = [...carriedBy].sort((a, b) => a[0] - b[0])
     .map(([m, by]) => ({ index: list[m].index, pipelineId: list[m].pipelineId, by }));
   return { order, carried };

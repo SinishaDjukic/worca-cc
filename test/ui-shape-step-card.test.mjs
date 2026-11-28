@@ -372,8 +372,9 @@ test('C5: readOnly (the side panel) draws the Verifier stop\'s gaps as its one f
 // The run page of a stopped run (flag on): the same interactive card as the feature card, with the one-column head marker.
 test('the run page (runPage, not readOnly): the stop\'s head with data-stop, then the question with every option, Worca\'s pick preset and one primary naming it', async () => {
   const { verifyStop } = await import('../src/shared/shape/verifier.mjs');
-  const V_STOP = { id: 'verify-3', kind: 'gate', nodeId: 'n_verify', issues: [], stop: verifyStop({ gaps: [{ id: 'R-po-2', why: 'no email' }], round: 3, fixCycles: 2 }) };
-  for (const pq of [G_STOP, P_STOP, C_STOP, V_STOP]) {
+  const V_STOP = { id: 'verify-3', kind: 'gate', nodeId: 'n_verify', issues: [],
+    stop: verifyStop({ gaps: [{ id: 'R-po-2', why: 'no email' }], round: 3, fixCycles: 2, texts: { 'R-po-2': 'Sign-up sends mail' } }) };
+  for (const pq of [G_STOP, P_STOP, C_STOP]) {
     const { panel, $$, $ } = mountStop(pq, { runPage: true });
     assert.equal($('.ask-mcard-title').textContent, pq.stop.head, pq.id);
     assert.equal($$('.ask-mcard-title').length, 1);
@@ -386,7 +387,13 @@ test('the run page (runPage, not readOnly): the stop\'s head with data-stop, the
     assert.equal(panel.textContent.includes(pq.stop.text), true, 'the question text');
     assert.equal($$('.stop-home, a.rd-fact-link').length, 0, 'no line to elsewhere: the stop is answered here');
   }
-  assert.equal(mountStop(V_STOP, { runPage: true }).panel.querySelectorAll('.verify-gaps .plan-check-id').length, 1, "the Verifier's gaps");
+  // Slice 8: the Verifier's stop is the gap question, with the same head marker; its gaps are the questions, not a list.
+  const gate = mountStop(V_STOP, { runPage: true });
+  assert.equal(gate.$('.ask-mcard-title').textContent, V_STOP.stop.head);
+  assert.ok([...gate.panel.children][0].matches('.ask-mcard-head[data-stop]'));
+  assert.equal(gate.$$('.qpanel[data-kind="gaps"] .qblock').length, 1);
+  assert.equal(gate.$$('.verify-gaps').length, 0);
+  assert.deepEqual(gate.$$('.btn-primary').map((b) => b.textContent), ['Send answers']);
   assert.equal(mountStop(P_STOP, {}).panel.querySelector(':scope > [data-stop]'), null, 'no marker off the run screen');
   const held = mountStop(G_STOP, { runPage: true, held: { value: 'another' } });
   assert.equal(held.$$('.ask-mcard-title, .stop-home, button, .qopt').length, 0, 'held: no head and no control');
@@ -570,17 +577,22 @@ test('R-ux-4: a concern stop\'s row carries its detail, not its title again', ()
   assert.equal(noDetail.$$('.issues, .plan-checks').length, 0, 'no detail, no list');
 });
 
-test('R-ux-4: a Verifier stop\'s gaps are its one list', async () => {
+test('a form gaps stop renders the gap question and no .verify-gaps list, on every answerable surface', async () => {
   const { verifyStop } = await import('../src/shared/shape/verifier.mjs');
   const gaps = [{ id: 'R-po-2', why: 'sign-up never calls the email service' }, { id: 'R-po-3', why: 'the export skips empty charts' }];
-  const pq = { id: 'verify-r3', kind: 'gate', nodeId: 'n_verify', issues: [], stop: verifyStop({ gaps, round: 3, fixCycles: 2 }) };
-  for (const deps of [{}, { runPage: true }, ...ANSWERABLE]) {
+  const texts3 = { 'R-po-2': 'Sign-up sends mail', 'R-po-3': 'Charts export' };
+  for (const [i, deps] of [{}, { runPage: true }, ...ANSWERABLE].entries()) {
+    const pq = { id: `verify-gate-${i}`, kind: 'gate', nodeId: 'n_verify', issues: [], stop: verifyStop({ gaps, round: 1, fixCycles: 2, texts: texts3 }) };
     const where = JSON.stringify(deps);
-    const { $, $$ } = mountStop(pq, deps);
-    assert.equal($$('.verify-gaps').length, 1, where);
-    assert.deepEqual(texts($$('.verify-gaps .plan-check-id')), ['R-po-2', 'R-po-3'], where);
-    assert.equal($$('.issues, .plan-checks').length, 1, where);
-    assert.ok(precedes($('.verify-gaps'), $('.qpanel-foot')), where);
+    const { panel, $$, posts } = mountStop(pq, deps);
+    assert.equal($$('.qpanel[data-kind="gaps"]').length, 1, where);
+    assert.equal($$('.qpanel[data-kind="gaps"] .qblock').length, 2, where);
+    assert.equal($$('.verify-gaps').length, 0, where);
+    for (const g of gaps) assert.equal(panel.textContent.split(g.why).length - 1, 1, `${where}: ${g.id}'s why once`);
+    assert.deepEqual(texts($$('.btn-primary')), ['Send answers'], where);
+    $$('.btn-primary')[0].click();
+    await flush();
+    assert.deepEqual(posts, [{ decision: 'answer', answers: [{ id: 'R-po-2', answer: 'fix' }, { id: 'R-po-3', answer: 'fix' }] }], where);
   }
 });
 

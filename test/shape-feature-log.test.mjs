@@ -227,3 +227,37 @@ test('C5 (D13): buildDecisionLog({verify}) adds one receipt per check with a res
   assert.deepEqual(log.map((r) => r.kind), ['verify', 'verify'], 'drawn as .srows rows (paintFeatureLog)');
   assert.deepEqual(buildDecisionLog({ origin: [] }), buildDecisionLog({ origin: [], verify: null }));
 });
+
+// Slice 10 (R-po-5): the log says who answered each gap; a record from before it reads as it did.
+const OLD_TWO_ROUNDS = { checks: [
+  { round: 1, state: 'gaps', result: { held: ['R-po-3'], gaps: [{ id: 'R-po-1', why: 'x', title: 'Close R-po-1' }, { id: 'R-po-2', why: 'y', title: 'Close R-po-2' }] },
+    gapRuns: [4], answers: [{ id: 'R-po-1', answer: 'fix' }, { id: 'R-po-2', answer: 'ship', reason: 'later' }],
+    shipped: [{ id: 'R-po-2', reason: 'later' }], gapRunOf: { 'R-po-1': 4 } },
+  { round: 2, state: 'accepted', result: { held: ['R-po-1', 'R-po-3'], gaps: [{ id: 'R-po-2', why: 'y', title: 'Close R-po-2' }] },
+    gapRuns: [], answers: [], shipped: [{ id: 'R-po-2', reason: 'later' }], gapRunOf: {} },
+] };
+const logOf = (verify) => buildDecisionLog({ origin: [], sliced: true, slices: SLICES, verify,
+  runs: [{ index: 2, events: ['Plan approval **approve** by ann.'] }] });
+// What buildDecisionLog at 217b540b4 returns for the same input, captured by running that checkpoint's code.
+const AT_CHECKPOINT = [
+  { key: '2-0', run: 2, text: 'Plan approved', detail: ['Goal: Goal 2', '✓ ok 2'] },
+  { key: 'verify-0', run: null, text: 'Verifier: 1 of 3 hold · 2 gaps · run 4 added for it', detail: [], kind: 'verify' },
+  { key: 'verify-1', run: null, text: 'Verifier: 1 gap left open · you chose to ship with it', detail: [], kind: 'verify' },
+];
+
+test('s10 a check record without answeredBy logs as at 217b540b4', () => {
+  assert.deepEqual(logOf(OLD_TWO_ROUNDS), AT_CHECKPOINT);
+});
+
+test('s10 (R-po-5) a record with answeredBy adds one line per gap after its receipt: decided by Away mode, decided by you', () => {
+  const verify = structuredClone(OLD_TWO_ROUNDS);
+  verify.checks[0].answeredBy = { 'R-po-1': 'away', 'R-po-2': 'you' };
+  const log = logOf(verify);
+  assert.deepEqual(log.map((r) => r.text), [AT_CHECKPOINT[0].text, AT_CHECKPOINT[1].text,
+    'Gap R-po-1 → fix, run 4 added · decided by Away mode', 'Gap R-po-2 → ships with the gap · decided by you', AT_CHECKPOINT[2].text]);
+  assert.deepEqual(log.slice(2, 4), [
+    { key: 'verify-0-R-po-1', run: null, text: 'Gap R-po-1 → fix, run 4 added · decided by Away mode', detail: [], kind: 'verify' },
+    { key: 'verify-0-R-po-2', run: null, text: 'Gap R-po-2 → ships with the gap · decided by you', detail: [], kind: 'verify' },
+  ]);
+  assert.equal(new Set(log.map((r) => r.key)).size, log.length, 'keys are unique');
+});

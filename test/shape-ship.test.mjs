@@ -226,6 +226,55 @@ test('headPipelineId: the changelog, push and one PR use that slice', async () =
   }
 });
 
+// ---- One PR for a feature planned in small runs (R-arch-1): the preamble and the carried runs in its one body ----------
+const PREAMBLE = "Care: Balanced · Worca's pick\nDropped: R-comp-4 · Out of scope";
+const noPrFeature = (over = {}) => ({ id: 'f', title: 'Charts', slices: [slice(1, null), slice(2, null)], ...over });
+const bodyOf = (f) => f.calls.find((c) => c[0] === 'openOnePr')[1].body;
+
+test('one PR body: a preamble goes first once; no preamble leaves the body unchanged', async () => {
+  const with_ = fake();
+  assert.equal((await shipFeature({ feature: noPrFeature({ preamble: PREAMBLE }), mode: 'one' }, with_.deps)).ok, true);
+  assert.equal(bodyOf(with_), `${PREAMBLE}\n\n${onePrBody(noPrFeature().slices)}`);
+  assert.equal(bodyOf(with_).match(/^Care: /gm).length, 1);
+  for (const extra of [{}, { preamble: '' }]) {
+    const plain = fake();
+    await shipFeature({ feature: noPrFeature(extra), mode: 'one' }, plain.deps);
+    assert.equal(bodyOf(plain), onePrBody(noPrFeature().slices), JSON.stringify(extra));
+  }
+  // A draft the forge answers with is adopted with the same preamble.
+  const adopted = fake({ openOnePr: { ok: true, url: 'https://github.com/o/r/pull/2', existed: true } });
+  await shipFeature({ feature: noPrFeature({ preamble: PREAMBLE, slices: [slice(1, null), slice(2, pr(2))] }), mode: 'one' }, adopted.deps);
+  assert.ok(adopted.calls.find((c) => c[0] === 'adoptOnePr')[1].body.startsWith(`${PREAMBLE}\n\n## Slice 1:`));
+});
+
+test('one PR body: the preamble counts against maxBody, so the checklists give way to it', async () => {
+  const slices = noPrFeature().slices.map((s) => ({ ...s, checklistMd: `## Perspective checklist\n\n${'- [x] item\n'.repeat(20)}`.trimEnd() }));
+  const full = onePrBody(slices).length;
+  const bodyAt = async (maxBody) => { const f = fake(); await shipFeature({ feature: noPrFeature({ preamble: PREAMBLE, slices }), mode: 'one', maxBody }, f.deps); return bodyOf(f); };
+  const fits = await bodyAt(full + PREAMBLE.length + 2);
+  assert.ok(fits.startsWith(PREAMBLE) && fits.includes('## Perspective checklist'), 'exactly room for both: every checklist is kept');
+  const over = await bodyAt(full + PREAMBLE.length + 1);
+  assert.ok(over.startsWith(PREAMBLE), over.slice(0, 80));
+  assert.ok(!over.includes('## Perspective checklist'), 'one character short: the checklists are left out');
+});
+
+test('one PR body: a carried run keeps its section and Satisfies line, in index order; its draft is closed and a CLOSED carried PR gets no Draft line and no close call', async () => {
+  const owning = (n, sp) => ({ ...slice(n, sp), requirements: { ids: [`R-po-${n}`], check: null } });
+  const f = fake();
+  // Listed: runs 1 and 3. Carried: run 2 (an in-flight draft) and run 4 (a PR already closed).
+  const feature = { id: 'f', title: 'Charts', slices: [owning(1, null), owning(3, null)],
+    carried: [owning(4, { url: pr(4).url, state: 'CLOSED' }), owning(2, { url: pr(2).url, state: 'OPEN', draft: true })] };
+  const out = await shipFeature({ feature, mode: 'one' }, f.deps);
+  assert.equal(out.ok, true, JSON.stringify(out));
+  const body = bodyOf(f);
+  assert.deepEqual(body.match(/^## Slice \d+/gm), ['## Slice 1', '## Slice 2', '## Slice 3', '## Slice 4']);
+  assert.deepEqual(body.match(/^Satisfies: .*$/gm), [1, 2, 3, 4].map((n) => `Satisfies: R-po-${n}`));
+  assert.deepEqual(body.match(/^Draft: .*$/gm), [`Draft: ${pr(2).url} (closed)`]);
+  assert.deepEqual(f.calls.filter((c) => c[0] === 'close').map((c) => c[1]), [pr(2).url]);
+  assert.equal(out.closed, 1);
+  assert.equal(f.calls.find((c) => c[0] === 'openOnePr')[1].pipelineId, 'p3', 'the head is still the last listed run');
+});
+
 // ---- Slice 4 (R-ux-3): the pure list rule. Rows are the finished runs in finish order; the last one is the head. -------
 // A row of run `n`: on `feat/run-n`, based on `from` (a run number, or a branch name), carrying the runs `carries`.
 const branchName = (x) => (typeof x === 'number' ? `feat/run-${x}` : x);
@@ -312,6 +361,49 @@ test('shipChain (R-arch-6): pure: no db, git or scheduler import; the same rows 
   const was = structuredClone(rows);
   assert.deepEqual(chainOfRows(rows), chainOfRows(rows));
   assert.deepEqual(rows, was);
+});
+
+// ---- A2 (R-qa-2): the ancestry pass. A covered run's branch holds the commits of the branch it started from. ----------
+test("shipChain: a run started from an uncarried run's branch carries it (ancestry pass)", () => {
+  // Finish order 1, 5, 2, 3, 4, 6. Run 5 started from run 1, run 6 from run 5; run 6 then took in runs 2, 3 and 4.
+  const out = chainOfRows([row(1, 'dev'), row(5, 1), row(2, 'dev'), row(3, 'dev'), row(4, 'dev'),
+    row(6, 4, { from: 'feat/run-5', carries: [2, 3, 4] })]);
+  assert.ok(out, 'every finished run is listed or carried');
+  assert.deepEqual(out.order, [{ index: 4, pipelineId: 'p4', base: 'dev' }, { index: 6, pipelineId: 'p6', base: 'feat/run-4' }]);
+  assert.deepEqual(carriedBy(out), [[1, 'p6'], [2, 'p6'], [3, 'p6'], [5, 'p6']]);
+});
+
+test('shipChain: rows that resolve with the first closure are unchanged by from', () => {
+  const resolved = [
+    [row(7, 'dev'), row(9, 7), row(8, 9, { carries: [9] }), row(10, 8)],
+    [row(7, 'dev'), row(8, 7), row(9, 7), row(10, 9, { carries: [8] })],
+    [row(7, 'dev'), row(9, 7), row(8, 7), row(10, 8, { carries: [9] })],
+    [row(1, 'dev'), row(2, 1), row(3, 1, { carries: [2] }), row(4, 1), row(5, 4, { carries: [3] })],
+    [row(7, 'dev'), row(9, 7, { merged: true }), row(8, 9), row(10, 8)],
+    [row(7, 'dev'), row(9, 7, { pending: true }), row(8, 9), row(10, 8)],
+    [row(7, 'dev'), row(8, 7, { branch: 'feat/run-7' }), row(10, 7)],
+    [row(7, 8), row(8, 7)],
+    [{ index: 1, pipelineId: 'p1' }],
+    [],
+  ];
+  for (const rows of resolved) {
+    const was = chainOfRows(rows);
+    assert.ok(was, JSON.stringify(rows));
+    // Every other row's branch as each row's fire-time base: none of it may move a chain that already resolves.
+    for (let shift = 1; shift < Math.max(2, rows.length); shift++) {
+      const withFrom = rows.map((r, i) => ({ ...r, from: rows[(i + shift) % rows.length].branch || 'feat/run-7' }));
+      assert.deepEqual(chainOfRows(withFrom), was, JSON.stringify(withFrom));
+    }
+  }
+});
+
+test('shipChain: a row reachable by no walk, carry, from or source edge still falls back (null)', () => {
+  // Run 2's branch is nobody's source or fire-time base, and nothing carries it.
+  assert.equal(chainOfRows([row(1, 'dev'), row(2, 'dev'), row(3, 1, { from: 'feat/run-1' })]), null);
+  // The edges go from a covered run to its base only: a run that started from a covered run is not carried by that.
+  assert.equal(chainOfRows([row(1, 'dev'), row(2, 1, { from: 'feat/run-1' }), row(3, 1)]), null);
+  // An uncovered run's own fire-time base carries nothing.
+  assert.equal(chainOfRows([row(1, 'dev'), row(2, 'dev'), row(4, 'dev', { from: 'feat/run-2' }), row(3, 1)]), null);
 });
 
 // ---- Slice 4 (R-qa-6): Ship on real git branches. Runs 8 and 9 build on run 7, run 10 builds on 8 and 9. ---------------

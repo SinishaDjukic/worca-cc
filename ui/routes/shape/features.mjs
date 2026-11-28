@@ -5,7 +5,7 @@ import { actorOf } from '../../../src/core/identity.mjs';
 import { cancelRest, clashHoldOf, clashRefusalOf, currentFeatureId, featureShipSuggestion, featureThread, featureView, listShapePlans, rechainWaiting, replanRest, resumeFeature, setApproveEach, setFeatureAcceptance, shaperCard, sliceOfPipeline, storedAgentFacts } from '../../../src/core/shape/features.mjs';
 import { shaperSmallRunsOn } from '../../../src/core/shape/small-runs.mjs';
 import { getTicket } from '../../../src/core/scheduler.mjs';
-import { verifyCheckOfPipeline } from '../../../src/core/shape/verifier.mjs';
+import { verifyCheckOfPipeline, acknowledgeFinding } from '../../../src/core/shape/verifier.mjs';
 import { normalizeAcceptance } from '../../../src/shared/shape/acceptance.mjs';
 import { CONFIRM_REASON_MAX, MARK_WORDS, confirmMarkOf, reasonLine } from '../../../src/shared/shape/ship-ledger.mjs';
 import { recordFeatureFigures } from '../../../src/core/shape/measure.mjs';
@@ -98,7 +98,7 @@ app.post('/api/shape/features/:id/resume', async (req, res) => {
     if (shapeRefused(res, out)) return;
     if (out.action === 'none') {
       const verify = featureView(req.params.id, { live: liveSliceOf, finishing: isFinishingRun }).verify;
-      return res.status(409).json(verify ? { code: 'NOTHING_TO_RESUME', error: 'nothing to resume now: the Verifier is not stopped, a run or round is not over, or Shaper small runs is off' } : { error: 'no slice is stopped' });
+      return res.status(409).json(verify ? { code: 'NOTHING_TO_RESUME', error: 'nothing to resume now: the Verifier is not stopped, a run or round is not over, or the Shaper Labs switch is off' } : { error: 'no slice is stopped' });
     }
     let runId = null;
     let held = null;
@@ -265,6 +265,33 @@ app.post('/api/shape/features/:id/confirm', (req, res) => {
     const after = featureView(id, { live: liveSliceOf });
     res.json({ acceptance: after.ship.acceptance || null, smallRuns: after.ship.smallRuns });
   } catch (err) { shapeRouteError(res, err); }
+});
+
+// Slice 9 (R-po-4, D10): a person acknowledges one of the Verifier's notes on the check they read. The only caller of
+// acknowledgeFinding: Away mode, --yes, the PR auto-finisher and the settle hooks never acknowledge. A refusal writes nothing.
+app.post('/api/shape/features/:id/acknowledge', (req, res) => {
+  try {
+    const id = String(req.params.id);
+    const view = featureView(id, { live: liveSliceOf });
+    if (!view) return res.status(404).json({ error: 'unknown feature' });
+    if (!view.ship.smallRuns) return res.status(409).json({ code: 'NOT_SMALL_RUNS', error: 'this feature has no confirmed requirements' });
+    if (view.ship.mode) return res.status(409).json({ error: 'the feature already shipped' });
+    if (featureShipping(id)) return res.status(409).json({ error: 'this feature is already shipping' });
+    const { checkAt, note } = req.body || {};
+    const named = (v) => typeof v === 'string' && v.trim() !== '';
+    if (!named(checkAt) || !named(note)) return res.status(400).json({ code: 'ACK_INVALID', error: 'name the note and the check you read' });
+    const r = acknowledgeFinding(id, { checkAt, note, by: actorOf(req) });
+    if (!r.ok) return res.status(r.status).json(r.code ? { code: r.code, error: r.error } : { error: r.error });
+    if (r.fresh) {
+      broadcastFeature(id);
+      void prAutoFinisher()?.onAcceptanceChanged(id);   // a feature whose one PR waited for this note opens it now
+    }
+    res.json({ smallRuns: featureView(id, { live: liveSliceOf }).ship.smallRuns });
+  } catch (err) {
+    // A Ship that started after the gate above: the writer's lock refusal (409 SHIPPING).
+    if (err && err.code === SHIP_LOCK.code && !res.headersSent) return res.status(409).json({ code: SHIP_LOCK.code, error: SHIP_LOCK.error });
+    shapeRouteError(res, err);
+  }
 });
 
 /** A plan row's state when its run is not live: the pipelines row first, then the link row (follow.mjs). */

@@ -38,7 +38,8 @@ app.post('/api/answer', async (req, res) => {
     if (err && err.code === 'STALE') return res.status(409).json({ error: err.message, code: 'STALE' });   // a stop that changed under the answer
     if (err && err.code === 'TAKE_IN_REFUSED') return res.status(409).json({ error: err.message, code: 'TAKE_IN_REFUSED' });   // slice 3: the finished work could not be taken in
     if (err && err.code === 'INVALID_ANSWER') {
-      return res.status(422).json({ error: 'invalid answer', errors: Array.isArray(err.errors) ? err.errors : [] });
+      // A Verifier gap stop's refusal (status 422) names its gap: say it; other forms keep the generic word.
+      return res.status(422).json({ error: err.status === 422 && err.message ? err.message : 'invalid answer', errors: Array.isArray(err.errors) ? err.errors : [] });
     }
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }

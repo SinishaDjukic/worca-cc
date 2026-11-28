@@ -91,11 +91,26 @@ test('cycle-safe: two runs building on each other still return', () => {
   assert.equal(typeof runStatus({ slice: { ...w.get(5), waitsFor: [3, 4] }, slices: w }).word, 'string');
 });
 
-test('cannot start (direction dd181c89f): word null, mark faint, never next, wins over waitsFor and nextTurn', () => {
+// Slice 16 (H5) replaces direction dd181c89f's "no word of its own": the row names the reduced list with its cause.
+test('s16 H5: cannot start reads "cannot start · waits for run 3 (was canceled)", mark faint, never next, wins over waitsFor and nextTurn', () => {
   const w = world();
   const cannotStart = { run: 3, reason: 'was canceled' };
-  assert.deepEqual(read(4, w, { cannotStart, waitsFor: [3] }), { word: null, mark: 'faint' });
-  assert.deepEqual(read(4, w, { cannotStart, nextTurn: true }), { word: null, mark: 'faint' });
+  const want = { word: 'cannot start · waits for run 3 (was canceled)', mark: 'faint' };
+  assert.deepEqual(read(4, w, { cannotStart, waitsFor: [3] }), want);
+  assert.deepEqual(read(4, w, { cannotStart, nextTurn: true }), want);
+});
+
+test('s16 H5: the list is the reduced one other rows name, plus the run that can never finish with its cause, ascending, once each', () => {
+  // Run 7 builds on runs 1–6: namedWaits leaves 2 and 6. Run 2 failed (its own cause), run 3 was canceled (implied by 6).
+  const w = world({ 2: { state: 'error' }, 3: { state: 'canceled' } });
+  const cannotStart = { run: 3, reason: 'was canceled' };
+  assert.deepEqual(read(7, w, { cannotStart, waitsFor: [2, 3, 4, 5, 6] }),
+    { word: 'cannot start · waits for run 2 (failed), 3 (was canceled), 6', mark: 'faint' });
+  // Already in the reduced list: named once, with the cannot-start reason in place of its own suffix.
+  assert.equal(read(6, world({ 5: { state: 'error' } }), { cannotStart: { run: 5, reason: 'failed' }, waitsFor: [5] }).word,
+    'cannot start · waits for run 5 (failed)');
+  // No waitsFor at all (the bad run alone).
+  assert.equal(read(4, w, { cannotStart }).word, 'cannot start · waits for run 3 (was canceled)');
 });
 
 test('next and no word', () => {
@@ -293,4 +308,143 @@ test('s11: the hosts read the preview through resumeAfterOf and write none of th
   const src = (p) => readFileSync(new URL(`../ui/public/${p}`, import.meta.url), 'utf8');
   for (const p of ['group-page.mjs', 'app.js', 'chat/run-card.mjs']) assert.ok(!src(p).includes('Resume after run'), `${p}: no literal label`);
   for (const p of ['app.js', 'chat/run-card.mjs']) assert.match(src(p), /\bresumeAfterOf\(/, `${p} calls resumeAfterOf`);
+});
+
+// ── Slice 16 (R-qa-4): the held and refusal words, one text per cause, all from this module ─────────────────────────
+const CLASH = 'runs 2 and 3 clash in a.mjs';
+/** One reply of POST /api/resume per cause, as the server sends it. */
+const REPLY = {
+  saving: { ok: true, held: true, pipelineId: 'p4', after: 3, saving: true },
+  turn: { ok: true, held: true, pipelineId: 'p4', after: 3 },
+  clash: { error: CLASH, code: 'TAKE_IN_REFUSED' },
+  cost: { error: 'total cost limit reached', budget: { blocked: true } },
+};
+const exported = (...names) => { for (const n of names) assert.equal(typeof RS[n], 'function', `run-status.mjs exports ${n}`); };
+
+test('s16: HELD_TURN_WORD is "waiting for its turn"', () => {
+  assert.equal(RS.HELD_TURN_WORD, 'waiting for its turn');
+});
+
+test('s16 cause, still saving: the reply reads "Run 3 is still saving its work"', () => {
+  exported('resumeCauseOf', 'resumeWhy');
+  assert.equal(RS.resumeCauseOf(REPLY.saving), 'saving');
+  assert.equal(RS.resumeWhy(REPLY.saving), 'Run 3 is still saving its work');
+});
+
+test('s16 cause, another run holds the turn: the reply reads "Run 3 holds the turn"', () => {
+  exported('resumeCauseOf', 'resumeWhy');
+  assert.equal(RS.resumeCauseOf(REPLY.turn), 'turn');
+  assert.equal(RS.resumeWhy(REPLY.turn), 'Run 3 holds the turn');
+  assert.equal(RS.resumeCauseOf({ ...REPLY.turn, saving: false }), 'turn', 'only saving: true is a saving hold');
+});
+
+test('s16 cause, clash: TAKE_IN_REFUSED reads "Not resumed: " and the clash reason', () => {
+  exported('resumeCauseOf', 'resumeWhy');
+  assert.equal(RS.resumeCauseOf(REPLY.clash), 'clash');
+  assert.equal(RS.resumeWhy(REPLY.clash), 'Not resumed: runs 2 and 3 clash in a.mjs');
+});
+
+test('s16 cause, cost or budget: every cost reply reads "Not resumed: the cost limit is reached"', () => {
+  exported('resumeCauseOf', 'resumeWhy');
+  for (const body of [
+    REPLY.cost,
+    { error: 'total cost limit reached' },
+    { error: 'pipeline cost limit reached' },
+    { code: null, error: 'pipeline cost limit reached' },   // the stored resumeRefused record
+    { error: 'pipeline cost limit reached', budget: {}, needsOverride: true },
+    { error: 'spent too much', budget: { blocked: true } },
+    { error: 'spent too much', needsOverride: true },
+  ]) {
+    assert.equal(RS.resumeCauseOf(body), 'cost', JSON.stringify(body));
+    assert.equal(RS.resumeWhy(body), 'Not resumed: the cost limit is reached', JSON.stringify(body));
+  }
+});
+
+test('s16 cause: each of the four causes has its own text', () => {
+  exported('resumeWhy');
+  const texts = Object.values(REPLY).map((b) => RS.resumeWhy(b));
+  assert.equal(new Set(texts).size, 4, JSON.stringify(texts));
+});
+
+test('s16 cause: an unknown refusal says the server\'s own error; a non-object says nothing; neither function throws', () => {
+  exported('resumeCauseOf', 'resumeWhy');
+  const moved = { code: 'base-moved', error: 'main moved on' };
+  assert.equal(RS.resumeCauseOf(moved), null);
+  assert.equal(RS.resumeWhy(moved), 'Not resumed: main moved on');
+  for (const body of [null, undefined, 'x', 3]) {
+    assert.equal(RS.resumeCauseOf(body), null, String(body));
+    assert.equal(RS.resumeWhy(body), '', String(body));
+  }
+  assert.equal(RS.resumeCauseOf({ ok: true, runId: 'r' }), null, 'a run that went on');
+});
+
+test('s16 resumeNote (D5): a held press is an info toast, a clash or cost refusal an err toast, both with the cause as detail', () => {
+  exported('resumeNote');
+  assert.deepEqual(RS.resumeNote(REPLY.turn, 200), { tone: 'info', title: 'Waiting for its turn', detail: 'Run 3 holds the turn' });
+  assert.deepEqual(RS.resumeNote(REPLY.saving, 200), { tone: 'info', title: 'Waiting', detail: 'Run 3 is still saving its work' });
+  assert.deepEqual(RS.resumeNote(REPLY.clash, 409), { tone: 'err', title: 'Could not resume the run', detail: 'Not resumed: runs 2 and 3 clash in a.mjs' });
+  assert.deepEqual(RS.resumeNote(REPLY.cost, 403), { tone: 'err', title: 'Could not resume the run', detail: 'Not resumed: the cost limit is reached' });
+});
+
+test('s16 resumeNote (D5): null for a run that went on, and for a needsOverride reply (the cost confirm handles it)', () => {
+  exported('resumeNote');
+  assert.equal(RS.resumeNote({ ok: true, runId: 'r', pipelineId: 'p4' }, 200), null);
+  assert.equal(RS.resumeNote({ error: 'pipeline cost limit reached', needsOverride: true, budget: {} }, 403), null);
+});
+
+test('s16: resumeLabel with heldAfter reads "Waiting for its turn"; without one it is today\'s label', () => {
+  assert.equal(RS.resumeLabel(null, { heldAfter: 3 }), 'Waiting for its turn');
+  assert.equal(RS.resumeLabel(6, { heldAfter: 3 }), 'Waiting for its turn', 'held wins over the preview');
+  for (const heldAfter of [null, undefined, '3']) {
+    assert.equal(RS.resumeLabel(null, { heldAfter }), 'Resume', String(heldAfter));
+    assert.equal(RS.resumeLabel(6, { heldAfter }), 'Resume after run 6', String(heldAfter));
+  }
+});
+
+test('s16: heldAfterOf reads the heldResume of the slice with that pipelineId, null for anything else, and never throws', () => {
+  exported('heldAfterOf');
+  const slices = [null, { index: 4, pipelineId: 'p4', state: 'paused', heldResume: { after: 3 } }, { index: 5, pipelineId: 'p5', state: 'paused' }];
+  assert.equal(RS.heldAfterOf(slices, 'p4'), 3);
+  assert.equal(RS.heldAfterOf(slices, 'p5'), null);
+  assert.equal(RS.heldAfterOf(slices, 'p9'), null);
+  for (const s of [null, undefined, {}, 'p4', []]) assert.equal(RS.heldAfterOf(s, 'p4'), null, JSON.stringify(s));
+  for (const id of ['', null, undefined]) assert.equal(RS.heldAfterOf([{ pipelineId: '', heldResume: { after: 3 } }, { heldResume: { after: 3 } }], id), null, String(id));
+  assert.equal(RS.heldAfterOf([{ pipelineId: 'p4', heldResume: { after: '3' } }], 'p4'), null, 'a non-integer after');
+});
+
+test('s16: the menu note and the disabled reason of a held Resume', () => {
+  exported('heldResumeNote', 'heldResumeTitle');
+  assert.equal(RS.heldResumeNote(3), 'Waiting for its turn after run 3');
+  assert.equal(RS.heldResumeTitle(3), 'Goes on after run 3');
+});
+
+test('s16 D4: a paused run whose held resume was refused reads "not resumed: …" with no mark of its own', () => {
+  const refused = (resumeRefused, more = {}) => runStatus({ slice: { index: 4, state: 'paused', resumeRefused, ...more } });
+  assert.deepEqual(refused({ code: null, error: 'pipeline cost limit reached' }), { word: 'not resumed: the cost limit is reached', mark: null });
+  assert.deepEqual(refused({ code: 'TAKE_IN_REFUSED', error: CLASH }), { word: 'not resumed: runs 2 and 3 clash in a.mjs', mark: null });
+  assert.deepEqual(refused({ code: 'base-moved', error: 'main moved on' }), { word: 'not resumed: main moved on', mark: null });
+  assert.equal(refused({ code: null, error: 'total cost limit reached' }, { stop: { reason: 'check', held: false } }).word,
+    'not resumed: the cost limit is reached', 'before the "waiting for you" check');
+});
+
+test('s16 D4: a held resume or answer wins over an old refusal, and only a paused run reads it', () => {
+  const resumeRefused = { code: null, error: 'pipeline cost limit reached' };
+  assert.deepEqual(runStatus({ slice: { index: 4, state: 'paused', resumeRefused, heldResume: { after: 3 } } }), { word: 'after run 3', mark: 'after' });
+  assert.deepEqual(runStatus({ slice: { index: 4, state: 'paused', resumeRefused, stop: { held: true, after: 2 } } }), { word: 'after run 2', mark: 'after' });
+  assert.deepEqual(runStatus({ slice: { index: 4, state: 'done', resumeRefused } }), { word: 'done', mark: 'done' });
+  assert.deepEqual(runStatus({ slice: { index: 4, state: 'running', resumeRefused } }), { word: null, mark: 'live' });
+  assert.deepEqual(runStatus({ slice: { index: 4, state: 'paused' } }), { word: null, mark: null }, 'no refusal: dev\'s text');
+});
+
+test('s16 R-arch-7: the hosts write none of the held or refusal words', () => {
+  const words = ['waiting for its turn', 'is still saving its work', 'holds the turn', 'not resumed:', 'the cost limit is reached',
+    'goes on after run', 'cannot start ·'];
+  const code = (p) => readFileSync(new URL(`../ui/public/${p}`, import.meta.url), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[\s;,{}()])\/\/.*$/gm, '$1').toLowerCase();
+  for (const p of ['app.js', 'chat/run-card.mjs', 'runs-list.mjs', 'shape/feature-actions.mjs']) {
+    const src = code(p);
+    for (const w of words) assert.ok(!src.includes(w), `${p}: no literal "${w}"`);
+  }
+  assert.match(code('app.js'), /\bresumenote\(/, 'app.js asks resumeNote for the toast');
+  assert.match(code('chat/run-card.mjs'), /\bheldafterof\(/, 'the chat card reads heldAfterOf');
 });

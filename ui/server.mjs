@@ -474,8 +474,8 @@ import { shaperSmallRunsOn } from '../src/core/shape/small-runs.mjs';
 import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, cancelRest, resumeFeature,
   rechainWaiting, replanRest, setApproveEach, recordShapePlan, listShapePlans, chainFeature,
   sliceOfPipeline, slicePrPreamble, featureShipSuggestion, recordSliceDraft, recordShip, clearShip, featureShipInput,
-  liveSliceFrom, liveSliceResuming, shaperCard, featureThread, addFeatureNote, appendFeatureRun, liveRoundOf, acceptanceRefusal, featureHoldsTicket, chatShipCardOffered, stackedPrBase, shipOrder, isSlicePreambleLine } from '../src/core/shape/features.mjs';
-import { smallRunsChainGate, sliceFireStart, sliceCombineGate, oneShipCheck, shipHeadRow, shipHeadBase, recordSettledFigures, recordShipCommit, shipCover, shipStopped, SHIPPING, featureShipping, roundWhileShipping, createHeldStops, featureOfAnyPipeline } from '../src/core/shape/chain.mjs';
+  liveSliceFrom, liveSliceResuming, shaperCard, featureThread, addFeatureNote, appendFeatureRun, liveRoundOf, acceptanceRefusal, featureHoldsTicket, chatShipCardOffered, stackedPrBase, shipOrder, sliceNeedsPr, isSlicePreambleLine } from '../src/core/shape/features.mjs';
+import { smallRunsChainGate, sliceFireStart, sliceCombineGate, oneShipCheck, shipHeadRow, shipHeadBase, recordSettledFigures, recordShipCommit, shipCover, shipStopped, SHIPPING, featureShipping, roundWhileShipping, oneShipRaced, createHeldStops, featureOfAnyPipeline, holdAfterSetupClash, resumeTakeInVerdict, whereToAnswerOf } from '../src/core/shape/chain.mjs';
 import { roundsOf, roundOrigin, nextRound, setRoundOutcome } from '../src/core/shape/rounds.mjs';
 import { changesCard, applyChanges, applyRoute, landingFacts, landingFactsOfFeature, shapeToolCheck, threadWork, shapeThreadFacts, createRequirementChanges } from '../src/core/shape/changes.mjs';
 import { defaultShapeToolDeps } from '../src/core/ask/shape-tool-deps.mjs';
@@ -876,7 +876,7 @@ async function requestIdentity(req) {
  *   pendingQuestion: any
  * }>}
  */
-const runs = new Map(); const reqChanges = createRequirementChanges({ runs, stopRun, stopPausedPipeline, schedulerTick, broadcastFeature, liveSliceOf }); const heldStops = createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePending, applyChange: reqChanges.applyStop, now: Date.now, resume: (pid, o) => resumeRun(pid, o), refuse: (status, body) => new ResumeError(status, body), audit: (pid, text, by) => appendAuditById(pid, text, { actor: by }), takeIn: (entry) => (typeof entry.orch?.takeInBeforeAnswer === 'function' ? entry.orch.takeInBeforeAnswer() : { ok: true, merged: [] }) }); const deliverHeld = () => heldStops.deliver().catch((err) => console.error(`[worca-ui] held stop delivery failed: ${err?.message || err}`));   // small runs C3 (D9), C4 (D11, D15); slice 3: the finished same-base work first
+const runs = new Map(); const reqChanges = createRequirementChanges({ runs, stopRun, stopPausedPipeline, schedulerTick, broadcastFeature, liveSliceOf }); const heldStops = createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePending, applyChange: reqChanges.applyStop, now: Date.now, resume: (pid, o) => resumeRun(pid, o), refuse: (status, body) => new ResumeError(status, body), audit: (pid, text, by) => appendAuditById(pid, text, { actor: by }), resumeTakeIn: async (pid) => { const s = readPipelineForResume(pid); return !s || s.row.target === 'workspace' ? { status: 'none', skipped: [] } : resumeTakeInVerdict(await runProjectDir(s.row, projectDirForKey), pid); }, takeIn: (entry) => (typeof entry.orch?.takeInBeforeAnswer === 'function' ? entry.orch.takeInBeforeAnswer() : { ok: true, merged: [] }) }); const deliverHeld = () => heldStops.deliver().catch((err) => console.error(`[worca-ui] held stop delivery failed: ${err?.message || err}`));   // small runs C3 (D9), C4 (D11, D15); slice 3: the finished same-base work first
 
 // Ids of runs genuinely live in THIS process (non-terminal entries in the runs Map).
 // Passed to reconcileStaleRunning so a same-process run is never relabeled. Both the
@@ -1667,10 +1667,10 @@ function wireRun(entry) {
       // The entry's pipeline id finds the start of a resumed run (a new UUID, the same pipeline).
       requirementsRunEvent(id, name, payload, entry.pipelineId || null);   // never throws
       if (entry.ticketId && (name === 'done' || name === 'error') && !entry._outcomeRecorded) {
-        // Scheduled runs: report how the fired run ended (feed item, failure streak).
-        // 'error' is the launch-error channel — a failure before the pipeline row exists.
+        // Scheduled runs: report how the fired run ended (feed item, failure streak). 'error' is the launch-error channel.
         entry._outcomeRecorded = true;
-        try {
+        const held = name === 'error' && payload?.clash ? holdAfterSetupClash({ ticketId: entry.ticketId, pipelineId: entry.pipelineId, clash: payload.clash }) : null;   // A3: a setup clash holds it
+        if (held) { entry.setupClashHeld = true; broadcastFeature(held.featureId); emitChanged('schedules-changed', 'outcome'); } else try {
           recordOutcome(entry.ticketId, {
             status: name === 'error' ? 'error' : ((payload && payload.status) || 'done'),
             pipelineId: entry.pipelineId || null,
@@ -3659,7 +3659,7 @@ const startRunHandler = async (req, res) => {
         syncKeepAwake();
       })
       // #620: the harness's post-run base check landed after the run's last frame; History re-reads it.
-      .finally(() => { entry.settled = true; emitChanged('pipelines-changed', 'updated'); afterRunSettled(orch); });
+      .finally(() => { entry.settled = true; if (entry.setupClashHeld) Promise.resolve().then(() => archivePipeline({ projectDir: entry.projectDir, id: entry.pipelineId, by: 'worca' })).catch((err) => console.error(`[worca-ui] setup-clash attempt not archived: ${err?.message || err}`)); emitChanged('pipelines-changed', 'updated'); afterRunSettled(orch); });
 
     // A scan's launcher needs the card attribution the wizard cannot compute (the key is a hash).
     res.json(scanTarget
@@ -4185,7 +4185,7 @@ async function fireTicket(ticket) {
       Object.assign(body, prev);
     }
   }
-  const combine = await sliceCombineGate(ticket, own); if (combine) return combine;   // small runs: a clash holds it
+  const combine = await sliceCombineGate(ticket, own, combineGateDeps); if (combine) return combine;   // small runs: a clash holds it
   // Every occurrence of a series needs its own feature branch: the local date, plus the time
   // when the series runs several times a day — except a run on its source branch, which has
   // none of its own (the server ignores featureBranch for it).
@@ -4572,7 +4572,7 @@ const chatContext = {
   incrementMuted: (k) => chatCtx().incrementMuted(k),
 };
 
-const chatActions = {
+const chatActions = { whereToAnswer: whereToAnswerOf(runs),   // slice 18 (D7): where a gap stop is answered, read at send time
   listRuns: () => summarizeRuns(),
   // Waiting + missed tickets, soonest first, with the time in this server's zone.
   listScheduled: () => listTickets().map((t) => ({
@@ -4863,7 +4863,7 @@ const channelHost = createChannelHost({
 });
 
 const chatNotifier = createNotifier({
-  channelHost,
+  channelHost, whereToAnswer: chatActions.whereToAnswer,
   getPrefs: chatPrefs,
   chatContext,
   logger: (level, msg) => console.error(`[worca-ui] chat ${level}: ${msg}`),
@@ -4946,7 +4946,7 @@ async function stopPausedPipeline(pipelineId, by = 'local') {
   if (running) return running;
   const p = stopPausedPipelineOnce(pipelineId, by);
   STOPS_IN_FLIGHT.set(pipelineId, p);
-  try { return await p; } finally { STOPS_IN_FLIGHT.delete(pipelineId); heldStops.dropResume(pipelineId); recordSettledFigures({ id: pipelineId, status: 'stopped' }, { tick: () => void schedulerTick(), broadcastFeature, finishing: isFinishingRun }); }   // a stopped Verifier reads halted only now; a stopped round may start the check
+  try { return await p; } finally { STOPS_IN_FLIGHT.delete(pipelineId); heldStops.dropResume(pipelineId); try { if (shaperSmallRunsOn() && getDb().prepare('SELECT status FROM pipelines WHERE id = ?').get(pipelineId)?.status === 'stopped' && bootResuming.delete(pipelineId)) { broadcastFeature(featureOfPipeline(pipelineId)?.featureId); void deliverHeld(); } } catch (err) { console.error(`[worca-ui] boot mark release failed: ${err?.message || err}`); }   /* A4: a stop in the boot window frees the turn */ recordSettledFigures({ id: pipelineId, status: 'stopped' }, { tick: () => void schedulerTick(), broadcastFeature, finishing: isFinishingRun }); }   // a stopped Verifier reads halted only now; a stopped round may start the check
 }
 
 /** One stop of a paused run. Called only through stopPausedPipeline, which joins concurrent stops. */
@@ -5138,11 +5138,9 @@ async function shipFeatureNow(id, mode, { actor = null, release = null, watch = 
     // D5: One closes slice drafts only; a ready slice PR (made by a partly finished stacked ship) is never closed.
     const { head, refusal: shipRefusal } = await oneShipCheck(id, mode, shown, (h) => shipCtxOf(view, { base, head: h })); if (shipRefusal) return shipRefusal;
     clearShip(id);                                   // a withdrawn ship (its PRs all closed unmerged); no-op otherwise
-    // A slice whose PR was closed gets a new one (openMemberPr opens past a CLOSED PR).
-    const needsPr = (s) => s.pipelineId && (!s.pr || s.pr.state === 'CLOSED');
-    if (mode === 'stacked' && shown.slices.some(needsPr)) {
+    if (mode === 'stacked' && shown.slices.some(sliceNeedsPr)) {   // a closed PR gets a new one; the Ship screens count with it too
       for (const s of shipOrder(shown)) {   // Feature D1: a marked feature's runs along the real branches (slice 4), else in finish order
-        if (!needsPr(s)) continue;
+        if (!sliceNeedsPr(s)) continue;
         const stop = stopped(); if (stop) return stop;
         const r = await openMemberPr(s.pipelineId, { actor });
         if (!r.ok) return { status: r.status || 500, body: { error: `could not create run ${s.index}'s PR: ${r.error}. Create PR again to continue.`, prs: made } };
@@ -5153,7 +5151,7 @@ async function shipFeatureNow(id, mode, { actor = null, release = null, watch = 
     const input = await featureShipInput(shown);
     const ctx = shipCtxOf(shown, { base, head });
     if (ctx.error) return { status: 409, body: { error: ctx.error } };
-    let onePr = null;
+    let onePr = null, raced = null;
     const out = await shipFeature({ feature: input, mode, maxBody: PR_BODY_MAX - 2000, ...(head ? { headPipelineId: head } : {}) }, {
       commitChangelog: (pid, update) => commitFileOnBranch(ctx.target.repoDir, {
         branch: ctx.target.feature, path: 'CHANGELOG.md', update, message: `Changelog: ${view.title}` }).then((r) => recordShipCommit(id, r)),
@@ -5164,6 +5162,7 @@ async function shipFeatureNow(id, mode, { actor = null, release = null, watch = 
         return p.ok ? { ok: true } : { ok: false, error: p.stderr };
       },
       openOnePr: async ({ pipelineId, title, body }) => {
+        if ((raced = oneShipRaced(id, shown, readPrState))) return { ok: false, error: raced.body.error };   // a run's own Create PR that started before this ship
         const r = await createPrWithDraftRetry(createRunPr, { id: pipelineId, state: ctx.state, target: ctx.target, base: ctx.base,
           description: body, title, actor, preamble: false, draft }, onDraftFallback);
         if (r.ok) onePr = { ...r.pr, newDraft: !!r.newDraft };
@@ -5188,6 +5187,7 @@ async function shipFeatureNow(id, mode, { actor = null, release = null, watch = 
       },
       refreshBody: (prUrl, pid) => refreshSliceBody(prUrl, pid, ctx.target.repoDir),
     });
+    if (raced) return raced;
     const late = stopped(out.error); if (late || !out.ok) return late || { status: out.status, body: { error: out.error } };
     // The one PR is every slice's PR, as a chain shipped as One records it on every run: the group reads In review.
     if (out.mode === 'one' && out.prUrl) {
@@ -5480,7 +5480,7 @@ function resumeRun(pipelineId, opts = {}) { return heldStops.claimed(pipelineId,
 
   if (saved.row.archived_at) {
     throw new ResumeError(409, { error: 'pipeline is archived' });
-  } const pre = budgetStatus(), capHit = pre.pipelineLimitUsd != null && Number(saved.row.total_cost_usd || 0) >= pre.pipelineLimitUsd && ignoreCostCap !== true && !readCostCapOverride(pipelineId); const held = pre.blocked || capHit ? null : heldStops.holdResume(pipelineId, opts, ticket); if (held) return held;   // small runs slice 7 (D3): before any write; a cost refusal answers now
+  } const pre = budgetStatus(), capHit = pre.pipelineLimitUsd != null && Number(saved.row.total_cost_usd || 0) >= pre.pipelineLimitUsd && ignoreCostCap !== true && !readCostCapOverride(pipelineId); const held = pre.blocked || capHit ? null : heldStops.holdResume(pipelineId, opts, ticket); if (held) return held; const waits = pre.blocked || capHit ? null : await heldStops.takeInBeforeResume(pipelineId, opts); if (waits) return waits;   // small runs slice 7 (D3): before any write; a cost refusal answers now; slice 3 (A5): a take-in clash refuses here
   // No graph re-validation on RESUME, on purpose: _restoreFromResumePoint never
   // reads the workflow row — the frozen manifest supplies topology and port
   // identity (resolvedFromManifest: snapshot wins), so a template that drifted
@@ -8757,7 +8757,7 @@ const relayProxyDeps = () => ({
 const SETUP_JOBS = new Map();            // id -> { id, state, results, ok, retry, startedAt, endedAt }
 const SETUP_JOB_TTL_MS = 60 * 60_000;
 let setupRunning = null;
-let setupDepsOverride = {};
+let setupDepsOverride = {}; let combineGateDeps;   // the fire-time combine gate's test seam (setCombineGateDeps)
 let setupProbesOverride = null;
 const SETUP_AGENT_TEXT = 'Setup cannot run from inside the container while agent isolation is on. Open Worca through its published address.';
 
@@ -10904,7 +10904,7 @@ export const _testing = {
   setSystemProxyDetect: (fn) => { detectSystemProxyImpl = fn || detectSystemProxy; },
   proxyHost,
   // Setup assistant: swap the apply side effects / detect probes; resetSetup drops overrides, the lock and the jobs.
-  setSetupDeps: (o) => { setupDepsOverride = o || {}; },
+  setSetupDeps: (o) => { setupDepsOverride = o || {}; }, setCombineGateDeps: (d) => { combineGateDeps = d || undefined; },
   setSetupProbes: (p) => { setupProbesOverride = p || null; },
   resetSetup: () => { setupDepsOverride = {}; setupProbesOverride = null; setupRunning = null; SETUP_JOBS.clear(); },
   setUpdateFetcher: (fn) => { updateFetcherOverride = typeof fn === 'function' ? fn : null; updateChecker.clear(); },

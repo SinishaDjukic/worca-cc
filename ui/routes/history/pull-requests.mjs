@@ -16,6 +16,7 @@ import { PR_BODY_MAX, generatePrDescription } from '../../../src/core/pr-descrip
 import { getWatch, setWatch } from '../../../src/core/pr-watch.mjs';
 import { CLAUDE_SIGNED_OUT_CODE, CLAUDE_SIGNED_OUT_MESSAGE } from '../../../src/core/preflight.mjs';
 import { chainBaseBranchesOf } from '../../../src/core/scheduler.mjs';
+import { prCreateStarted, roundWhileShipping } from '../../../src/core/shape/chain.mjs';
 import { stackedPrBase } from '../../../src/core/shape/features.mjs';
 import { projectKey } from '../../../src/core/store.mjs';
 import { parseReleaseChoice } from '../../../src/shared/release-version.mjs';
@@ -108,6 +109,14 @@ app.get('/api/pr/remotes', async (req, res) => {
 app.post('/api/pr', async (req, res) => {
   const body = req.body || {};
   if (!(typeof body.id === 'string' && body.id.trim())) return badRequest(res, 'id is required');
+  // The Ship lock: while a small-runs feature ships, a run's own PR would be overwritten by the one PR and left open.
+  const shipping = roundWhileShipping(body.id.trim());
+  if (shipping) return res.status(409).json(shipping);
+  // Marked in flight until it answers, so a One ship that starts meanwhile refuses instead (oneShipRaced).
+  const done = [prCreateStarted(body.id.trim())];
+  try { await createPrRoute(req, res, body, done); } finally { for (const end of done) end(); }
+});
+async function createPrRoute(req, res, body, done) {
   let description = '';
   if (body.body !== undefined && body.body !== null) {
     if (typeof body.body !== 'string') return badRequest(res, 'body must be a string');
@@ -148,6 +157,7 @@ app.post('/api/pr', async (req, res) => {
   const resolved = await resolvePrPipeline(body, res);
   if (!resolved) return;
   const { id, state } = resolved;
+  if (id !== body.id.trim()) done.push(prCreateStarted(id));
   // A run on its source branch that merged back has no PR: its work is ON the base (head == base) and
   // ships with Push. One that did NOT merge back keeps its work on its own branch: that opens a PR
   // like any other run (prTargetFor: hidden branch → source). Still settling (no outcome yet): wait.
@@ -228,7 +238,7 @@ app.post('/api/pr', async (req, res) => {
   // Single-project response shape is pinned by pr-api.test; the workspace arm echoes its member.
   res.json({ ok: true, url: pr.url, mergeable, existed: !!pr.existed, draft: newDraft,
     ...(memberKey ? { memberKey } : {}), ...(body.watch === true ? { watching } : {}) });
-});
+}
 
 function watchView(w) {
   return { watching: !!w?.enabled, status: w?.status || null, reason: w?.reason || null, activePipelineId: w?.activePipelineId || null,

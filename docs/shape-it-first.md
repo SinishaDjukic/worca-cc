@@ -222,8 +222,8 @@ when you approve the outline, and every slice reads them from there:
   the last slice's branch into the feature's base, with the feature's changelog entry, like **Ship as one PR**. A
   follow-up run (it starts from the base, so the last branch does not hold every run's work) stops it: Worca tells you
   in the thread and you ship from the Ship card. With **Requirements** on, it waits until every agreed requirement is
-  marked, tells you once, and opens the PR when the last one is marked. A small-runs feature opens nothing this way: it
-  ships from its Ship card.
+  marked, tells you once, and opens the PR when the last one is marked. A small-runs feature does the same with the
+  `shaperSmallRuns` flag on; with it off, it opens nothing this way and ships stacked from its Ship card.
 
 A re-planned feature keeps the setting it had. A person's own Create PR and Ship as are unchanged. Each PR is opened as the
 person who started the run, and a run that errored or stopped opens nothing (its log says why; a resume that ends done
@@ -294,7 +294,9 @@ actions with no step; its runs are on the group page. The group page has Runs,
 Overview, Decisions and Logs tabs; the feature's log, actions and Ship block sit
 under Overview, and the open step's card sits in the page's status card. Saved
 notes show on the feature's chat card. The step card itself is the same on the run
-page, in Chat and on the group page. With small runs on, a run's stop (Plan approval,
+page, in Chat and on the group page. With small runs on, a marked feature's page has
+Runs, Requirements, Decisions, Cost and Log tabs instead (see "The feature page" below).
+With small runs on, a run's stop (Plan approval,
 a failed plan check, Split, Verifier gaps) draws the same card, with the same
 actions, on the feature's card in Chat, on the group page, on the run page and in
 the Chat run side panel. With small runs on, the stop's card lists its findings
@@ -328,8 +330,8 @@ PR counts as every run's PR, so the group page reads `In review · 1 PR`. In the
 puts the card away; the feature still ships from its page. Until every run is done,
 the group page says when the card will come. Either way, one entry for the feature
 goes into the project's `CHANGELOG.md` under `## Unreleased`, committed on the last
-slice's branch, so it ships with the feature. A small-runs feature ships stacked only:
-see [Small runs](#small-runs-shapersmallruns).
+slice's branch, so it ships with the feature. With the flag on, a small-runs feature ships the whole feature as one
+PR, or stacked; with it off, only stacked: see [Small runs](#small-runs-shapersmallruns).
 
 If every PR of a shipped feature is closed without merging, the ship is withdrawn: the
 feature reads as not shipped again, and its Ship card and **Create PR** come back, so you
@@ -429,6 +431,7 @@ answer that decides what to build *please check*. While Away is active on a Shap
 | Later slice's plan | Continues by itself when its check passed; otherwise as above |
 | The planner's outline change, or notes from the chat | Away approves the plan as written, flagged. The planner already had the notes |
 | Requirement concern or plan concern | Away approves it, keeps the requirement or plan as written, and flags it *please check* |
+| Verifier gap (Small runs) | Only for a question that opens while Away is active, and at once (no delay). Each plain gap gets **Add a fix run**; a gap the Verifier calls a judgement call, one whose fix adds a screen or scope, or one whose fix changes the requirement waits for you. Its fix runs are added once you answer the held gaps, together with yours. Away never ships with a gap or changes a requirement. One answer counts against the limits per question |
 | A card showing an error | Away tries again, flagged |
 | Later run held by **Ask me before each run** | Stays held; the card shows Needs you and Start now until you press it. You set that hold yourself |
 
@@ -603,9 +606,15 @@ API: `pr: { open?, slices? }` in the `POST /api/run` body (a bad value is a 400 
 ## Small runs (`shaperSmallRuns`)
 
 With the `shaperSmallRuns` flag on, a Shaper feature is built as small runs: each run owns at most a few requirements,
-and the feature ships as one PR per run. The flag is read when the planning run starts, and that run carries a
+and the feature ships as one PR or as one PR per run, stacked ([Ship](#ship)). The flag is read when the planning run starts, and that run carries a
 small-runs marker. The Split and its Care table are in [Plan in slices](#plan-in-slices), and the role folds of the
 Requirements card in [Requirements first](#requirements-first).
+
+**The words.** On screen, nothing says "small runs" except the Labs entry's title, Shaper small runs. The Labs
+description reads "a chain of runs that each own a few requirements", and the refusals name what is missing: a
+requirement change on a feature that "has no runs that own its requirements", or a Resume with nothing to resume
+because "the Shaper Labs switch is off". With the flag off, a marked feature's Ship dialog keeps its old One reason, and
+a stored old outcome reads "each run of this feature ships its own pull request".
 
 ### The card's steps
 
@@ -631,15 +640,18 @@ it is held, and the card's held row names the runs that clash and the files, as 
 in src/a.mjs`. Nothing is merged and no branch moves. Settle the clash on one of those runs' branches (merge the other
 run's branch into it and commit the fix), then press **Start now**: while the clash is unsettled, Start now refuses with
 the same reason and starts nothing. **Re-plan the rest** and **Cancel the rest** stay in ⋯. The hold lives only while
-Worca runs: after a restart, the next check finds the clash again and holds the run again.
+Worca runs: after a restart, the next check finds the clash again and holds the run again. A run it builds on can
+also get new work after that check: the run then finds the clash as it sets up, before its first agent, and is held the
+same way, with Start now. That attempt is not kept as a failed run: it is archived and leaves History.
 
 **Work taken in after a wait.** When a run that waited at a stop goes on, or a paused run is resumed, it first takes in
-the work of every run of its feature that finished meanwhile, whatever base that run started from, in finish order, and
+the work of every run of its feature that finished meanwhile, from any base, whatever base that run started from, in finish order, and
 the log shows `feat/run-9 moved · run 2 starts from it`; its pull request is based on that branch. An answer waits
 (`after run 3`) while such a run is still saving its work. On a clash the answer is not sent: the stop stays open and
 says why, and nothing moves. Settle it on the waiting run's branch (merge the other run's branch into it in its checkout
-and commit), then answer again. A resumed run goes on without that work on a clash (its log and audit say why), and its
-next stop's answer refuses on it.
+and commit), then answer again. A resume whose take-in clashes does not start: the run stays paused, Resume is refused
+with the clash reason, and the audit names the clash. An automatic resume (scheduled or network) is refused the same way
+and is not retried until you Resume. Settle it the same way, on the paused run's branch, then Resume again.
 
 ### Care and its record
 
@@ -664,12 +676,44 @@ card. Its mark is not carried: the role marks it again, and Ship waits for it. A
 with that run, also while a gap or change run of it is still waiting (Re-plan cancels that run). A re-plan that ends
 with Don't slice carries nothing into a feature: it is planned and reviewed without the list, as before.
 
+With the flag on, the words say that you confirm and name the role as a detail: a waiting row reads
+"waiting for you to confirm · Design", a met one "confirmed by you · Design", and the Requirements caption counts
+"1 you confirm". With the flag off the rows read as before ("confirmed by a person · Design").
+
 ### Ship
 
-Ship is stacked only: Ship with `one` is refused with `STACKED_ONLY`. With the flag on, Ship opens one PR per run along
+With the flag on, One ships the whole feature as one PR, from the latest finished run's branch. One is disabled while a
+run has a pull request of its own, and the dialog and the server name it: "Run 2 already has pull request #40 open" (or
+"Run 2's pull request #40 is already merged"); N stacked stays offered. When that branch lacks a finished run's work
+(runs that finished out of order), One is refused with `HEAD_MISSING_WORK`: create one PR per run. The one PR opens with
+the feature's Care line and its Not met / Dropped lines, once, then a section per run with its `Satisfies:` line,
+carried runs included; a carried run's draft is closed. With the PR setting "One PR for the whole feature", the PR
+auto-finisher opens that one PR once every run is done, and no run opens one of its own. With the flag off, One stays
+refused with `STACKED_ONLY` ("small runs ship a PR per run"), as before.
+
+Each gap you shipped from the Verifier's question is one line on the Ship card, with its reason: "R-po-2 ships with a
+gap: covered by a later feature". The requirement's own row still reads "gap accepted".
+
+The Verifier can also leave notes that are not verdicts, such as "the import test takes 40 s". The Ship card lists each
+note of the check that rules Ship (a clean check, or one whose gaps you shipped) with its own **Acknowledge** button, and
+Ship stays disabled until every note is acknowledged: "Acknowledge the Verifier's note to ship" (`FINDINGS_UNACKNOWLEDGED`).
+An acknowledged note reads "acknowledged · 14:02". Only a person acknowledges a note. Away mode never acknowledges, and
+neither do `--yes` or the PR auto-finisher: with "One PR for the whole feature" the one PR waits for you and opens once
+you acknowledge. Until then the feature reads the note's reason under Needs you on the Runs list, and the Runs badge
+counts it. A new check needs its own acknowledgement, even for the same note text. A clean result with no notes adds
+nothing, and Ship opens as before. When a note is all that blocks Ship, the card says so once, in its state line, and the
+disabled Ship button is described by that line.
+
+Stacked, with the flag on, opens one PR per run along
 the real branches: from the head back along each run's recorded base; each PR is based on the branch of the one before
 it, the first on the feature's base (or on the feature's base when the PR before it is merged or its branch still merges
-back). A run whose work a listed PR already carries (taken in or combined) gets no pull request of its own. When Worca
+back). A run whose work a listed PR already carries (taken in or combined) gets no pull request of its own. A run's work
+also counts as carried when a listed or carried run started from its branch, so after take-ins from other bases each
+commit ships in one pull request. Before you ship, the Ship card and the Ship dialog name each carried run, as in
+"Run 2's work ships in run 3's pull request (#40 is open)". While Stacked is picked the dialog adds "The open pull
+request is not counted."; with One picked it shows neither. Each pull request is named once: when that carried line
+already names the PR that turns One off, One's reason reads "Run 2 already has a pull request open", without the number. The button's count is the number of new PRs Ship creates: the listed runs
+without a PR or with a closed one ("Create 4 PRs"). When Worca
 cannot follow every finished run's work into the list, it falls back to the order the runs finished, and the Shipped
 card says so: "stacked in the order runs finished".
 
@@ -678,8 +722,15 @@ runs finished. Each PR is based on the branch of the run that finished before it
 first or that run's PR is merged. With `pr.slices` `each` and `pr.open` on, a run still opens
 its own PR when it finishes, before these blocks. Ship is blocked:
 
-- with `ACCEPTANCE_INCOMPLETE` while a confirmed requirement is unmarked; the Ship card reads
-  "Waiting for Compliance to confirm R-comp-4";
+- with `ACCEPTANCE_INCOMPLETE` while a confirmed requirement is unmarked; with the flag on the Ship card reads
+  "Waiting for you to confirm R-comp-4" (with the flag off it names the role, as before). With the flag on, once every
+  run is done, the feature reads "Needs your confirmation: R-ux-2" in the needs-you tone (up to three ids, then
+  "and 2 more") on its page head, its Runs list row and its Chat card, never "Ready to ship". The Runs list lists it
+  under Needs you, and the Runs badge counts it. A failed Verifier round or an open confirmation outranks In review,
+  also when every run has an open pull request. On the page head the reason is a link to
+  `#feature/ID/requirements/ship`: it opens Requirements, scrolls the Ship card to the top and focuses it, and the
+  address then ends in `/requirements`. The disabled **Create N PRs** says the same in a tip drawn above it, never over
+  the status line;
 - with `ACCEPTANCE_INCOMPLETE` while an agreed requirement is owned by no run and confirmed by no person (with the flag
   on). The reason names it ("R-ops-1 is owned by no run and confirmed by no person"), no mark opens Ship, and the feature
   reads "Waiting" instead of "Ready to ship" everywhere. Re-plan the rest is the way out;
@@ -700,11 +751,12 @@ with the gap counts as clean. What follows from it:
   not see a round on an earlier run's branch until that work is in the head. For a commit made outside Worca the card
   reads "Stopped" and **Resume** starts the check.
 - The changelog commit Ship itself makes keeps the check, so a Ship that failed part-way can go on.
-- While the feature is shipping, nothing of it starts: a round, an appended run, a requirement change, a re-plan and
-  **Resume** are refused with `SHIPPING`. The rule is asked again before each pull request Ship opens and after the
+- While the feature is shipping, nothing of it starts: a round, an appended run, a requirement change, a re-plan,
+  **Resume** and a run's own **Create PR** are refused with `SHIPPING`. A run's own **Create PR** that is still opening
+  when **One** ships refuses that ship with `HAS_SLICE_PR` instead. The rule is asked again before each pull request Ship opens and after the
   changelog commit, and once more when the feature would be recorded as shipped. If it no longer holds, Ship stops with
   `NOT_READY`, names the pull requests made so far and pushes nothing more. Ship again once the Verifier has checked the
-  work, or **Resume**, if the card reads "Stopped".
+  work, or **Resume** on the feature page, if it reads "Stopped".
 
 Each PR body has exactly one `Care: …` line, then one line per requirement marked Not met or Dropped
 (`Not met: R-comp-4 · the reason`).
@@ -713,26 +765,68 @@ Each PR body has exactly one `Care: …` line, then one line per requirement mar
 
 A run stops for one of three reasons: a check failed, a role objects, or a requirement would have to change. Finished
 work is never rewritten: when a changed requirement's owner has finished, the change arrives as a new small run. When
-the Verifier finds a gap, the gap becomes a small run too, and the Verifier checks again once it is done. After Care's
-fix cycles it stops adding runs by itself and asks you: **Add a run for the gap** or **Ship with the gap**.
+the Verifier finds a gap, it asks you before any run is added, from round 1 on, on every round with an open gap. Each gap
+gets one of three answers, and **Send answers** stays off until every gap has one:
+
+- **Add a fix run**: one more run closes the gap, then the Verifier checks again.
+- **Ship with the gap**: a reason is required ("R-po-2: a reason is required to ship with the gap" without one). The gap
+  is not asked again in the same series, and the Ship card lists it with its reason.
+- **Change the requirement**: you write the new text (1 to 300 characters). It goes through the same change path as a
+  change from chat: the text changes, a change run builds it, and the next Verifier round checks the new text. The run
+  that owns it must still be finished.
+
+Each fix run and change run added this way builds on the last run before it, so it starts with all the work so far.
+When every gap is shipped, the check reads "Ready to ship". When the requirement changed since the question, or its run
+is no longer finished, nothing is added and the check reads Stopped: Resume runs the Verifier again and asks again.
+Anything else the Verifier noticed goes in its result file's optional `findings` list, one line each (at most 8); see Ship.
+
+The Verifier also names each gap's kind: plain (one more run closes it), a judgement call, a fix that adds a screen or
+scope, or a fix that changes the requirement. With Away mode active when the question opens, Away answers each plain gap
+with a fix run and the question asks you only for the rest. Each held gap says why under its title: "Held for you: the
+Verifier calls this a judgement call", "Held for you: the fix adds a screen or scope" or "Held for you: the fix changes a
+requirement". The gaps Away answered are listed above the questions, for example "R-po-1 → fix · decided by Away mode".
+Once every gap is answered, the feature's log adds one line per gap after the Verifier's line, saying who answered it:
+"Gap R-po-1 → fix, run 6 added · decided by Away mode", "Gap R-po-2 → ships with the gap · decided by you". A check
+recorded before this shows its Verifier line only.
+
+From Telegram or Discord, the gate message lists each gap. `/retry` answers every gap it lists with a fix run. `/approve`
+is refused: shipping with a gap needs a reason, so that and changing a requirement are answered on the feature card.
+A feature started without a chat has no feature card, so both texts say to answer on its feature page in the Worca UI.
 
 ### The four places
 
 - **The Runs list group row**: one group per feature, the planning run as run 1, the state word, the runs done of N and
-  the cost, once.
+  the cost, once. The Verifier's rounds are check rows after the runs (`Verifier · round 2 · 1 gap`), never standalone
+  rows and never counted in the runs done of N; their cost was already counted. A newest round that checks, is paused,
+  waits for you, failed or stopped is said on the group row (`Verifier round 2 failed · 1 gap`), so the feature is not
+  ready yet: while a listed round checks, waits or failed, the group row says it instead of `Ready to ship`, which is
+  said once, on the group row. A Verifier run started now
+  is titled `Verifier · Sign-up · round 2` wherever it shows alone.
 - **The run panel and the Expert run page**: what the run owns, what it starts from, and one Agents place. With the flag
   off, the Agents tab and Overview stay as today. The facts add **Waits for** (left out when the run waits for nothing)
   and **Needed by** (`nothing` when no run builds on it). These facts show on a started run's page only: a run that has
   not started has no run page, and its row opens the feature page, where the row's word names the runs it still waits
   for and pointing at the row puts a dashed bar on the runs that build on it. A stopped run's page names the stop and
   links where it is answered (the feature's card in Chat, or the feature page for a feature no chat started); it has no
-  answer controls.
+  answer controls. With the flag on, a feature no chat started gets no chat card: its waiting line reads "Ship card
+  comes when all 5 runs are done, on this page.", Chat home's Answer on one of its runs, or on its Verifier's question,
+  opens its feature page, and the run panel's Prototype stop links "Answer it on the feature page".
 - **The feature page**: Runs, Requirements (each with its owner run or confirming role, and its status) and Decisions
   with the Care line, and Show order on its Runs tab. Its run rows are one line with the same short words as the card and the Runs list ("waiting for
   you", "waits for run 8", "done"). Its head button reads "Create N PRs" and follows the Ship card: until the
   feature is ready to ship (the Verifier still checks, or waits for your answer) and while the ledger blocks it, it is
   off and the status line says why. An open stop shows its own head and primary, and the page offers no Re-plan beside
   it; the Verifier's stop is asked here too.
+  Its tabs read Runs, Requirements, Decisions, Cost, Log, at every UI level. The Ship card sits at the top of
+  Requirements, above the requirement folds, with the feature's actions under them; the old `#feature/…/overview`
+  address opens Requirements. While a mark is open (the feature is ready to ship and a confirmed requirement still waits
+  for its mark or a reason), the page bar shows **Mark and ship**: it opens Requirements, scrolls to the Ship card and
+  focuses it. Log holds the per-run "Open logs" rows (Expert only) and then the step log, the lines the card's log
+  shows ("No steps yet." before the first). The Cost tab lists each run with its cost: Planning, each numbered run,
+  each Verifier round, and one "Earlier tries and fix runs" row when those cost anything, then the Total, the same
+  number as the group row. Verifier rounds count once each in the feature's cost, re-planned rounds included. A round
+  that reads "· failed" or "· stopped" is one whose Verifier run failed or was stopped and was run again under the
+  same round number.
 
 ### The run words
 
@@ -744,10 +838,12 @@ With the flag on, each run of a marked feature reads one word and one mark, the 
 | `planning`, `reviewing plan`, `writing tests`, `building`, `reviewing` | peach, pulsing | The run is going: the step it is on. |
 | `waiting for you` | amber "?" | The run is at a stop or asks you something. |
 | `after run 3` | dashed ring | You answered its stop; the answer waits for its turn. |
+| `not resumed: the cost limit is reached` | dev's dot | Its resume was held for its turn and refused there; the text names why (`not resumed: ` and the cause). |
 | `failed` | red "!" | The run failed. |
 | `waits for run 2, 6` | grey ring | It has not started; it builds on runs that are not done. |
 | `next` (`next · small change run` for a change run) | ink ring | It has not started and goes on next. |
 | no word | grey ring | It has not started, builds on nothing unfinished, and it is not its turn. |
+| `cannot start · waits for run 3 (was canceled)` | grey ring | It can never start: a run it builds on can never finish; the list is the one other rows name, plus that run with its cause. |
 
 A waiting run names only the unfinished runs nothing else in its list leads to: run 7 builds on runs 2 to 6, but 6
 builds on 3, 4 and 5, so it reads `waits for run 2, 6`. A named run at a stop says so inside the word
@@ -776,9 +872,15 @@ holds up nothing has no `holds up` part (`Run 9 · gate`).
 "holds up" names the runs that are not done or canceled and build on that run, directly or through others: they cannot
 finish while it is open.
 
-You answer a stop on its line, with the same step card the run page shows. A failed line has its own Resume, which
-restarts that run only; the card's footer and ⋯ then show no second Resume. An answer held for its turn (`after run 3`)
-is not a line. The bar's Answer goes to the first line. With the flag off the card shows one open step, as before.
+The feature page shows the same list, first on its Runs tab; its other tabs show none.
+
+Every stop line is closed when it first shows, so the list shows no step card. You answer a stop by opening its line:
+that mounts one step card, the same one the run page shows, for that run only. Opening another line closes the first,
+and closing the open line removes its card. A paused run is not a stop, so it gets no line. A failed line has its own
+Resume, which restarts that run only; the card's footer and ⋯ then show no second Resume. An answer held for its turn
+(`after run 3`) is not a line. Pause on that run drops the held answer, as before, and after Resume you answer the stop
+again. The bar's Answer is not shown while lines are listed: you open a line to answer it. With the flag off the card
+shows one open step, as before.
 
 The state line on the card and the feature page names the working run, or each working run once in run order, and the
 run with the next turn: `Run 6 reviewing · next: run 9`. It shows only the half that applies (`next: run 9`). When
@@ -793,12 +895,26 @@ With the flag on, a Resume of a paused run of a marked feature while another run
 run stays paused and goes on at its turn, together with held answers. This holds for the run's own Resume and the
 feature card's Resume. A held resume holds nothing, so it never keeps another run from its
 turn, but it goes before the free runs. Pause or Stop on the held run drops the hold, and so does a restart: the run
-is then simply paused. Of several runs of one feature resumed at a restart, only the lowest goes on; the others are
+is then simply paused. Stopping a run that a restart is about to resume frees its turn at once, and the next held run
+goes on. Of several runs of one feature resumed at a restart, only the lowest goes on; the others are
 held behind it. A held resume reads `after run N` on its row and on its run page head, and its Resume then reads plain
 `Resume`. Before it is pressed, a paused run's Resume reads `Resume after run N` while another run of the feature is
 going, and `Resume` otherwise; the server still decides at the press. The same wording shows on the Resume in the
 feature page's footer and in the Chat feature card's footer, taken from the run that Resume acts on. A restart of a stopped or failed run is still
-refused while another run of the feature is going.
+refused while another run of the feature is going. While a finished run of the feature is still saving its work, a
+resume waits (`after run N`), as an answer does, and goes on once that work is saved, so the resumed run starts with
+it. A held resume refused at its turn (for example on cost) leaves the run paused, and a run paused on the network is
+then taken up again by the network watch once its endpoint answers inside the wait window.
+
+A run held for its turn says it waits, never `paused`: the Runs list's group line reads `Run 4 waiting for its turn`
+(`Waiting for its turn · Run 4` when it is the current run), More ways to resume reads `Waiting for its turn after run 3`,
+and the Chat feature card's Resume reads `Waiting for its turn`, disabled with `Goes on after run 3` (Stop stays). A
+run whose resume or answer you already gave and that only waits for its turn does not need you: it is not counted
+under Needs you (the Runs list's section, the Runs badge and Activity), unless its feature needs you for another
+reason. A press that does not go on says why, one text per cause: `Run 3 is still saving its work` (a finished run is
+saving), `Run 3 holds the turn` (another run is going), `Not resumed: ` and the clash reason (its work clashes with a
+finished run's), and `Not resumed: the cost limit is reached` (cost or budget). A held resume refused at its turn
+shows the same text on its row, lower-cased: `not resumed: the cost limit is reached`.
 
 ### Show order
 
@@ -809,8 +925,17 @@ already says it. The button is closed each time the page opens, on another featu
 view; switching the page's tabs keeps it as you left it.
 
 `Show order` opens a still drawing of the order, and `Hide order` closes it. Each run is a dot with the row's own marks,
-placed right of every run it builds on. A line joins a run that is not done to the runs it holds back; links already
-met, and links another link already implies, are not drawn, and no line passes through another run's dot. Nothing moves
+placed right of every run it builds on. While a run is held back, only the links that hold it are drawn: a line joins a
+run that is not done to the runs it holds back. Once none holds a run back, every link is drawn faint. Links another link
+already implies are never drawn. A link to the next column is one curve. A link that skips columns curves into the lane
+in the gap under its upper row, below that row's dots and above the next row's numbers, runs along it and curves out to
+its run, crossing a row only between columns; no link passes through a number, nor within 7px of a dot it does not
+join. Pointing at a run's row (hover or focus) or keeping it (click, Enter or Space) lights that run's dot and the links
+drawn to and from it, and the other links dim; Esc lets go. A paused or stopped run shows the row's
+dot, not the hollow ring of a run not started. A run the Verifier adds (a fix run or a change run) builds on the last run
+before it and stands right of it; a change run or an extra run added from the chat card or a run's stop builds on
+nothing yet, has no link drawn into it, and still stands right of the last run before it, never in the first column. A
+follow-up starts from the feature base and keeps its place. Nothing moves
 but the existing pulse of a working run. The drawing is hidden from screen readers: the rows say the same in words.
 The drawing is never on the Chat card or the Runs sidebar.
 
@@ -823,7 +948,7 @@ waits only for the runs it builds on, so an independent run starts while an earl
 or paused (one run of a feature at a time), an answer or a resume held for its turn waits until no other run is going and held answers go on one at a time, lowest run first, and among
 the free runs a change run starts first, then the lowest run number; a run starts from the feature's latest finished run and, on a marked feature, merges in every run it builds on that this branch lacks; a resumed run first merges the
 latest finished work (on a marked feature, every finished run it lacks, whatever its base, and it records the branch it now
-builds on as its base); a run that waited at a stop takes in every finished run it lacks, whatever its base, before its answer goes on; a finished feature's figures are recorded on this machine; and one PR ships the latest finished
+builds on as its base, and on a clash it stays paused); a run that waited at a stop takes in every finished run it lacks, whatever its base, before its answer goes on; a finished feature's figures are recorded on this machine; and one PR ships the latest finished
 run's branch, or is refused with `HEAD_MISSING_WORK` when that branch does not hold every run's work.
 
 **A feature with the marker, flag off.** It keeps its one card, its Care and the Care row on its Ship card, its run

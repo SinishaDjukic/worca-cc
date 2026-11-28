@@ -46,7 +46,7 @@ test('the Verifier strings, the gap list and the measurements', () => {
   const s = src();
   for (const needle of ["'Verifying'", "'the Verifier walks the main flow · 4 of 4 runs done'", "'Ready to ship'",
     "'Verifier: 3 of 4 hold · 1 gap · run 5 added for it'",
-    "'Verified: the 4 requirements owned by runs hold in the main flow'", "'Add a run for the gap'", "'Needs you'"]) assert.ok(s.includes(needle), needle);
+    "'Verified: the 4 requirements owned by runs hold in the main flow'", "'Send answers'", "'Needs you'"]) assert.ok(s.includes(needle), needle);
   assert.match(s, /judge\('verifier gap list'/);
   assert.match(s, /judgeVerifyLine\('gap found', theme\)/, 'the Verifier line measured beside the gap rows (owner direction d86d13181)');
   assert.match(s, /judgeVerifyLine\('no gap', theme\)/);
@@ -76,7 +76,7 @@ test('both themes at 375px, the Welcome Skip, the 30-minute cap, reduced motion 
 test('D1 Ship: blocked, ready, not met and done beside the prototype\'s #ship at 1280px and 375px; rows measured; keyboard and focus', () => {
   const s = src();
   for (const needle of ["shipFeature('sb'", "shipFeature('sr'", "shipFeature('sd'", "shipFeature('sk'", "'R-comp-4': { kind: 'confirmed', role: 'compliance' }",
-    "recordShip(SD.f.id", "for (const width of [1280, WIDTH])", "'Waiting for Compliance to confirm R-comp-4'",
+    "recordShip(SD.f.id", "for (const width of [1280, WIDTH])", "'Waiting for you to confirm R-comp-4'",
     "'Mark R-comp-4 as Compliance: The sign-up data stays in the EU'", "shipFeature('sn'", "mark: 'not-met', reason: 'Legal has not signed the EU clause yet'",
     "app-ship-not-met-", "f.prsOpen === 1", "f.views.join() === 'View PRs'",
     "'Create 4 PRs'", "'4 PRs open'", "'into main'", "judge('ship blocked confirmed rows'", "judge('ship ready confirmed rows'", "judge('ship done PR rows'",
@@ -109,7 +109,7 @@ test('d3Phase seeds, measures both lists with the width, pairs with the prototyp
   for (const needle of ["seedFeature('d3'", "'R-comp-1': { kind: 'confirmed', role: 'compliance' }", "reqChanges.apply(D3.f.id",
     "post(`/api/shape/features/${D3.f.id}/confirm`", "recordShip(D3.f.id", '#feature/${D3.f.id}/requirements', '#feature/${D3.f.id}/decisions',
     "MEASURE(D3_REQS, '.plan-check-row', '.plan-check-mark', '.plan-check-text')", "'li:not([data-fact=\"care\"]) > .plan-check-row'",
-    '{ width, oneLine: true }', "'run 2 · changed · run 6 builds it'", "'run 3 · being built'", "'confirmed by a person · Compliance'",
+    '{ width, oneLine: true }', "'run 2 · changed · run 6 builds it'", "'run 3 · being built'", "'waiting for you to confirm · Compliance'",
     "'run 2 · met · changed by run 6'", 'Marked Not met by you · ${D3_REASON}', 'r.idLines <= 1', '!r.noteCut', '!f.careCut', 'f.link.color !== f.link.noteColor',
     'visible label widths', 'results.d3Minutes', 'for (const width of [1280, WIDTH])', "process.env.D3_ONLY === '1'", 'await skipWelcome(); await setTheme(theme);']) {
     assert.ok(s.includes(needle), needle);
@@ -241,5 +241,242 @@ test('the STOP_FINDINGS_ONLY phase: a 3-finding stop on the run page, the Chat r
   // The six files, with these exact names (no prefix), in SHOTS_DIR.
   for (const surface of ['run-page', 'panel', 'card']) {
     assert.match(s, new RegExp(`[\`'/]small-runs-stop-findings-${surface}-(\\$\\{theme\\}|light|dark)\\.png`), `the ${surface} screenshots`);
+  }
+});
+
+test('the One ship phase shoots its 6 surfaces in both themes', () => {
+  const s = src();
+  const gate = s.match(/process\.env\.SHIP_ONE_ONLY === '1'\) \{ await (\w+)\(\); await finish\(\); \}/);
+  assert.ok(gate, 'the SHIP_ONE_ONLY=1 gate');
+  const at = s.indexOf(`async function ${gate[1]}(`);
+  assert.ok(at >= 0, 'the One ship phase');
+  const body = s.slice(at, s.indexOf('\n}\n', at));
+  assert.match(body, /1280/, 'at 1280px');
+  assert.match(body, /THEMES|'dark'/, 'both themes');
+  // What each surface is asserted to show before its shot.
+  for (const needle of ['disabled', '.shipit-prs-one-why', 'Run 2 already has pull request #40 open', ', or ship as one PR', '1 PR open',
+    'Not opened: each run of this feature ships its own pull request', 'shipped as one PR or as stacked PRs']) {
+    assert.ok(s.includes(needle), needle);
+  }
+  // The twelve files, with these exact names (no prefix), in SHOTS_DIR.
+  for (const surface of ['enabled', 'disabled', 'group-line', 'applied', 'outcome', 'labs']) {
+    assert.match(s, new RegExp(`[\`'/]app-ship-one-${surface}-(\\$\\{theme\\}|light|dark)\\.png`), `the ${surface} screenshots`);
+  }
+});
+
+test('the SHIP_CARRIED_ONLY phase captures app-ship-carried-card and app-ship-carried-dialog in light and dark', () => {
+  const s = src();
+  const gate = s.match(/process\.env\.SHIP_CARRIED_ONLY === '1'\) \{ await (\w+)\(\); await finish\(\); \}/);
+  assert.ok(gate, 'the SHIP_CARRIED_ONLY=1 gate');
+  const at = s.indexOf(`async function ${gate[1]}(`);
+  assert.ok(at >= 0, 'the carried-run Ship phase');
+  const body = s.slice(at, s.indexOf('\n}\n', at));
+  assert.match(body, /1280/, 'at 1280px');
+  assert.match(body, /THEMES|'dark'/, 'both themes');
+  // The seeded shape (run 3 took in run 2) and what is asserted in the page before each shot.
+  assert.match(body, /tookIn/, 'run 3 carries run 2');
+  assert.match(s, /Run 2\\?'s work ships in run 3\\?'s pull request \(#40 is open\)/);
+  for (const needle of ['Create 4 PRs', '.ask-shipcard-carried', '.shipit-prs-carried', 'scrollWidth', 'clientWidth']) {
+    assert.ok(s.includes(needle), needle);
+  }
+  // The four app files, with these exact names (no prefix), in SHOTS_DIR, beside the prototype's two screens.
+  for (const surface of ['card', 'dialog']) {
+    assert.match(s, new RegExp(`[\`'/]app-ship-carried-${surface}-(\\$\\{theme\\}|light|dark)\\.png`), `the ${surface} screenshots`);
+  }
+  for (const screen of ['screen-requirements', 'screen-ship-dialog']) assert.ok(s.includes(screen), screen);
+});
+
+// Feature page slice 6 (R-ux-3): the Cost tab, the Ship card on Requirements and the Log tab, in both themes.
+test('the FEATURE_TABS_ONLY phase captures feature-cost-tab, feature-requirements-ship-card and feature-log-tab in light and dark', () => {
+  const s = src();
+  assert.match(s, /process\.env\.FEATURE_TABS_ONLY === '1'\) \{ await featureTabsPhase\(\); await finish\(\); \}/, 'the FEATURE_TABS_ONLY=1 gate');
+  const at = s.indexOf('async function featureTabsPhase(');
+  assert.ok(at >= 0, 'the feature tabs phase');
+  const body = s.slice(at, s.indexOf('\n}\n', at));
+  assert.match(body, /THEMES/, 'both themes');
+  assert.match(body, /1280/, 'at 1280px');
+  assert.match(body, /375/, 'the narrow shots at 375px');
+  // The Mark and ship click, what it must leave behind, and the bar that must not overflow.
+  for (const needle of ['.gpage-markship', '[data-ship-card]', 'activeElement', 'scrollWidth', 'clientWidth']) assert.ok(body.includes(needle), needle);
+  // The files, with these exact names (no prefix), in SHOTS_DIR.
+  for (const surface of ['cost-tab', 'requirements-ship-card', 'log-tab']) {
+    assert.match(s, new RegExp(`[\`'/]feature-${surface}-(\\$\\{theme\\}|light|dark)\\.png`), `the ${surface} screenshots`);
+  }
+  for (const narrow of ['cost-tab', 'requirements-bar']) {
+    assert.match(s, new RegExp(`[\`'/]feature-${narrow}-narrow-(\\$\\{theme\\}|light)\\.png`), `the narrow ${narrow} screenshot`);
+  }
+});
+
+// Slice 7 (D17): confirm in place — the tip beside the reason, the reason's link, the chat-less pointers.
+test('s7: confirm-in-place phase', () => {
+  const s = src();
+  assert.match(s, /process\.env\.CONFIRM_ONLY === '1'\) \{ await confirmInPlacePhase\(\); await finish\(\); \}/, 'the CONFIRM_ONLY=1 gate');
+  const at = s.indexOf('async function confirmInPlacePhase(');
+  assert.ok(at >= 0, 'the confirm-in-place phase');
+  const body = s.slice(at, s.indexOf('\n}\n', at));
+  assert.match(body, /THEMES/, 'both themes');
+  assert.match(body, /1280/, 'at 1280px');
+  assert.match(body, /375|WIDTH/, 'and the narrow head');
+  for (const needle of ['.rd-tip', '.run-status-link', '[data-ship-card]', 'activeElement', '#40']) assert.ok(body.includes(needle), needle);
+  // A real hover, the rects, and that the tip is on top where it is drawn.
+  for (const needle of ['Input.dispatchMouseEvent', 'getBoundingClientRect', 'elementFromPoint']) assert.ok(s.includes(needle), needle);
+  for (const name of ['feature-confirm-tip', 'feature-confirm-reason', 'runs-confirm-needs', 'feature-chatless-waiting', 'ship-pr-named-once',
+    'chat-card-confirm', 'prototype-stop-feature-link']) {
+    assert.match(s, new RegExp(`[\`'/]${name}-(\\$\\{theme\\}|light|dark)\\.png`), `the ${name} screenshots`);
+  }
+});
+
+// Shaper small runs slice 8 (D14): the gap question, light and dark.
+test('the gap question: a 2-gap gate stop, shot in both themes', () => {
+  const s = src();
+  assert.match(s, /const VSTOP = verifyStop\(/);
+  assert.match(s, /shot\(`app-verifier-gap-question-\$\{theme\}`\)/);
+});
+
+
+// Slice 9 (R-po-4, D15): the Verifier's note on the Ship card, before and after Acknowledge.
+test('the SHIP_NOTES_ONLY phase: the note row before and after Acknowledge, 1280px, light and dark, 4 screenshots', () => {
+  const s = src();
+  assert.ok(/process\.env\.SHIP_NOTES_ONLY === '1'\) \{ await shipNotesPhase\(\); await finish\(\); \}/.test(s), 'the SHIP_NOTES_ONLY=1 gate');
+  const at = s.indexOf('async function shipNotesPhase(');
+  assert.ok(at >= 0, 'the Ship notes phase');
+  const body = s.slice(at, s.indexOf('\n}\n', at));
+  assert.match(body, /shipFeature\(/, 'a seeded marked feature with every run done');
+  assert.match(body, /setVerify\(/, 'its clean Verifier check on record');
+  assert.match(body, /findings/, 'with one note');
+  assert.match(body, /1280/, 'at 1280px');
+  assert.match(body, /THEMES|'dark'/, 'both themes');
+  for (const needle of ['ship-create', 'disabled', 'btn-primary', 'acknowledged']) assert.ok(body.includes(needle), needle);
+  assert.match(body, /ship-ack-note-1|Acknowledge/, 'the note row\'s button');
+  assert.match(body, /click/i, 'Acknowledge is clicked');
+  assert.match(body, /check\(/, 'what it shoots is asserted');
+  // Before Acknowledge the note is said once: no reason line, and Create described by the state line.
+  for (const needle of ['whys', 'describedBy', '.ask-shipcard-why', 'ask-shipcard-gap', 'aria-describedby', '.ask-shipcard-stats']) {
+    assert.ok(body.includes(needle), needle);
+  }
+  assert.match(body, /before\.whys === 0/, 'the before state has no reason line');
+  assert.match(body, /before\.describedBy\b/, 'and Create is described by the state line');
+  // The four files, with these exact names (no prefix), in SHOTS_DIR.
+  for (const when of ['before', 'after']) {
+    assert.match(s, new RegExp(`[\`'/]app-ship-note-${when}-(\\$\\{theme\\}|light|dark)\\.png`), `the ${when} screenshots`);
+  }
+});
+
+// Slice 10 (R-po-5, step 7): the card log's "decided by" lines and the gap question with an Away answer, light and dark.
+test('the GAP_AWAY_ONLY phase: the log lines and the held gap question, asserted before 4 screenshots in both themes', () => {
+  const s = src();
+  const gate = s.match(/process\.env\.GAP_AWAY_ONLY === '1'\) \{ await (\w+)\(\); await finish\(\); \}/);
+  assert.ok(gate, 'the GAP_AWAY_ONLY=1 gate');
+  const at = s.indexOf(`async function ${gate[1]}(`);
+  assert.ok(at >= 0, 'the Away gap phase');
+  const body = s.slice(at, s.indexOf('\n}\n', at));
+  assert.match(body, /answeredBy/, 'a seeded check record that says who answered');
+  assert.match(body, /R-po-1/);
+  assert.match(body, /R-po-2/);
+  assert.match(body, /'away'/);
+  assert.match(body, /'you'/);
+  assert.match(body, /decided by Away mode|ANSWERED_BY_WORDS/, 'the Away log line is asserted');
+  assert.match(body, /decided by you|ANSWERED_BY_WORDS/, 'the log line of the person is asserted');
+  assert.match(body, /decided/, 'the live gap stop has a decided row');
+  assert.match(body, /judgement/, 'and a held judgement gap');
+  assert.match(body, /Held for you/);
+  assert.match(body, /check\(/, 'what it shoots is asserted');
+  assert.match(body, /THEMES|'dark'/, 'both themes');
+  for (const name of ['app-verifier-away-log', 'app-verifier-away-question']) {
+    assert.match(s, new RegExp(`${name}-(\\$\\{theme\\}|light|dark)`), `${name} screenshots`);
+  }
+});
+
+// Slice 11 (R-ux-4, D15): the Verifier's check row and the failed group row, light and dark.
+test('the VERIFIER_ROWS_ONLY phase: the failed round on its group, asserted before the screenshots in both themes at 1280px', () => {
+  const s = src();
+  assert.ok(/process\.env\.VERIFIER_ROWS_ONLY === '1'\) \{ await verifierRowsPhase\(\); await finish\(\); \}/.test(s), 'the VERIFIER_ROWS_ONLY=1 gate');
+  const at = s.indexOf('async function verifierRowsPhase(');
+  assert.ok(at >= 0, 'the Verifier rows phase');
+  const body = s.slice(at, s.indexOf('\n}\n', at));
+  assert.match(body, /seedFeature\(/, 'a seeded marked feature');
+  assert.match(body, /'error'/, 'a failed Verifier pipeline');
+  assert.match(body, /1280/, 'at 1280px');
+  assert.match(body, /THEMES|'dark'/, 'both themes');
+  for (const needle of ['data-row-key', 'Verifier · round 2 · 1 gap', 'Verifier round 2 failed · 1 gap', 'check(']) assert.ok(body.includes(needle), needle);
+  assert.match(s, /[`'/]runs-group-verifier-failed-(\$\{theme\}|light|dark)\.png/, 'the screenshots');
+});
+
+test('the STOP_LIST_ONLY phase asserts 3 lines, 0 then 1 step cards, and no paused line before each screenshot, in both themes at 1280px', () => {
+  const s = src();
+  assert.ok(/process\.env\.STOP_LIST_ONLY === '1'\) \{ await stopListPhase\(\); await finish\(\); \}/.test(s), 'the STOP_LIST_ONLY=1 gate');
+  const at = s.indexOf('async function stopListPhase(');
+  assert.ok(at >= 0, 'the stop list phase');
+  const body = s.slice(at, s.indexOf('\n}\n', at));
+  assert.match(body, /seedFeature\(/, 'a seeded marked feature');
+  assert.match(body, /liveRun\(/, 'its runs at a stop are live');
+  assert.match(body, /'paused'/, 'one run is paused');
+  assert.match(body, /#feature\//, 'the feature page');
+  assert.match(body, /\bcard\(/, 'the Chat card');
+  assert.match(body, /1280/, 'at 1280px');
+  assert.match(body, /360/, 'and the 360px card');
+  assert.match(body, /THEMES|'dark'/, 'both themes');
+  for (const needle of ['chat-rc-stop-q', 'data-run="5"', 'chat-rc-stop-line', 'data-run="3"']) assert.ok(body.includes(needle), needle);
+  assert.match(body, /click/i, 'line 2 is clicked');
+  assert.match(body, /check\(/, 'what it shoots is asserted');
+  assert.ok(body.indexOf('check(') < body.indexOf('capture('), 'asserted before the first screenshot');
+  // The nine files: card and feature, closed and open, light and dark (no prefix), plus the 360px light card.
+  assert.match(s, /[`'/]stop-list-(?:\$\{\w+\}|card|feature)-(?:\$\{\w+\}|closed)-(?:\$\{\w+\}|light|dark)\.png/, 'the closed shots');
+  assert.match(s, /[`'/]stop-list-(?:\$\{\w+\}|card|feature)-(?:\$\{\w+\}|open)-(?:\$\{\w+\}|light|dark)\.png/, 'the open shots');
+  assert.match(s, /stop-list-card-closed-light-360\.png/, 'the narrow shot');
+});
+
+// Slice 15 (R-qa-3, D11): the Labs entry's words, light and dark.
+test('the LABS_WORDS_ONLY phase: the Labs entry says small runs only in its title, asserted before 2 screenshots at 1280px', () => {
+  const s = src();
+  const gate = s.match(/process\.env\.LABS_WORDS_ONLY === '1'\) \{ await (\w+)\(\); await finish\(\); \}/);
+  assert.ok(gate, 'the LABS_WORDS_ONLY=1 gate');
+  const at = s.indexOf(`async function ${gate[1]}(`);
+  assert.ok(at >= 0, 'the Labs words phase');
+  const body = s.slice(at, s.indexOf('\n}\n', at));
+  assert.match(body, /1280/, 'at 1280px');
+  assert.match(body, /THEMES|'dark'/, 'both themes');
+  // The Labs row, its title and description, every tooltip and aria label, and the small-runs match.
+  for (const needle of ['settings/experimental/shaperSmallRuns', '#flag-row-shaperSmallRuns', '.flag-row-title', '.flag-row-desc',
+    'aria-label', 'title', 'small[ -]runs', 'Shaper small runs']) {
+    assert.ok(body.includes(needle), needle);
+  }
+  assert.match(body, /check\(/, 'what it shoots is asserted');
+  assert.ok(body.indexOf('check(') < body.indexOf('capture('), 'asserted before the first screenshot');
+  assert.match(s, /[`'/]app-labs-words-(\$\{theme\}|light|dark)\.png/, 'the screenshots');
+});
+
+// Slice 18 (D10, D11): a failed round and an open confirmation over In review, light and dark.
+test('s18: the in-review outranking proof shoots the Runs group row and the page head, asserted, in both themes at 1280px', () => {
+  const s = src();
+  const names = ['runs-group-in-review-failed-round', 'feature-head-in-review-confirm'];
+  for (const name of names) assert.match(s, new RegExp(`[\`'/]${name}-(\\$\\{theme\\}|light|dark)\\.png`), `${name} screenshots`);
+  // The phase function(s) that name the screenshots, each reached by its own one-phase gate.
+  const phases = [...s.matchAll(/\nasync function (\w+Phase)\(/g)]
+    .map((m) => ({ fn: m[1], body: s.slice(m.index + 1, s.indexOf('\n}\n', m.index + 1)) }))
+    .filter((p) => names.some((name) => p.body.includes(name)));
+  assert.ok(phases.length, 'a phase function holds the two cases');
+  for (const p of phases) {
+    assert.match(s, new RegExp(`process\\.env\\.\\w+_ONLY === '1'\\) \\{ await ${p.fn}\\(\\); await finish\\(\\); \\}`), `${p.fn}: its _ONLY=1 gate`);
+    assert.match(p.body, /1280/, `${p.fn}: at 1280px`);
+    assert.match(p.body, /THEMES|'dark'/, `${p.fn}: both themes`);
+    assert.match(p.body, /check\(/, `${p.fn}: what it shoots is asserted`);
+  }
+  const body = phases.map((p) => p.body).join('\n');
+  for (const needle of ['Verifier round 2 failed · 1 gap', 'Needs your confirmation: R-ux-2']) assert.ok(body.includes(needle), needle);
+});
+
+// Slice 19 (R-arch-4, D8): Chat home's Answer on a chat-less feature's Verifier question, in s7's chat-less phase.
+test('s19: the confirm-in-place phase clicks Answer on the chat-less Verifier tile and shoots the feature page\'s gap question', () => {
+  const s = src();
+  const at = s.indexOf('async function confirmInPlacePhase(');
+  assert.ok(at >= 0, 'the confirm-in-place phase');
+  const body = s.slice(at, s.indexOf('\n}\n', at));
+  assert.match(body, /verifyStop\(|VSTOP|VPQ/, 'a seeded Verifier run waiting at its gap stop');
+  for (const needle of ['setVerify(', '#chat/new', '.chat-run-tile-answer', '#feature/', '.gpage-question', 'THEMES', '1280', 'check(']) {
+    assert.ok(body.includes(needle), needle);
+  }
+  for (const theme of ['light', 'dark']) {
+    assert.match(body, new RegExp(`[\`'/]chat-home-verifier-answer-(\\$\\{theme\\}|${theme})\\.png`), `the ${theme} screenshot`);
   }
 });

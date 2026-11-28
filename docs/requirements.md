@@ -493,7 +493,8 @@ Worca. Exporting costs nothing: no model is called.
 A Shaper run started with the `shaperSmallRuns` flag on keeps its agreed requirements on the feature, not on this page.
 Each requirement is owned by one run, which builds it and has it checked, or confirmed by a person in a named role
 (Product, Engineering, Design, DevOps, Security, Compliance or QA). A person marks a confirmed requirement Met, Not met
-or Dropped; Not met and Dropped need a one-line reason. Ship is stacked, one PR per run, and is refused with
+or Dropped; Not met and Dropped need a one-line reason. Ship is one PR or stacked, one PR per run (stacked only with the
+flag off), and is refused with
 `ACCEPTANCE_INCOMPLETE` until each confirmed requirement is marked. With the flag on, it waits for a clean
 Verifier check on record for the exact head it would ship ([Ship](shape-it-first.md#ship)). The feature shows in four places: the Runs list
 group row, the run panel, the Expert run page and the feature page. Its requirements are listed in the run panel, the run

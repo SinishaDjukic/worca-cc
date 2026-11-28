@@ -189,7 +189,10 @@ test('s9: it adds the map surface (SURFACE=map), the worlds base, busy, held, ch
   assert.match(s, /is-violet/, 'merged rows keep a model-only dot');
   assert.match(s, /\.chat-rc-members[^\n]*\.status-dot|\.status-dot[^\n]*\.chat-rc-members|chat-rc-members[\s\S]{0,400}\.status-dot/, 'the card rows\' dot classes');
   assert.match(s, /data-from=\\?["']2\\?["']|\.from\s*===?\s*['"]?2\b/, 'after2 draws nothing from run 2');
-  assert.match(s, /check\(overlaps\[[^\n]*\.length === 0/, 'links that share no run and run together fail the proof');
+  // R-ux-6 (D5): "links that share no run never run together" is retired, because the agreed mock's lane puts every skip
+  // link under one row on one line; the proof measures the rendered links against the dots instead.
+  assert.doesNotMatch(s, /check\(overlaps\[/, 'the retired overlap check is gone');
+  assert.match(s, /check\(cross\.length === 0/, 'a link within 7px of a dot it does not join fails the proof');
 });
 
 // ── Slice 12 (R-arch-1): the line surface proves run 1, which runs in the Chat card's own pipeline ────────────────────
@@ -224,4 +227,57 @@ test('s13: the stops surface checks no visible banner or step head, the card\'s 
   assert.match(s, /gateStop/, 'the gate stop is built by the real gateStop');
   assert.match(s, /stops-kinds-card-\$\{[A-Za-z.]*theme[A-Za-z.]*\}\.png/, 'stops-kinds-card-{theme}.png');
   assert.match(s, /stops-busy-card-360-light\.png/);
+});
+
+// ── Run order, later runs: the order surface also shoots a later run and stopped runs, each beside the agreed mock ────
+test('the order surface shoots later and still and puts each beside the mock', () => {
+  const s = src();
+  for (const w of ['later', 'still']) assert.match(s, new RegExp(`['"]${w}['"]`), w);
+  assert.ok(s.includes('run-order-mock.html'), 'the agreed mock is opened');
+  assert.ok(s.includes('order-vs-mock-'), 'the side-by-side shots');
+  assert.match(s, /is-faint/, 'the faint links are checked');
+  assert.match(s, /--line-2/, 'their stroke is compared with the token');
+});
+
+// ── R-ux-6: an extra run added later (buildsOn []) stands after the run before it, shot wide and at 360px ─────────────
+test('the later world adds an extra run on nothing and shoots it open at 360px in light', () => {
+  const s = src();
+  assert.match(s, /setKind\(19, 'extra'\)/, 'run 19 is an extra run');
+  assert.match(s, /run:\s*19,\s*dependsOn:\s*\[\]/, 'it builds on nothing');
+  assert.match(s, /ORDER_RUNS = \{[^}]*\blater: 19\b/, 'the later map draws 19 runs');
+  assert.ok(s.includes('order-open-later-360-light.png'), 'the narrow shot of the wider map');
+});
+
+// ── R-ux-6: the order surface hovers and keeps run 3, measures the drawn links and shoots the resting frame ───────────
+test('the order surface hovers and keeps run 3, measures the rendered links, checks the animations and puts the resting frame beside the mock', () => {
+  const s = src();
+  for (const w of ['is-lit', 'is-dim', 'getPointAtLength', 'getAnimations', 'order-hover-', 'order-kept-', 'order-vs-mock-rest-']) {
+    assert.ok(s.includes(w), w);
+  }
+});
+
+// ── Slice 16 (R-qa-5, d8776dd9f): contrast from computed styles, numbers in the map check, and the held shots ───────
+test('s16: it measures the "waiting for you" and "failed" words\' contrast against the computed --bg and fails under 4.5', () => {
+  const s = src();
+  assert.match(s, /background:\s*var\(--bg\)/, 'the ground is read from a probe painted var(--bg)');
+  assert.match(s, /4\.5/, 'the floor');
+  assert.ok(s.includes('run-status-rows-contrast.json'), 'each word\'s mark, colour, --bg and ratio are written');
+  assert.match(s, /var\(--amber-ink-strong\)/, 'the ask word is expected in --amber-ink-strong');
+  assert.match(s, /var\(--red-ink-strong\)/, 'the failed word is expected in --red-ink-strong');
+  assert.doesNotMatch(s, /tone\(\s*['"]var\(--(?:amber|red)-ink\)['"]\s*\)/, 'no colour check against the weaker inks');
+});
+
+test('s16: the map check fails a link that meets a run number, and says the lane runs between rows', () => {
+  const s = src();
+  assert.match(s, /\.nBox\b/, 'the number boxes are checked, not only read');
+  assert.doesNotMatch(s, /lane may pass behind a lower row/, 'numbers are no longer excused');
+  assert.doesNotMatch(s, /cut by a lower row/, 'the known difference is gone');
+  assert.match(s, /gap between rows/, 'the order vs mock line names the new lane');
+});
+
+test('s16: it shoots the held group line, Resume, menu and toasts, the refused row and a run that cannot start', () => {
+  const s = src();
+  for (const w of ['runs-group-held-', 'chat-resume-held-', 'resume-menu-held-', 'resume-held-toast-', 'resume-refused-',
+    'rows-refused-', 'rows-cannot-start-']) assert.ok(s.includes(w), w);
+  assert.match(s, /\/api\/resume/, 'the hold and the refusal come from a real resume');
 });

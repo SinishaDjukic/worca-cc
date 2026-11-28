@@ -14,6 +14,9 @@ export function groupKindWord(row) {
 
 export const groupHrefOf = (row) => `${row.groupKind === 'feature' ? '#feature' : '#group'}/${encodeURIComponent(row.groupId)}`;
 
+/** Slice 7 (D6): the one route to a feature's Ship card, on Requirements (app.js reveals it, then drops `/ship`). */
+export const featureShipHref = (featureId) => `${groupHrefOf({ groupKind: 'feature', groupId: featureId })}/requirements/ship`;
+
 /** No second PR mention (D10): the PR bar carries "PR #N", so the page's status line drops " · PR #N". */
 export function pageModel(m) {
   const n = m && m.pr && m.pr.number;

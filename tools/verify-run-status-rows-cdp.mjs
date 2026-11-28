@@ -8,7 +8,7 @@
 //   busy    runs 2, 4 and 11 at stops, run 5 failed, run 6 building: run 9 `next`, run 7 `waits for run 2 (needs you), 6`.
 //   held    run 4's stop answer held behind run 3: `after run 3` on the dashed ring, and no row reads `next`.
 //   change  base with run 13 a change run: `next · small change run` on the ink ring.
-//   failed  run 5 failed: the red "!", run 6 `waits for run 5 (failed)`, runs 15 and 16 (cannot start) today's text.
+//   failed  run 5 failed: the red "!", run 6 `waits for run 5 (failed)`, runs 15 and 16 `cannot start · waits for run …`.
 // For each world and theme, at 1280px and deviceScaleFactor 2, it shoots the Chat card and the feature page Runs tab:
 // `rows-{world}-{card|page}-{theme}.png`. A JSON log records every row (word, data-mark, dot class, height, wrap,
 // word colour). It also checks base-world runs 7 and 12 at 375px in light. The script exits non-zero on any failed
@@ -46,7 +46,9 @@
 // `map-{world}-{theme}.png` per theme at 1280px and 2x. From real DOM rects: no link segment meets a dot or a number of a
 // run it does not join; each map dot's class equals the Chat card row's (rows with a data-mark and no violet dot); base
 // draws exactly its 15 links; the root is aria-hidden; narrowed to 240px it overflows and three Tabs never focus inside
-// it; only live dots pulse; after2 draws nothing from run 2. Links that share no run yet run together (or within 3px) fail as `overlaps`.
+// it; only live dots pulse; after2 draws nothing from run 2. R-ux-6: each rendered path is sampled with getPointAtLength,
+// and a link that comes within 7px of the centre of a dot it does not join fails (`mapTooClose`). Slice 9's "links that
+// share no run never run together" is retired (D5): the agreed mock's lane puts every skip link under one row on one line.
 // SURFACE=map runs only this surface.
 // Slice 10 adds the `order` surface: Show order on the feature page's Runs tab, in worlds base and busy, per theme at
 // 1280px and 2x. Each pass reloads #feature/ID and waits for the rows' words. Closed first (`order-closed-{world}-{theme}.png`);
@@ -55,6 +57,28 @@
 // The Chat card and the Runs list carry no drawing. One 360px light shot, `order-open-busy-360-light.png`, with no page
 // scroll sideways and the map scrolling in its own box, then closed again after #runs and back (the slide layout keeps the
 // page root). SURFACE=order runs only this surface.
+// Slice 13 adds the order worlds `later` (every run done, run 17 builds on run 16 and run 18 on nothing, both change runs;
+// s17: run 19 an extra run on nothing (dependsOn [])) and `still` (base with run 3 paused, run 5 failed, run 6 stopped). later: runs 17, 18 and 19 stand right of the run before
+// them (run 19 exactly one column right of run 18, no link drawn into it), every path.rom-link is is-faint and strokes the resolved --line-2. still: each of those dots is its row's dot,
+// never is-grey-ring. Then the agreed mock (plans/shaper-refresh/run-order-mock.html, its resting frame, Show order open)
+// is shot per theme as `mock-order-{theme}.png` and put beside the app as `order-vs-mock-{base|later|still}-{theme}.png`.
+// R-ux-6 (D11): in base, per theme, the real mouse points at run 3's row (`order-hover-base-{theme}.png`): run 3 and
+// exactly 3→4 and 3→10 are is-lit, drawn last, 2px --ink; the other 13 are is-dim. A click keeps them after the pointer
+// leaves (`order-kept-base-{theme}.png`); Escape clears every mark. The kept ring (.rom-run.is-lit::before) of a live run
+// reads the same rect and opacity twice 400ms apart, its top at or below the number's bottom; the number's background is
+// its nearest painted ancestor's; the page's getAnimations() holds only the live dots' pulse. The resting frame is put
+// beside the mock's as `order-vs-mock-rest-{theme}.png`. Known differences from the mock: rows keep run-number order and
+// the column gap is a fixed 64px (Open question 2), and (slice 16) the lane sits in the gap between rows, 6px above the
+// mock's, so no number ever cuts it.
+// Slice 16 adds the `waiting` surface (SURFACE=waiting): run 4 paused while run 9 builds. A real POST /api/resume (Resume on run
+// 4's run page) is held for its turn: `resume-held-toast-{theme}.png` (the toast "Run 9 holds the turn"),
+// `resume-menu-held-{theme}.png` (More ways to resume reads "Waiting for its turn after run 9"), `chat-resume-held-{theme}.png`
+// (the chat card's Resume reads "Waiting for its turn", disabled) and `runs-group-held-{theme}.png` (the Runs list's group
+// line "Waiting for its turn · Run 4", outside Needs you). A total cost limit below a seeded cost then refuses a press
+// (`resume-refused-{theme}.png`, "Not resumed: the cost limit is reached") and the held resume at its turn
+// (`rows-refused-{theme}.png`, the row word "not resumed: the cost limit is reached"). `rows-cannot-start-{theme}.png`
+// shoots the failed world's row "cannot start · waits for run …". Every ask and failed row word's contrast against the
+// computed --bg is written to run-status-rows-contrast.json; on the light page each must reach 4.5:1.
 // NOT part of `npm test`: it needs Chrome. A hard 20-minute cap inside.
 // Run: H=$(mktemp -d); env -u FORCE_COLOR HOME=$H VERIFY_PORT=4943 SHOTS_DIR=… node --disable-warning=ExperimentalWarning tools/verify-run-status-rows-cdp.mjs
 import { spawn, execFileSync } from 'node:child_process';
@@ -70,7 +94,7 @@ const CHROME = process.env.CHROME_BIN || CHROME_PATHS.find((p) => existsSync(p))
 const SANDBOX = process.env.CHROME_NO_SANDBOX === '1' || process.getuid?.() === 0 ? ['--no-sandbox', '--disable-dev-shm-usage'] : [];
 if (!existsSync(CHROME)) { console.error(`no Chrome at ${CHROME} - set CHROME_BIN`); process.exit(1); }
 const THEMES = ['light', 'dark'];
-const WORLDS = ['base', 'busy', 'held', 'change', 'failed'].filter((w) => (!process.env.WORLD || w === process.env.WORLD) && process.env.SURFACE !== 'stops' && process.env.SURFACE !== 'line' && process.env.SURFACE !== 'links' && process.env.SURFACE !== 'map' && process.env.SURFACE !== 'order');   // WORLD=held runs one world
+const WORLDS = ['base', 'busy', 'held', 'change', 'failed'].filter((w) => (!process.env.WORLD || w === process.env.WORLD) && process.env.SURFACE !== 'stops' && process.env.SURFACE !== 'line' && process.env.SURFACE !== 'links' && process.env.SURFACE !== 'map' && process.env.SURFACE !== 'order' && process.env.SURFACE !== 'waiting');   // WORLD=held runs one world
 const WIDE = 1280;
 const NARROW = 375;
 const SIDE_NARROW = 360;   // s5: the Runs list's narrow shot
@@ -78,7 +102,7 @@ const T0 = Date.now();
 const log = (m) => process.stderr.write(`[${((Date.now() - T0) / 1000).toFixed(1)}s] ${m}\n`);
 
 let chrome = null; let srv = null; let home = null; let proj = null; let profile = null; let failed = 0;
-const results = { startedAt: new Date(T0).toISOString(), rows: [], shots: [], checks: [] };
+const results = { startedAt: new Date(T0).toISOString(), rows: [], shots: [], checks: [], contrast: [] };
 async function shutdown(code) {
   try { if (chrome) chrome.kill('SIGKILL'); } catch {}
   try { if (srv) await new Promise((r) => srv.close(r)); } catch {}
@@ -108,9 +132,9 @@ await writeFile(path.join(proj, 'README.md'), '# run status rows proof\n');
 execFileSync('git', ['add', '-A'], { cwd: proj });
 execFileSync('git', ['commit', '-qm', 'init'], { cwd: proj });
 const imp = (rel) => import(new URL(rel, import.meta.url).href);
-const { server, runs } = await imp('../ui/server.mjs');
+const { server, runs, schedulerTick } = await imp('../ui/server.mjs');
 const { projectKey } = await imp('../src/core/store.mjs');
-const { writeStoreMeta } = await imp('../src/core/artifacts.mjs');
+const { writeStoreMeta, runDirForRow } = await imp('../src/core/artifacts.mjs');
 const { recordShapePlan, setApproveEach } = await imp('../src/core/shape/features.mjs');
 const askStore = await imp('../src/core/ask/store.mjs');
 const { resolveGraph } = await imp('../src/core/workflows.mjs');
@@ -119,8 +143,10 @@ const { buildGraphManifest } = await imp('../src/shared/graph/manifest.mjs');
 const { careRunPlan } = await imp('../src/shared/shape/feature-record.mjs');
 const { runRolesOf } = await imp('../src/shared/shape/requirements.mjs');
 const { careRunGraph } = await imp('../src/core/shape/care-run.mjs');
-const { world, SIXTEEN_RUN_STATES } = await imp('../test/helpers/shape-sixteen-runs.mjs');
+const { world, SIXTEEN_RUN_STATES, SIXTEEN_RUN_LINKS } = await imp('../test/helpers/shape-sixteen-runs.mjs');
 const { planStop, gateStop } = await imp('../src/shared/shape/run-stops.mjs');
+const { getDb } = await imp('../src/core/db.mjs');
+const { recordCostDelta } = await imp('../src/core/cost-budget.mjs');
 srv = server;
 await new Promise((r, rej) => { srv.once('error', (err) => rej(new Error(`cannot listen on VERIFY_PORT ${process.env.VERIFY_PORT}: ${err.message}`))); srv.listen(Number(process.env.VERIFY_PORT || 0), '127.0.0.1', r); });
 const base = `http://127.0.0.1:${srv.address().port}`;
@@ -190,12 +216,23 @@ const SPECS = {
   'line-first': { spec: { done: [], states: { 1: { pipe: 'running' } } }, at: { 1: 'n_review' } },
   // s9 map: base with run 2 done, so its links are gone.
   after2: { spec: { done: [...SIXTEEN_RUN_STATES.base.done, 2], states: Object.fromEntries(Object.entries(SIXTEEN_RUN_STATES.base.states).filter(([r]) => r !== '2')) } },
+  // s13 order: every run of the 16 done, run 17 a Verifier change run ([16]) and run 18 a chat change run ([]), both
+  // planned: no link holds a run back, so every link is drawn faint, and 17 and 18 stand after the run before them.
+  // s17: run 19 an extra run on nothing (dependsOn []), added from the chat card: it stands after run 18, no link into it.
+  later: { spec: { done: SIXTEEN_RUN_LINKS.map(({ run }) => run), states: {} },
+    links: [...SIXTEEN_RUN_LINKS, { run: 17, dependsOn: [16] }, { run: 18, dependsOn: [] }, { run: 19, dependsOn: [] }],
+    then: (fx) => { fx.setKind(17, 'change'); fx.setKind(18, 'change'); fx.setKind(19, 'extra'); } },
+  // s16 waiting: run 4 paused (its Resume is pressed for real) while run 9 builds, so the resume is held behind run 9 and
+  // run 4 is the Chat card's current run (its footer Resume acts on run 4).
+  waiting: { spec: { done: [1, 2, 3], states: { 4: { pipe: 'paused' }, 9: { pipe: 'running' } } } },
+  // s13 order: base with run 3 paused, run 6 stopped and run 5 failed: each map dot is its row's dot.
+  still: { spec: { done: SIXTEEN_RUN_STATES.base.done, states: { ...SIXTEEN_RUN_STATES.base.states, 3: { pipe: 'paused' }, 5: { pipe: 'error' }, 6: { pipe: 'stopped' } } } },
 };
 /** Seeds one world (cancelling the previous world's tickets and live runs) and its Chat thread; returns the routes. */
 function seed(name) {
   for (const id of liveIds.splice(0)) runs.delete(id);
-  const { spec, then, at = {} } = SPECS[name];
-  const fx = world(proj, spec);
+  const { spec, then, at = {}, links } = SPECS[name];
+  const fx = world(proj, spec, links ? { links } : {});
   if (then) then(fx);
   for (const [r, how] of Object.entries(spec.states || {})) if (how.stop || (how.pipe || 'running') === 'running') liveRun(fx.featureId, Number(r), fx.pipelineOf(Number(r)), at[r] ? { ...how, at: at[r] } : how);
   const thread = askStore.createThread({ title: `Rows ${name}` });
@@ -302,7 +339,10 @@ const ROWS = (rootSel) => `(() => {
   const root = [...document.querySelectorAll(${JSON.stringify(rootSel)})].find((r) => r.offsetParent);
   if (!root) return null;
   const tone = (v) => { const p = document.createElement('span'); p.style.color = v; root.append(p); const c = getComputedStyle(p).color; p.remove(); return c; };
-  const ink = { 'amber-ink': tone('var(--amber-ink)'), 'red-ink': tone('var(--red-ink)'), 'ink-2': tone('var(--ink-2)') };
+  const ink = { 'amber-ink-strong': tone('var(--amber-ink-strong)'), 'red-ink-strong': tone('var(--red-ink-strong)'), 'ink-2': tone('var(--ink-2)') };
+  // Slice 16 (R-qa-5): the page ground as the browser computes it, from a probe painted background: var(--bg).
+  const probe = document.createElement('div'); probe.style.cssText = 'background: var(--bg)'; document.body.append(probe);
+  const bg = getComputedStyle(probe).backgroundColor; probe.remove();
   const rows = [...root.querySelectorAll('.run-member')].filter((li) => li.offsetParent && li.dataset.key !== 'planning').map((li) => {
     const st = li.querySelector('.run-member-state'); const dot = li.querySelector('.status-dot');
     const lh = st ? parseFloat(getComputedStyle(st).lineHeight) || 20 : 20;
@@ -311,8 +351,18 @@ const ROWS = (rootSel) => `(() => {
       wrap: !!st && (st.getBoundingClientRect().height > lh + 1 || st.scrollWidth > st.clientWidth + 1),
       color: st ? getComputedStyle(st).color : null, second: !!li.querySelector('.run-member-line'), sig: SIG(dot) };
   });
-  return { rows, ink };
+  return { rows, ink, bg, theme: document.documentElement.dataset.theme || '' };
 })()`;
+/** Slice 16 (R-qa-5): the WCAG contrast of two computed rgb() colours. */
+function contrastOf(fg, bgc) {
+  const lum = (c) => {
+    const [r, g, b] = String(c).match(/[\d.]+/g).slice(0, 3).map((v) => Number(v) / 255)
+      .map((v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const [a, b] = [lum(fg), lum(bgc)].sort((x, y) => y - x);
+  return (a + 0.05) / (b + 0.05);
+}
 /** The checks one list must pass, for every world. */
 function judgeRows(where, m, width) {
   if (!m) { check(false, `${where}: the run rows are on screen`); return null; }
@@ -326,8 +376,12 @@ function judgeRows(where, m, width) {
   const sym = m.rows.filter((r) => r.symbol).map((r) => [r.mark, r.symbol]);
   check(sym.every(([mk, s]) => (mk === 'ask' && s === 'question') || (mk === 'failed' && s === 'alert')), `${where}: "?" only on an open stop, "!" only on a failed run (${JSON.stringify(sym)})`);
   for (const r of m.rows.filter((x) => x.mark === 'ask' || x.mark === 'failed')) {
-    const want = r.mark === 'ask' ? m.ink['amber-ink'] : m.ink['red-ink'];
-    check(r.color === want, `${where}: run ${r.run}'s word "${r.word}" reads ${r.mark === 'ask' ? '--amber-ink' : '--red-ink'} (${r.color} vs ${want})`);
+    const want = r.mark === 'ask' ? m.ink['amber-ink-strong'] : m.ink['red-ink-strong'];
+    check(r.color === want, `${where}: run ${r.run}'s word "${r.word}" reads ${r.mark === 'ask' ? '--amber-ink-strong' : '--red-ink-strong'} (${r.color} vs ${want})`);
+    // Slice 16 (R-qa-5): on the light page the word reads at least 4.5:1 against the computed --bg.
+    const ratio = contrastOf(r.color, m.bg);
+    results.contrast.push({ where, run: r.run, word: r.word, mark: r.mark, color: r.color, bg: m.bg, theme: m.theme, ratio: Math.round(ratio * 100) / 100 });
+    if (m.theme === 'light') check(ratio >= 4.5, `${where}: run ${r.run}'s "${r.word}" reads ${ratio.toFixed(2)}:1 on --bg ${m.bg} (at least 4.5)`);
   }
   const plain = m.rows.filter((r) => r.mark && r.mark !== 'ask' && r.mark !== 'failed' && r.color !== m.ink['ink-2']);
   check(plain.length === 0, `${where}: every other word keeps --ink-2 (${JSON.stringify(plain.map((r) => r.run))})`);
@@ -358,7 +412,7 @@ const WANT = {
     check(at(5).word === 'failed' && at(5).symbol === 'alert' && /is-red/.test(at(5).dot), `${where}: run 5 failed with the red "!"`);
     check(at(6).word === 'waits for run 5 (failed)', `${where}: run 6 waits for run 5 (failed) (${at(6).word})`);
     check(at(14).mark === null && !!at(14).word, `${where}: run 14 (its ticket canceled) keeps today's row, no mark (${at(14).word})`);
-    for (const n of [15, 16]) check(at(n).mark === 'faint' && /is-grey-ring/.test(at(n).dot) && !!at(n).word, `${where}: run ${n} (cannot start) keeps today's text on the grey ring (${at(n).word})`);
+    for (const n of [15, 16]) check(at(n).mark === 'faint' && /is-grey-ring/.test(at(n).dot) && !!at(n).word, `${where}: run ${n} (cannot start) names why on the grey ring (${at(n).word})`);
   },
 };
 const SURFACES = { card: '.chat-rc-members', page: '#group-detail div.gpage-runs',
@@ -850,16 +904,17 @@ const MAP_MOUNT = (slices) => `(async () => {
   document.body.append(host);
   return host.querySelectorAll('.rom-run').length;
 })()`;
-/** The mounted map: its links (points in px, from each path's d, plus the svg's client offset) and every run's dot and
- *  number rects, dot class and data-mark, read from the real layout. */
+/** R-ux-6: a rendered path's points in client px, sampled along it with getPointAtLength (curves included). */
+const SAMPLE_PATH = 'const len = p.getTotalLength(); const points = []; for (let k = 0; k <= 160; k += 1) { const q = p.getPointAtLength(len * k / 160); points.push([q.x + sb.left, q.y + sb.top]); }';
+/** The mounted map: its links (points in px, sampled along each rendered path, plus the svg's client offset) and every
+ *  run's dot and number rects, dot class and data-mark, read from the real layout. */
 const MAP_READ = `(() => {
   const host = document.getElementById('rom-host'); const root = host && host.querySelector('.rom');
   if (!root) return null;
   const sb = root.querySelector('svg.rom-links').getBoundingClientRect();
   const rect = (el) => { const b = el.getBoundingClientRect(); return { x0: b.left, y0: b.top, x1: b.right, y1: b.bottom }; };
   const links = [...root.querySelectorAll('path.rom-link')].map((p) => {
-    const nums = (p.getAttribute('d').match(/-?\\d+(?:\\.\\d+)?/g) || []).map(Number);
-    const points = []; for (let i = 0; i + 1 < nums.length; i += 2) points.push([nums[i] + sb.left, nums[i + 1] + sb.top]);
+    ${SAMPLE_PATH}
     return { from: Number(p.dataset.from), to: Number(p.dataset.to), points, d: p.getAttribute('d') };
   });
   const runs = [...root.querySelectorAll('.rom-run')].map((r) => {
@@ -868,47 +923,33 @@ const MAP_READ = `(() => {
   });
   return { ariaHidden: root.getAttribute('aria-hidden'), tabindex: root.getAttribute('tabindex'), links, runs };
 })()`;
-/** Every (link, run) pair where a segment meets the dot or the number of a run the link does not join. */
-function mapCrossings(m) {
+/** R-ux-6: every (link, run) pair where the sampled link comes within 7px of the centre of a dot it does not join, and
+ *  (slice 16, direction d8776dd9f) every sampled link point inside any run's number box (`.nBox`, its own ends' included),
+ *  the unit test's rule: the lane runs in the gap between rows. */
+function mapTooClose(m) {
   const out = [];
-  const meets = ([[ax, ay], [bx, by]], b) => Math.min(ax, bx) < b.x1 && Math.max(ax, bx) > b.x0 && Math.min(ay, by) < b.y1 && Math.max(ay, by) > b.y0;
+  const near = (q, a, b) => {
+    const [dx, dy] = [b[0] - a[0], b[1] - a[1]]; const len = dx * dx + dy * dy;
+    const t = len ? Math.max(0, Math.min(1, ((q[0] - a[0]) * dx + (q[1] - a[1]) * dy) / len)) : 0;
+    return Math.hypot(q[0] - a[0] - t * dx, q[1] - a[1] - t * dy);
+  };
   for (const l of m.links) {
-    for (let i = 1; i < l.points.length; i += 1) {
-      const seg = [l.points[i - 1], l.points[i]];
-      for (const r of m.runs) {
-        if (r.run === l.from || r.run === l.to) continue;
-        if (meets(seg, r.dotBox)) out.push(`${l.from}→${l.to} meets run ${r.run}'s dot`);
-        if (meets(seg, r.nBox)) out.push(`${l.from}→${l.to} meets run ${r.run}'s number`);
-      }
+    for (const r of m.runs) {
+      if (r.run === l.from || r.run === l.to) continue;
+      const c = [(r.dotBox.x0 + r.dotBox.x1) / 2, (r.dotBox.y0 + r.dotBox.y1) / 2];
+      let d = Infinity;
+      for (let i = 1; i < l.points.length; i += 1) d = Math.min(d, near(c, l.points[i - 1], l.points[i]));
+      if (d < 7) out.push(`${l.from}→${l.to} passes ${d.toFixed(1)}px from run ${r.run}'s dot`);
+    }
+    for (const r of m.runs) {
+      const b = r.nBox;
+      if (l.points.some(([x, y]) => x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1)) out.push(`${l.from}→${l.to} meets run ${r.run}'s number`);
     }
   }
   return out;
 }
-/**
- * Pairs of links that share no run yet draw as one line: parallel segments less than 3px apart whose stretches overlap or
- * end less than 3px from each other (an exit stub lined up with another link's entry stub reads as a false link).
- */
-function mapOverlaps(m) {
-  const segs = m.links.flatMap((l) => l.points.slice(1).map((p, i) => ({ l, a: l.points[i], b: p })));
-  const out = new Set();
-  for (let i = 0; i < segs.length; i += 1) {
-    for (let j = i + 1; j < segs.length; j += 1) {
-      const s = segs[i]; const t = segs[j];
-      if ([s.l.from, s.l.to].some((n) => n === t.l.from || n === t.l.to)) continue;
-      const vert = (q) => q.a[0] === q.b[0];
-      if (vert(s) !== vert(t)) continue;
-      const k = vert(s) ? 0 : 1; const o = 1 - k;
-      const lo = (q) => Math.min(q.a[o], q.b[o]); const hi = (q) => Math.max(q.a[o], q.b[o]);
-      if (Math.abs(s.a[k] - t.a[k]) < 3 && Math.max(lo(t) - hi(s), lo(s) - hi(t)) < 3) {
-        out.add([`${s.l.from}→${s.l.to}`, `${t.l.from}→${t.l.to}`].sort().join(' & '));
-      }
-    }
-  }
-  return [...out];
-}
 if ((!process.env.WORLD && !process.env.SURFACE) || process.env.SURFACE === 'map') {
   await cdp('Emulation.setFocusEmulationEnabled', { enabled: true });
-  const overlaps = {};
   for (const name of MAP_WORLDS) {
     const routes = seed(name);
     const r = await fetch(`${base}/api/shape/pipelines/${encodeURIComponent(routes.origin)}/card`);
@@ -934,8 +975,8 @@ if ((!process.env.WORLD && !process.env.SURFACE) || process.env.SURFACE === 'map
       check(m.ariaHidden === 'true' && m.tabindex === '-1', `${where}: the root is aria-hidden with tabindex -1 (${m.ariaHidden}, ${m.tabindex})`);
       const unparsed = m.links.filter((l) => l.points.length < 2);
       check(unparsed.length === 0, `${where}: every path.rom-link d parses into at least 2 points (${JSON.stringify(unparsed.map((l) => l.d))})`);
-      const cross = mapCrossings(m);
-      check(cross.length === 0, `${where}: no path.rom-link segment meets a .rom-run .status-dot or .rom-n rect of a run it does not join (${JSON.stringify(cross)})`);
+      const cross = mapTooClose(m);
+      check(cross.length === 0, `${where}: no rendered path.rom-link comes within 7px of the centre of a .rom-run .status-dot it does not join, nor meets any .rom-n number (${JSON.stringify(cross)})`);
       const rowOf = (n) => (card?.rows || []).find((x) => x.run === n);
       const compared = m.runs.filter((x) => { const row = rowOf(x.run); return row && row.mark && !/\bis-violet\b/.test(row.dot); });
       const diff = compared.filter((x) => x.dot !== rowOf(x.run).dot);
@@ -944,8 +985,6 @@ if ((!process.env.WORLD && !process.env.SURFACE) || process.env.SURFACE === 'map
       check(pulse.length === 0, `${where}: only data-mark="live" dots carry is-pulse (${JSON.stringify(pulse.map((x) => [x.run, x.mark]))})`);
       if (name === 'base') check(JSON.stringify(pairs) === JSON.stringify(MAP_BASE_PAIRS), `${where}: the links are exactly the 15 base pairs (${JSON.stringify(pairs)})`);
       if (name === 'after2') check(await ev(`document.querySelectorAll('#rom-host path.rom-link[data-from="2"]').length`) === 0 && !m.links.some((l) => l.from === 2), `${where}: run 2 is done, so no data-from="2" link`);
-      overlaps[`${name}|${theme}`] = mapOverlaps(m);
-      check(overlaps[`${name}|${theme}`].length === 0, `${where}: no two links that share no run run together or within 3px (${JSON.stringify(overlaps[`${name}|${theme}`])})`);
       await shotOf('#rom-host', `map-${name}-${theme}.png`);
       // Narrowed to MAP_NARROW the map scrolls sideways, and Tab from the button before it never lands inside it.
       await ev(`(() => { const h = document.getElementById('rom-host'); h.style.width = '${MAP_NARROW}px'; h.style.boxSizing = 'border-box'; return 0; })()`);
@@ -964,13 +1003,67 @@ if ((!process.env.WORLD && !process.env.SURFACE) || process.env.SURFACE === 'map
       await ev(`document.getElementById('rom-host')?.remove();0`);
     }
   }
-  results.overlaps = overlaps;
-  log(`  map overlaps: ${JSON.stringify(overlaps)}`);
 }
 
 // ---- s10 order: Show order on the feature page's Runs tab, closed first, opened by a real click, closed on return.
-const ORDER_WORLDS = ['base', 'busy'];
+const ORDER_WORLDS = ['base', 'busy', 'later', 'still'];
+/** s13: the run count each order world draws (later adds runs 17 and 18 to the 16; s17: and run 19 an extra run on
+ *  nothing (dependsOn [])). */
+const ORDER_RUNS = { later: 19 };
+/** s13: the open Show order map on the feature page, as MAP_READ reads it, plus each path's classes and stroke, the
+ *  resolved --line-2 and --ink-3 strokes in this theme, and each feature page row's dot class. */
+const ORDER_MAP_READ = `(() => {
+  const gp = [...document.querySelectorAll('#group-detail .gpage')].find((x) => x.offsetParent);
+  const root = gp && gp.querySelector('.rom');
+  if (!root) return null;
+  const sb = root.querySelector('svg.rom-links').getBoundingClientRect();
+  const rect = (el) => { const b = el.getBoundingClientRect(); return { x0: b.left, y0: b.top, x1: b.right, y1: b.bottom }; };
+  const tone = (v) => { const p = document.createElementNS('http://www.w3.org/2000/svg', 'path'); p.style.stroke = v; root.querySelector('svg.rom-links').append(p); const c = getComputedStyle(p).stroke; p.remove(); return c; };
+  const links = [...root.querySelectorAll('path.rom-link')].map((p) => {
+    ${SAMPLE_PATH}
+    return { from: Number(p.dataset.from), to: Number(p.dataset.to), points, cls: [...p.classList].join(' '), stroke: getComputedStyle(p).stroke };
+  });
+  const runs = [...root.querySelectorAll('.rom-run')].map((r) => {
+    const dot = r.querySelector('.status-dot'); const n = r.querySelector('.rom-n');
+    return { run: Number(r.dataset.run), mark: r.dataset.mark || null, dot: dot.className, dotBox: rect(dot), nBox: rect(n) };
+  });
+  const rows = [...gp.querySelectorAll('.gpage-runs .run-member')].filter((li) => li.offsetParent && li.dataset.key !== 'planning')
+    .map((li) => ({ run: Number(li.querySelector('.run-member-num')?.textContent || 0), dot: li.querySelector('.status-dot')?.className || '' }));
+  return { links, runs, rows, line2: tone('var(--line-2)'), ink3: tone('var(--ink-3)'), hint: gp.querySelector('.gpage-order-hint')?.textContent || '' };
+})()`;
+/** s13: the agreed mock's Show order at its resting frame (run 1 done, run 2 asks, run 3 builds), opened in this theme. */
+const MOCK_URL = new URL('../plans/shaper-refresh/run-order-mock.html', import.meta.url).href;
+async function mockShot(theme) {
+  await cdp('Page.navigate', { url: `${MOCK_URL}?t=${theme}` });
+  await sleep(900);
+  await ev(`document.documentElement.dataset.theme=${JSON.stringify(theme)};0`);
+  const opened = await ev(`(() => { const t = document.getElementById('page-order'); if (!t) return false; t.click(); return t.getAttribute('aria-expanded') === 'true'; })()`);
+  check(opened, `mock, ${theme}: #page-order opens the mock's Show order`);
+  await sleep(400);
+  await shotOf('.screen.page', `mock-order-${theme}.png`);
+}
+/** s13: one page with the app's open Show order (left) and the mock's (right), shot as order-vs-mock-{world}-{theme}.png
+ *  (R-ux-6: `pair` names another output, as order-vs-mock-rest-{theme}.png for the resting frame). */
+async function sideBySide(name, theme, pair = name) {
+  const app = path.join(SHOTS, `order-open-${name}-${theme}.png`);
+  const mock = path.join(SHOTS, `mock-order-${theme}.png`);
+  if (!existsSync(app) || !existsSync(mock)) { check(false, `order-vs-mock-${pair}-${theme}.png: both halves were shot`); return; }
+  const src = (f) => `data:image/png;base64,${readFileSync(f).toString('base64')}`;
+  await cdp('Page.navigate', { url: 'about:blank' });
+  await sleep(300);
+  await ev(`(() => { document.documentElement.dataset.theme = ${JSON.stringify(theme)};
+    document.body.style.cssText = 'margin:0;padding:16px;background:${theme === 'dark' ? '#1b1b1a' : '#fff'};font:13px system-ui;color:${theme === 'dark' ? '#eee' : '#222'}';
+    document.body.innerHTML = '<div id="pair" style="display:flex;gap:24px;align-items:flex-start">'
+      + '<figure style="margin:0"><figcaption>App · ${name}</figcaption><img style="width:640px"></figure>'
+      + '<figure style="margin:0"><figcaption>Mock · resting frame</figcaption><img style="width:640px"></figure></div>';
+    const [a, m] = document.querySelectorAll('#pair img'); a.src = ${JSON.stringify(src(app))}; m.src = ${JSON.stringify(src(mock))};
+    return 0; })()`);
+  await waitFor(`[...document.querySelectorAll('#pair img')].every((i) => i.complete && i.naturalWidth > 0)`, `order-vs-mock-${pair}-${theme}: both images loaded`);
+  await shotOf('#pair', `order-vs-mock-${pair}-${theme}.png`);
+}
 const ORDER_NARROW = 360;
+/** s17: scroll the open map's own box to its right end, so the shot shows the last runs (19 in later). */
+const ROM_TO_END = `(() => { const r = document.querySelector('#group-detail .rom'); if (r) r.scrollLeft = r.scrollWidth; return r ? r.scrollLeft : null; })()`;
 /** The feature page's Show order block: the toggle, the body, the map, and the rects the checks compare. */
 const ORDER_READ = `(() => {
   const gp = [...document.querySelectorAll('#group-detail .gpage')].find((x) => x.offsetParent);
@@ -1026,6 +1119,101 @@ async function returnClosed(routes, away) {
   results.order.push({ away, back });
   return !!back && back.expanded === 'false' && back.roms === 0;
 }
+// ---- R-ux-6 (D11): pointing at and keeping run 3's row marks the open map; the marks and the ring are still.
+/** The open map's marks: lit runs, lit and dimmed links, whether the lit paths are the last children, their strokes. */
+const MARKS_READ = `(() => {
+  const gp = [...document.querySelectorAll('#group-detail .gpage')].find((x) => x.offsetParent);
+  const root = gp && gp.querySelector('.rom');
+  if (!root) return null;
+  const key = (p) => p.dataset.from + '→' + p.dataset.to;
+  const kids = [...root.querySelector('svg.rom-links').children];
+  const lit = kids.filter((p) => p.classList.contains('is-lit'));
+  const dim = kids.filter((p) => p.classList.contains('is-dim'));
+  const tone = (v) => { const p = document.createElementNS('http://www.w3.org/2000/svg', 'path'); p.style.stroke = v; root.querySelector('svg.rom-links').append(p); const c = getComputedStyle(p).stroke; p.remove(); return c; };
+  return { runs: [...root.querySelectorAll('.rom-run.is-lit')].map((r) => Number(r.dataset.run)), lit: lit.map(key).sort(), dim: dim.length,
+    litLast: kids.slice(kids.length - lit.length).every((p) => p.classList.contains('is-lit')),
+    litStroke: lit.map((p) => [getComputedStyle(p).stroke, getComputedStyle(p).strokeWidth]), dimOpacity: dim.map((p) => getComputedStyle(p).opacity),
+    ink: tone('var(--ink)'), marked: root.querySelectorAll('.is-lit, .is-dim').length };
+})()`;
+/** Run n's ring (.rom-run.is-lit::before, centred on the 0×0 run box) and number: rect, opacity, border, background. */
+const RING_READ = (n) => `(() => {
+  const gp = [...document.querySelectorAll('#group-detail .gpage')].find((x) => x.offsetParent);
+  const r = gp && gp.querySelector('.rom .rom-run[data-run="${n}"]');
+  if (!r) return null;
+  const b = r.getBoundingClientRect(); const cs = getComputedStyle(r, '::before');
+  const w = parseFloat(cs.width); const h = parseFloat(cs.height);
+  const num = r.querySelector('.rom-n'); const nb = num.getBoundingClientRect();
+  let behind = null;
+  for (let a = r.parentElement; a && !behind; a = a.parentElement) { const c = getComputedStyle(a).backgroundColor; if (c && c !== 'transparent' && !/^rgba\\(.*,\\s*0\\)$/.test(c)) behind = c; }
+  return { mark: r.dataset.mark || null, ring: { x: b.left - w / 2, y: b.top - h / 2, w, h, opacity: cs.opacity, content: cs.content, border: cs.borderTopWidth + ' ' + cs.borderTopStyle },
+    dot: getComputedStyle(r.querySelector('.status-dot')).opacity, nBottom: nb.bottom, bg: getComputedStyle(num).backgroundColor, behind };
+})()`;
+/** The feature page's running animations: only the live dots' pulse may be among them. */
+const ANIMS_READ = `(() => {
+  const gp = [...document.querySelectorAll('#group-detail .gpage')].find((x) => x.offsetParent);
+  const all = document.getAnimations();
+  return { all: all.length, gp: !!gp, inside: all.filter((a) => { const t = a.effect && a.effect.target; return !!t && !!gp && gp.contains(t); })
+    .map((a) => ({ name: a.animationName || a.transitionProperty || a.constructor.name, cls: String(a.effect.target.className?.baseVal ?? a.effect.target.className), pseudo: a.effect.pseudoElement || null })) };
+})()`;
+/** Run n's row number, in view: the Show order block stays at the top (where shotOf puts it, so a shot never scrolls the
+ *  pointer onto another row); a row below the fold is scrolled to the centre instead. */
+const rowPoint = (n) => ev(`(() => { const gp = [...document.querySelectorAll('#group-detail .gpage')].find((x) => x.offsetParent);
+  const t = gp && gp.querySelector('.gpage-runs .run-member[data-run="${n}"] .run-member-num'); if (!t) return null;
+  gp.querySelector('.gpage-order')?.scrollIntoView({ block: 'start' });
+  if (t.getBoundingClientRect().bottom > innerHeight) t.scrollIntoView({ block: 'center' });
+  const b = t.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; })()`);
+const mouseTo = (p) => cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y });
+async function mouseClick(p) {
+  await mouseTo(p);
+  for (const type of ['mousePressed', 'mouseReleased']) await cdp('Input.dispatchMouseEvent', { type, x: p.x, y: p.y, button: 'left', clickCount: 1 });
+}
+async function pressEscape() {
+  for (const type of ['keyDown', 'keyUp']) await cdp('Input.dispatchKeyEvent', { type, key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+}
+const THREE_MARKS = { runs: [3], lit: ['3→10', '3→4'], dim: 13 };
+const marksOk = (m) => !!m && JSON.stringify([m.runs, m.lit, m.dim]) === JSON.stringify([THREE_MARKS.runs, THREE_MARKS.lit, THREE_MARKS.dim]) && m.litLast
+  && m.litStroke.every(([c, w]) => c === m.ink && w === '2px') && m.dimOpacity.every((o) => o === '0.18');
+async function orderMarks(theme, where) {
+  const away = { x: 4, y: 4 };
+  const p3 = await rowPoint(3);
+  if (!p3) { check(false, `${where}: run 3's row is on screen`); return; }
+  // 1. the real pointer on run 3's row
+  await mouseTo(p3); await sleep(300);
+  const hover = await ev(MARKS_READ);
+  results.order.push({ where, hover });
+  check(marksOk(hover), `${where}: pointing at run 3's row: .rom-run[data-run="3"] and exactly 3→4 and 3→10 are is-lit (last children, 2px --ink), the other 13 is-dim at .18 (${JSON.stringify(hover)})`);
+  await shotOf('#group-detail .gpage-order', `order-hover-base-${theme}.png`);
+  const still = await ev(MARKS_READ);
+  check(marksOk(still), `${where}: the hover shot still shows run 3's marks (${JSON.stringify(still && [still.runs, still.lit, still.dim])})`);
+  // 2. a click keeps them after the pointer leaves
+  await mouseClick(await rowPoint(3) || p3); await sleep(200);
+  await mouseTo(away); await sleep(300);
+  const kept = await ev(MARKS_READ);
+  results.order.push({ where, kept });
+  check(marksOk(kept), `${where}: kept run 3 keeps the same marks after the pointer leaves (${JSON.stringify(kept)})`);
+  const ring = await ev(RING_READ(3));
+  check(!!ring && ring.ring.w === 22 && ring.ring.h === 22 && ring.ring.border === '2px solid', `${where}: run 3's ring is 22px with a 2px solid border (${JSON.stringify(ring && ring.ring)})`);
+  check(!!ring && ring.ring.y >= ring.nBottom - 0.5, `${where}: the ring's top ${ring && ring.ring.y} is at or below the number's bottom ${ring && ring.nBottom}`);
+  check(!!ring && !!ring.behind && ring.bg === ring.behind, `${where}: the number's background ${ring && ring.bg} is its nearest painted ancestor's ${ring && ring.behind}`);
+  await shotOf('#group-detail .gpage-order', `order-kept-base-${theme}.png`);
+  const anims = await ev(ANIMS_READ);
+  const inside = anims ? anims.inside : [];
+  const other = inside.filter((a) => a.name !== 'wr-pulse' || !/\bstatus-dot\b/.test(a.cls) || a.pseudo);
+  const pulses = inside.filter((a) => a.name === 'wr-pulse').length;
+  check(pulses > 0 && other.length === 0, `${where}: getAnimations() on the feature page holds the live dots' wr-pulse (${pulses}) and nothing else (${JSON.stringify(other)}; ${JSON.stringify(anims && [anims.all, anims.gp])})`);
+  // 3. the ring on a live run stays still while its dot pulses: two reads 400ms apart
+  const live = (await ev(ORDER_MAP_READ))?.runs.find((r) => r.mark === 'live')?.run;
+  if (live == null) check(false, `${where}: a live run to ring`);
+  else {
+    if (live !== 3) { await mouseClick(await rowPoint(live)); await sleep(200); await mouseTo(away); await sleep(300); }
+    const a = await ev(RING_READ(live)); await sleep(400); const b = await ev(RING_READ(live));
+    check(!!a && !!b && a.mark === 'live' && JSON.stringify(a.ring) === JSON.stringify(b.ring), `${where}: live run ${live}'s kept ring reads the same rect and opacity 400ms apart (${JSON.stringify([a && a.ring, b && b.ring, a && a.dot, b && b.dot])})`);
+  }
+  // 4. Escape lets go: no mark is left
+  await pressEscape(); await sleep(300);
+  const gone = await ev(MARKS_READ);
+  check(!!gone && gone.marked === 0, `${where}: Escape leaves 0 is-lit and 0 is-dim in the map (${gone && gone.marked})`);
+}
 const closedOk = (m) => !!m && m.text === 'Show order' && m.expanded === 'false' && m.bodyHidden === true && m.roms === 0;
 if ((!process.env.WORLD && !process.env.SURFACE) || process.env.SURFACE === 'order') {
   results.order = [];
@@ -1048,16 +1236,51 @@ if ((!process.env.WORLD && !process.env.SURFACE) || process.env.SURFACE === 'ord
       results.order.push({ where, closed, before, open });
       if (!open) { check(false, `${where}: the feature page is on screen after the click`); continue; }
       check(open.text === 'Hide order' && open.expanded === 'true' && open.bodyHidden === false, `${where}: the click reads Hide order with aria-expanded="true" and the body shown (${JSON.stringify([open.text, open.expanded, open.bodyHidden])})`);
-      check(open.roms === 1 && open.romHidden === 'true' && open.runs === 16, `${where}: one .rom[aria-hidden="true"] with 16 .rom-run (${open.roms}, ${open.romHidden}, ${open.runs})`);
+      const want = ORDER_RUNS[name] || 16;
+      check(open.roms === 1 && open.romHidden === 'true' && open.runs === want, `${where}: one .rom[aria-hidden="true"] with ${want} .rom-run, 16 outside later (${open.roms}, ${open.romHidden}, ${open.runs})`);
       check(open.focused, `${where}: activeElement is still the .gpage-order-toggle after the click`);
       check(!!open.toggle && open.panelRight != null && Math.abs(open.toggle.r - open.panelRight) <= 1, `${where}: the toggle's right edge sits within 1px of the Runs panel's (${open.toggle && open.toggle.r} vs ${open.panelRight})`);
       check(!!before && !!before.state && !!open.state && Math.abs(before.state.y - open.state.y) < 0.5 && Math.abs(before.state.b - open.state.b) < 0.5, `${where}: the state line keeps its rect (${JSON.stringify([before && before.state, open.state])})`);
       check(!!open.first && !!open.body && open.first.y >= open.body.b - 0.5, `${where}: the first run row sits below the open body (${open.first && open.first.y} >= ${open.body && open.body.b})`);
+      // s13: faint links once none holds a run back, later runs after the run before them, the row's dot on still runs.
+      const om = await ev(ORDER_MAP_READ);
+      if (!om) check(false, `${where}: the open map is readable`);
+      else {
+        results.order.push({ where, map: { links: om.links.map((l) => [l.from, l.to, l.cls, l.stroke]), runs: om.runs.map((x) => [x.run, x.dot]), line2: om.line2 } });
+        const cross = mapTooClose(om);
+        check(cross.length === 0, `${where}: no rendered path.rom-link comes within 7px of the centre of a dot it does not join (${JSON.stringify(cross)})`);
+        check(om.hint.includes('every link is drawn faint') && !/are not drawn/.test(om.hint), `${where}: the hint reads the s13 words (${om.hint})`);
+        const faint = om.links.filter((l) => /\bis-faint\b/.test(l.cls));
+        if (name === 'later') {
+          const x = (n) => { const r = om.runs.find((q) => q.run === n); return r ? (r.dotBox.x0 + r.dotBox.x1) / 2 : NaN; };
+          check(x(17) > x(16), `${where}: run 17's dot stands right of run 16's (${x(17)} > ${x(16)})`);
+          check(x(18) > x(17), `${where}: run 18 (buildsOn []) stands right of run 17, the run before it (${x(18)} > ${x(17)})`);
+          check(x(18) > x(1), `${where}: run 18 is not in the first column (${x(18)} > ${x(1)})`);
+          // s17: run 19 (an extra run, buildsOn []) stands exactly one column right of run 18, never in the first column.
+          check(x(19) > x(18) && Math.abs((x(19) - x(18)) - (x(18) - x(17))) <= 1, `${where}: run 19 (extra, buildsOn []) stands one column right of run 18 (${x(19) - x(18)} vs ${x(18) - x(17)})`);
+          check(x(19) > x(1), `${where}: run 19 is not in the first column (${x(19)} > ${x(1)})`);
+          check(!om.links.some((l) => l.to === 19), `${where}: no link is drawn into run 19 (${JSON.stringify(om.links.filter((l) => l.to === 19).map((l) => [l.from, l.to]))})`);
+          check(om.links.length === 19 && faint.length === om.links.length, `${where}: every one of the 19 path.rom-link has is-faint (${faint.length} of ${om.links.length})`);
+          const off = om.links.filter((l) => l.stroke !== om.line2);
+          check(om.line2 && om.line2 !== om.ink3 && off.length === 0, `${where}: each faint stroke is the resolved --line-2 ${om.line2} (${JSON.stringify(off.map((l) => [l.from, l.to, l.stroke]))})`);
+        } else {
+          check(faint.length === 0 && om.links.length > 0, `${where}: a link holds a run back, so no path is is-faint (${faint.length} of ${om.links.length})`);
+        }
+        if (name === 'still') {
+          const diff = [3, 5, 6].map((n) => [n, om.runs.find((q) => q.run === n)?.dot, om.rows.find((q) => q.run === n)?.dot]).filter(([, a, b]) => !a || a !== b);
+          check(diff.length === 0, `${where}: runs 3, 5 and 6 each carry their feature page row's .status-dot class (${JSON.stringify(diff)})`);
+          const ring = [3, 5, 6].filter((n) => /\bis-grey-ring\b/.test(om.runs.find((q) => q.run === n)?.dot || ''));
+          check(ring.length === 0, `${where}: none of runs 3, 5 and 6 is is-grey-ring (${JSON.stringify(ring)})`);
+        }
+      }
+      if (name === 'later') await ev(ROM_TO_END);   // s17: run 19 stands past the box's right edge; show it in the shot
       await shotOf('#group-detail .gpage-panel[data-tab="runs"]', `order-open-${name}-${theme}.png`);
+      if (name === 'base') await orderMarks(theme, where);
       // 3. another view and back: closed on return. Side by side (split, 1280px) #runs keeps this page open beside the
       // list, so it is no return; #chat/new is. The slide layout's #runs return is checked in the 360px pass below.
       check(await returnClosed(routes, '#chat/new'), `${where}: closed again on return from #chat/new`);
-      // 4. no drawing on the Chat card or the Runs list
+      // 4. no drawing on the Chat card or the Runs list (the s10 worlds: their readiness waits on 16 marked rows)
+      if (!['base', 'busy'].includes(name)) continue;
       await go(routes.card, theme);
       if (await waitFor(ready('.chat-rc-members'), `${where}: the card's 16 marked run rows`)) {
         const card = await ev(NO_DRAWING('.chat-rc'));
@@ -1088,8 +1311,143 @@ if ((!process.env.WORLD && !process.env.SURFACE) || process.env.SURFACE === 'ord
     }
     await metrics(WIDE);
   }
+  // 5b. s17: one 360px light shot of later, open: the map is one column wider (run 19 after run 18); the page still has no
+  // sideways scroll and the map scrolls in its own box.
+  {
+    const routes = seed('later');
+    const where = `order later, light, ${ORDER_NARROW}px`;
+    await metrics(ORDER_NARROW);
+    if (await freshOrderPage(routes, 'light', where)) {
+      await scrollToToggle();
+      await clickToggle();
+      const m = await ev(ORDER_READ);
+      results.order.push({ where, open: m });
+      check(!!m && m.expanded === 'true' && m.roms === 1 && m.runs === ORDER_RUNS.later, `${where}: open with the ${ORDER_RUNS.later}-run map (${JSON.stringify(m && [m.expanded, m.roms, m.runs])})`);
+      check(!!m && m.docScroll.sw <= m.docScroll.cw, `${where}: the document has no horizontal scroll (scrollWidth ${m && m.docScroll.sw} <= ${m && m.docScroll.cw})`);
+      check(!!m && !!m.romScroll && m.romScroll.sw > m.romScroll.cw, `${where}: the map scrolls sideways inside its own box (scrollWidth ${m && m.romScroll && m.romScroll.sw} > clientWidth ${m && m.romScroll && m.romScroll.cw})`);
+      await ev(ROM_TO_END);
+      await shotOf('#group-detail .gpage-panel[data-tab="runs"]', 'order-open-later-360-light.png');
+    }
+    await metrics(WIDE);
+  }
+  // 6. s13: the agreed mock beside the app, per theme. base compares layout, dots and link tokens with the mock's resting
+  // frame; later and still draw states the mock does not (faint links, runs after run 16, stopped dots), so there the
+  // mock half is the token and spacing reference only.
+  for (const theme of THEMES) {
+    await metrics(WIDE);
+    await mockShot(theme);
+    for (const name of ['base', 'later', 'still']) await sideBySide(name, theme);
+    await sideBySide('base', theme, 'rest');   // R-ux-6: the app at rest (nothing pointed) beside the mock's resting frame
+  }
+  log('  order vs mock, known differences: rows in run-number order and a fixed 64px column gap (Open question 2); the lane sits in the gap between rows, 6px above the mock\'s, clear of every number');
 }
 
+// ---- s16 waiting: a run held for its turn reads that it waits; a refused press and a refusal at the turn say why.
+const TOASTS = `[...document.querySelectorAll('#toasts .toast')].map((t) => ({ title: t.querySelector('.tt')?.textContent || '', detail: t.querySelector('.td')?.textContent || '' }))`;
+const VISIBLE = (sel) => `[...document.querySelectorAll(${JSON.stringify(sel)})].find((x) => x.offsetParent)`;
+const clearToasts = () => ev(`(() => { for (const x of document.querySelectorAll('#toasts .toast .toast-x')) x.click(); return 0; })()`);
+/** Press run 4's Resume on its saved run page: a real POST /api/resume. → the toasts shown after it */
+async function pressFour(routes, theme, where) {
+  await go(routes.run(4), theme);
+  if (!await waitFor(`(() => { const b = ${VISIBLE('.hd-resume')}; return !!b && !b.disabled; })()`, `${where}: run 4's Resume`)) {
+    log(`  api: ${JSON.stringify(await ev(`fetch('/api/history/${key}/${routes.pipelineOf(4)}').then((r) => r.json()).then((d) => ({ resumable: d.state && d.state.resumable, status: d.state && d.state.status, keys: Object.keys(d) }))`))}`);
+    log(`  seen: ${JSON.stringify(await ev(`({ hash: location.hash, resume: [...document.querySelectorAll('.hd-resume')].map((b) => [!!b.offsetParent, b.hidden, b.disabled, b.title]), head: document.querySelector('#hist-detail')?.innerText.slice(0, 300) })`))}`);
+    return null;
+  }
+  await skipWelcome(); await clearToasts();
+  await sleep(1500);   // the run's slice info loads with the page: only then is the press a Shaper one (D6)
+  await ev(`(() => { const f = window.fetch; window.__resumed = []; window.fetch = async (...a) => { const r = await f(...a);
+    if (String(a[0]).includes('/api/resume')) r.clone().text().then((t) => window.__resumed.push([r.status, t])); return r; }; return 0; })()`);
+  await ev(`(${VISIBLE('.hd-resume')}).click(), 0`);
+  if (!await waitFor(`${TOASTS}.length > 0`, `${where}: a toast after the press`)) log(`  resume answered: ${JSON.stringify(await ev('window.__resumed'))}`);
+  return ev(TOASTS);
+}
+const memberWord = (n) => `(() => { const li = [...document.querySelectorAll('.chat-rc-members .run-member')].find((x) => x.offsetParent && x.querySelector('.run-member-num')?.textContent === '${n}'); return li ? li.querySelector('.run-member-state')?.textContent || '' : null; })()`;
+if ((!process.env.WORLD && !process.env.SURFACE) || process.env.SURFACE === 'waiting') {
+  const routes = seed('waiting');
+  // Run 4 can be resumed: a resume point and its run dir, as a real paused run has (artifacts.mjs readPipelineByKey).
+  { const four = routes.pipelineOf(4);
+    getDb().prepare('UPDATE pipelines SET resume_point = ? WHERE id = ?').run(JSON.stringify({ version: 2 }), four);
+    await mkdir(await runDirForRow(getDb().prepare('SELECT * FROM pipelines WHERE id = ?').get(four)), { recursive: true });
+    const r = await post('/api/projects', { name: 'Proof', path: proj });   // a run resumes only in an onboarded project
+    check(r.ok || r.status === 409, `waiting: the proof project is onboarded (HTTP ${r.status})`); }
+  for (const theme of THEMES) {
+    await metrics(WIDE);
+    const where = `waiting, ${theme}, ${WIDE}px`;
+    const toasts = await pressFour(routes, theme, where);
+    check(!!toasts && toasts.some((t) => t.title === 'Waiting for its turn' && t.detail === 'Run 9 holds the turn'), `${where}: the held press says "Run 9 holds the turn" (${JSON.stringify(toasts)})`);
+    await shotOf('#toasts .toast', `resume-held-toast-${theme}.png`);
+    // More ways to resume, opened by its real button.
+    await waitFor(`(() => { const b = ${VISIBLE('.hd-resume-more')}; return !!b; })()`, `${where}: More ways to resume`);
+    await clearToasts();
+    await sleep(800);   // the feature frame clears the slice info; the page paints the menu note once it reloads
+    await ev(`(${VISIBLE('.hd-resume-more')}).click(), 0`);
+    await waitFor(`(() => { const m = ${VISIBLE('.hd-resume-menu')}; return !!m && m.querySelector('.resume-on-saved small').textContent === 'Waiting for its turn after run 9'; })()`, `${where}: More ways to resume reads "Waiting for its turn after run 9"`);
+    await shotOf('.hd-resume-menu', `resume-menu-held-${theme}.png`);
+    await ev(`(${VISIBLE('.hd-resume-more')})?.click(), 0`);
+    // The chat card's Resume (it acts on run 4): disabled, with its reason; Stop is still there.
+    await go(routes.card, theme);
+    const foot = `(() => { const b = [...document.querySelectorAll('.chat-rc-foot [data-model-action="resume"]')].find((x) => x.offsetParent); return b ? [b.textContent, b.disabled, b.title] : null; })()`;
+    await waitFor(`(() => { const f = ${foot}; return !!f && f[0] === 'Waiting for its turn'; })()`, `${where}: the chat card's Resume reads "Waiting for its turn"`);
+    const f = await ev(foot);
+    check(!!f && f[0] === 'Waiting for its turn' && f[1] === true && f[2] === 'Goes on after run 9', `${where}: the chat card's Resume is disabled with "Goes on after run 9" (${JSON.stringify(f)})`);
+    await skipWelcome();
+    await shotOf('.chat-rc', `chat-resume-held-${theme}.png`);
+    // The Runs list: the group line says it waits, once, and the group is not under Needs you.
+    await go(routes.side, theme);
+    await sleep(400);
+    await ev(`(() => { const b = [...document.querySelectorAll('.gpage-back')].find((x) => x.offsetParent); if (b) b.click(); return 0; })()`);
+    const sub = `(() => { const it = document.querySelector(${JSON.stringify(groupSel(routes.featureId))}); if (!it) return null;
+      return { sub: it.querySelector(':scope > a.runs-row > .runs-row-sub')?.textContent || '', section: it.closest('.runs-sec')?.dataset.section || '' }; })()`;
+    if (!await waitFor(`(() => { const r = ${sub}; return !!r && /waiting for its turn/i.test(r.sub); })()`, `${where}: the group line says it waits`)) {
+      log(`  seen: ${JSON.stringify(await ev(`(() => ({ hash: location.hash, row: ${sub}, keys: [...document.querySelectorAll('.runs-item[data-row-key]')].map((x) => x.dataset.rowKey).slice(0, 12) }))()`))}`);
+    }
+    const g = await ev(sub);
+    check(!!g && g.sub === 'Waiting for its turn · Run 4' && !/paused/i.test(g.sub) && g.section !== 'needs', `${where}: the Runs list group line reads "Waiting for its turn · Run 4", outside Needs you (${JSON.stringify(g)})`);
+    await shotOf(groupSel(routes.featureId), `runs-group-held-${theme}.png`);
+  }
+  // The cost limit: a total limit below a cost seeded on the planning run (its cost ledger), set through the settings API.
+  recordCostDelta({ pipelineId: routes.origin, amountUsd: 5 });
+  { const r = await post('/api/settings', { totalCostLimitUsd: 1 }); check(r.ok, `waiting: the total cost limit is set (HTTP ${r.status})`); }
+  for (const theme of THEMES) {
+    await metrics(WIDE);
+    const where = `waiting refused, ${theme}, ${WIDE}px`;
+    const toasts = await pressFour(routes, theme, where);
+    check(!!toasts && toasts.some((t) => t.title === 'Could not resume the run' && t.detail === 'Not resumed: the cost limit is reached'), `${where}: the refused press says "Not resumed: the cost limit is reached" (${JSON.stringify(toasts)})`);
+    await shotOf('#toasts .toast', `resume-refused-${theme}.png`);
+  }
+  // Run 9 finishes: the held resume's turn comes, and the cost limit refuses it there.
+  const nine = `run-${routes.pipelineOf(9)}`;
+  runs.delete(nine); liveIds.splice(liveIds.indexOf(nine), 1);
+  getDb().prepare("UPDATE pipelines SET status = 'done' WHERE id = ?").run(routes.pipelineOf(9));
+  await schedulerTick();
+  await sleep(1000);
+  for (const theme of THEMES) {
+    await metrics(WIDE);
+    const where = `waiting refused at its turn, ${theme}, ${WIDE}px`;
+    await go(routes.card, theme);
+    await waitFor(`${memberWord(4)} === 'not resumed: the cost limit is reached'`, `${where}: run 4's row says why`);
+    check(await ev(memberWord(4)) === 'not resumed: the cost limit is reached', `${where}: run 4's row reads "not resumed: the cost limit is reached" (${await ev(memberWord(4))})`);
+    await skipWelcome();
+    await shotOf('.chat-rc-members', `rows-refused-${theme}.png`);
+  }
+  { const r = await post('/api/settings', { totalCostLimitUsd: null }); check(r.ok, `waiting: the total cost limit is cleared (HTTP ${r.status})`); }
+  // A run that cannot start names the run that can never finish, with its cause.
+  const failedRoutes = seed('failed');
+  for (const theme of THEMES) {
+    await metrics(WIDE);
+    const where = `cannot start, ${theme}, ${WIDE}px`;
+    await go(failedRoutes.card, theme);
+    if (!await waitFor(ready(SURFACES.card), `${where}: 16 marked run rows`)) continue;
+    const words = [await ev(memberWord(15)), await ev(memberWord(16))];
+    check(Array.isArray(words) && words.every((w) => /^cannot start · waits for run /.test(w || '')), `${where}: runs 15 and 16 read "cannot start · waits for run …" (${JSON.stringify(words)})`);
+    await skipWelcome();
+    await shotOf('.chat-rc-members', `rows-cannot-start-${theme}.png`);
+  }
+}
+
+// Slice 16 (R-qa-5): each ask and failed row word's colour, the computed --bg and their ratio.
+await writeFile(path.join(SHOTS, 'run-status-rows-contrast.json'), JSON.stringify(results.contrast, null, 2) + '\n');
 results.errors = errors;
 check(errors.length === 0, `no page errors${errors.length ? ` — ${errors.slice(0, 3).join(' | ')}` : ''}`);
 results.minutes = Math.round((Date.now() - T0) / 600) / 100;

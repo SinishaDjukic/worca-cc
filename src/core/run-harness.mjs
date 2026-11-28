@@ -102,7 +102,7 @@ import { flagEnabled } from './flags.mjs';
 import { syncBaseForRun, ensureLocalBranch, fetchRemote, fastForwardTo, isSafeBranchName, runSyncOptions, INTERACTIVE_TIMEOUT_MS, mergeBaseBeforeRun, baseMovedAudit, checkBaseMerge, mergeBaseInto } from './git-sync.mjs';
 import { featureBase } from './shape/features.mjs';
 import { shaperSmallRunsOn, smallRunsAtStart, smallRunsOfFeature } from './shape/small-runs.mjs';
-import { latestFinishedSource, combineDependencies, combinedAudit, takeInVerdict } from './shape/chain.mjs';
+import { latestFinishedSource, combineDependencies, combinedAudit, takeInVerdict, takeInClashAudit } from './shape/chain.mjs';
 import { cleanOutcome } from './shape/rounds.mjs';
 import { SYNC_EXECUTION_ID } from '../shared/graph/constants.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // §9.4 disabled-plugin hint
@@ -2097,7 +2097,7 @@ export class RunHarness extends EventEmitter {
       this._setStatus('error');
       await this._finalizeDirections();   // report an unread inbox on every terminal outcome
       const message = err?.message || String(err);
-      this._emit('error', { message });
+      this._emit('error', { message, ...(err?.clash ? { clash: err.clash } : {}) });   // a setup clash carries its clash (A3)
       if (this.pipeline) {
         await this._persist().catch(() => {});
         await appendAudit(this.pipeline.dir, `Pipeline **error**: ${message}`).catch(() => {});
@@ -7220,6 +7220,18 @@ export class RunHarness extends EventEmitter {
     } catch { return false; }
   }
 
+  /** May Away mode decide ask `q` right now, without its grace timer (a workflow answering a stop the moment it opens)?
+   *  True only off --yes, with Away active, `q.kind` not on neverDecide and no limit reached. Asking is not deciding: a
+   *  spent limit says false and pauses nothing. Never throws (false on error). */
+  nightMayDecideNow(q) {
+    try {
+      if (this.auto || !this._night) return false;
+      const { config } = effectiveNightConfig(this.projectDir);
+      if (!this._nightStateNow(config).active || nightNeverDecides(config, q)) return false;
+      return this._nightGuardrail(config) === null;
+    } catch { return false; }
+  }
+
   /** The plan asks planRule declines: on a Shaper run only a Requirements hold whose check still fails; elsewhere the
    *  ones it always declined.
    *  Decided at arm time, so such an ask never counts down, never starts the away stretch and cannot hit a limit's pause.
@@ -10789,8 +10801,7 @@ export class RunHarness extends EventEmitter {
     const gitOpts = { cwd: wt, ignoreAbort: true };
     const ask = { featureId: sl.feature, pipelineId: this.pipeline?.id || null, branch: info.branch };
     const refuse = async (reason, clash = null) => {
-      const c = clash && clash.missing && clash.missing.find((d) => clash.runs.includes(d.index));
-      const line = c ? baseMovedAudit(c.branch, info.branch, { status: 'conflicts', files: clash.files }) : null;
+      const line = takeInClashAudit(clash, info.branch);
       if (line) await appendAudit(this.pipeline.dir, line).catch(() => {});
       this._log('worktree', 'warn', `did not take in the finished work: ${reason}`);
       return { ok: false, refused: true, reason };

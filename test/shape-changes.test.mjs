@@ -308,7 +308,7 @@ test('C4: shapeToolFit(requirement) gives the req-change card with the owner\'s 
   assert.equal(shapeToolFit('requirement', { ...REQ_IN, requirement: 'R-po-1' }, reqWork()).card.landsAs, 'finished');
   assert.equal(shapeToolFit('requirement', REQ_IN, runWork()).error, 'change_requirement is for a chat that follows a feature');
   assert.equal(shapeToolFit('requirement', { ...REQ_IN, requirement: 'R-po-9' }, reqWork()).error, 'R-po-9 is not an agreed requirement of Reset emails');
-  assert.equal(shapeToolFit('requirement', REQ_IN, reqWork({ smallRuns: false })).error, 'Reset emails is not built with small runs');
+  assert.equal(shapeToolFit('requirement', REQ_IN, reqWork({ smallRuns: false })).error, 'Reset emails has no runs that own its requirements');
   assert.equal(shapeToolFit('requirement', REQ_IN, reqWork({ open: { index: 2, kind: 'plan' } })).error,
     'Run 2 is waiting at its Plan step: the user answers it on its step card, not in the chat');
   assert.equal(shapeToolFit('requirement', { ...REQ_IN, text: 'requirement 3' }, reqWork()).error, 'R-po-3 already reads that');

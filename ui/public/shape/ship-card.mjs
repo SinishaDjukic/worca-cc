@@ -6,7 +6,7 @@ import { renderAskChanges } from '../chat/ask-changes.mjs';
 import { buildCheckFold, buildCheckRows, checkMark } from './check-row.mjs';
 import { checkLine } from './plan-text.mjs';
 import { ledgerCheck } from '../../../src/shared/shape/acceptance.mjs';
-import { CONFIRM_REASON_MAX, MARK_WORDS } from '../../../src/shared/shape/ship-ledger.mjs';
+import { CONFIRM_REASON_MAX, MARK_WORDS, shippedGapLine, findingsReason, findingsState } from '../../../src/shared/shape/ship-ledger.mjs';
 
 const MINUS = '\u2212';
 const count = (n, one, many) => `${n} ${n === 1 ? one : many}`;
@@ -50,6 +50,17 @@ export async function confirmRequirement(featureId, id, mark = 'met', reason = '
       headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, mark, ...(mark === 'met' ? {} : { reason }) }) });
     const out = await r.json().catch(() => ({}));
     return r.ok ? { ok: true, smallRuns: out.smallRuns || null, acceptance: out.acceptance || null } : { ok: false, error: out.error || `HTTP ${r.status}` };
+  } catch (e) { return { ok: false, error: errorOf(e) }; }
+}
+
+/** Slice 9 (D14): a person acknowledges one of the Verifier's notes on the check they read (POST …/acknowledge).
+ *  → { ok:true, smallRuns } | { ok:false, error } (never throws). */
+export async function acknowledgeNote(featureId, checkAt, note) {
+  try {
+    const r = await fetch(`/api/shape/features/${encodeURIComponent(featureId)}/acknowledge`, { method: 'POST',
+      headers: { 'content-type': 'application/json' }, body: JSON.stringify({ checkAt, note }) });
+    const out = await r.json().catch(() => ({}));
+    return r.ok ? { ok: true, smallRuns: out.smallRuns || null } : { ok: false, error: out.error || `HTTP ${r.status}` };
   } catch (e) { return { ok: false, error: errorOf(e) }; }
 }
 
@@ -191,7 +202,8 @@ export function renderShipCard(doc, m, handlers = {}) {
 function shipCard(doc, m, handlers) {
   const h = (tag, cls, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
   if (m.phase === 'waiting') {
-    const w = h('div', 'ask-shipcard-wait', `Ship card comes when all ${m.runs} runs are done, here and in the chat.`);
+    // Slice 7 (D10): a feature with no chat gets no chat card, so the card comes only on this page.
+    const w = h('div', 'ask-shipcard-wait', `Ship card comes when all ${m.runs} runs are done, ${m.hasChat === false ? 'on this page.' : 'here and in the chat.'}`);
     w.setAttribute('data-ship-card', 'waiting');
     return { root: w, ledger: null };
   }
@@ -321,12 +333,20 @@ function smallRunsShip(doc, h, m, handlers) {
   };
   const list = (cls, items) => { const l = h('div', `plan-checks srows ${cls}`); l.append(...buildCheckRows(doc, { items })); return l; };
   if (applied) {
-    const prs = sr.order.filter((o) => o.pr);
+    // Shipped as One: every run holds the same PR, so it is one row (the first run of each url), named by its runs.
+    const one = m.shipMode === 'one';
+    const withPr = sr.order.filter((o) => o.pr);
+    const prs = one ? withPr.filter((o, i) => withPr.findIndex((x) => x.pr.url === o.pr.url) === i) : withPr;
+    const labelOf = (o) => {
+      const runs = one ? withPr.filter((x) => x.pr.url === o.pr.url).map((x) => x.index) : [o.index];
+      return runs.length > 1 ? `runs ${Math.min(...runs)}–${Math.max(...runs)}` : `run ${o.index} · ${o.title}`;   // the head names the feature
+    };
     if (!handlers.countShown) body.appendChild(h('div', 'ask-shipcard-done', `${count(prs.length, 'PR', 'PRs')} open`));
-    body.appendChild(h('div', 'ask-shipcard-stats', sr.along === true ? 'stacked along the real branches' : 'a PR per run, stacked in the order runs finished'));
+    body.appendChild(h('div', 'ask-shipcard-stats', one ? 'one PR holding every run'
+      : sr.along === true ? 'stacked along the real branches' : 'a PR per run, stacked in the order runs finished'));
     body.appendChild(careRow());
     body.appendChild(list('ask-shipcard-prs', prs.map((o) => ({ id: `#${o.pr.number ?? ''}`, idCol: true, pass: true,
-      label: `run ${o.index} · ${o.title}`, note: o.onto ? `onto #${o.onto}` : `into ${sr.base || ''}`.trim(), ariaLabel: 'open' }))));
+      label: labelOf(o), note: o.onto ? `onto #${o.onto}` : `into ${sr.base || ''}`.trim(), ariaLabel: 'open' }))));
     // The Not met / Dropped requirements, as rows under the PRs (the PR descriptions carry the same lines: unmetLines).
     // Small runs D3 (D5): with the server's `shown` (on the confirmed entry of the same id), its text is the note.
     const unmet = Array.isArray(sr.unmet) ? sr.unmet : [];
@@ -341,28 +361,50 @@ function smallRunsShip(doc, h, m, handlers) {
     root.appendChild(actions);
     return { root, ledger: null };
   }
-  const stats = h('div', 'ask-shipcard-stats');
+  const stats = h('div', 'ask-shipcard-stats'); const seq = ++srSeq;
   body.appendChild(stats);
+  // Slice 5 (D7): before shipping, the runs whose work ships inside a listed run's PR, in the server's words (carriedLine).
+  const carried = Array.isArray(sr.carried) ? sr.carried : [];
+  if (carried.length) {
+    const ul = h('ul', 'ask-shipcard-carried');
+    for (const c of carried) { const li = h('li'); li.append(icon(doc, 'merge', 14), h('span', null, c.line)); ul.appendChild(li); }
+    body.appendChild(ul);
+  }
   const err = h('div', 'ask-card-err'); err.setAttribute('aria-live', 'polite');
-  const whyId = `ask-shipcard-why-${++srSeq}`;
+  const whyId = `ask-shipcard-why-${seq}`; const stateId = `ask-shipcard-state-${seq}`;
+  /** A line of `cls` holding `text`. R-comp-4 never breaks at its hyphens on a narrow screen: each requirement id is one
+   *  unbreakable span. */
+  const idLine = (cls, text) => {
+    const line = h('div', cls);
+    for (const part of String(text).split(/(\bR-[A-Za-z0-9]+-\d+\b)/)) {
+      if (/^R-[A-Za-z0-9]+-\d+$/.test(part)) line.appendChild(h('span', 'ask-shipcard-id', part));
+      else if (part) line.appendChild(doc.createTextNode(part));
+    }
+    return line;
+  };
   let confirming = null;                                  // the id whose mark is being sent
   const drafts = draftsOf(m.featureId);                   // id → {mark, text}: Not met / Dropped picked, its reason not saved yet
   const confirmedEl = h('div');
   const ownedEl = h('div', 'srows ask-shipcard-owned');
+  // Slice 8 (D12): one line per gap shipped as is, with its reason (the owned row's note keeps "gap accepted" only).
+  const gapLines = (Array.isArray(sr.shippedGaps) ? sr.shippedGaps : []).map((g) => idLine('ask-shipcard-why ask-shipcard-gap', shippedGapLine(g)));
+  // Slice 9 (D13): the Verifier's notes, one Acknowledge each; in the card only while there are notes.
+  const notesEl = h('div', 'plan-checks srows ask-shipcard-notes');
   const careEl = h('div');
   const whyEl = h('div');
-  body.append(confirmedEl, ownedEl, careEl, whyEl);
+  body.append(confirmedEl, ownedEl, ...gapLines, careEl, whyEl);
   const actions = h('div', 'ask-mcard-actions');
   actions.appendChild(h('span', 'ask-card-actions-spacer'));
   const create = h('button', 'btn btn-sm', null); create.type = 'button'; create.dataset.act = 'ship-create';
-  create.append(icon(doc, 'pr-create', 14), h('span', null, createPrLabel(sr.order.length)));
+  create.append(icon(doc, 'pr-create', 14), h('span', null, createPrLabel(sr.newPrs ?? sr.order.length)));
   actions.appendChild(create);
   root.append(err, actions);
   let opening = false;
   const noteOf = (c) => {
     const at = clock(c.at) ? ` · ${clock(c.at)}` : '';
     // Small runs D3 (D5): the server's one status: a waiting row its text, a marked one its word and the time.
-    if (c.shown) return c.state === 'waiting' ? c.shown.text : `${c.shown.word}${at}`;
+    // Slice 7 (D4): a met row names you and the role (`confirmed by you · Design`), then the time.
+    if (c.shown) return c.state === 'waiting' ? c.shown.text : `${c.mark === 'met' ? c.shown.text : c.shown.word}${at}`;
     if (c.state === 'waiting') return `confirmed by a person · ${c.roleLabel}`;
     if (c.mark === 'met') return `confirmed by ${c.roleLabel}${at}`;
     return `Marked ${MARK_WORDS[c.mark]} by you${at}`;
@@ -420,15 +462,35 @@ function smallRunsShip(doc, h, m, handlers) {
       const fold = buildCheckFold(doc, { items }, 'Requirements', { text: () => `${items.length} checked by the runs' reviews and the Verifier` });
       ownedEl.append(fold.line, fold.rows);
     }
-    careEl.replaceChildren(careRow());
-    stats.textContent = sr.unowned && sr.unowned.length ? 'Waiting' : sr.blocked ? 'Your turn: mark what only a person can' : 'Ready to ship';
-    if (sr.blocked && sr.reason) {
-      const why = h('div', 'ask-shipcard-why'); why.id = whyId;
-      // R-comp-4 never breaks at its hyphens on a narrow screen: each requirement id is one unbreakable span.
-      for (const part of sr.reason.split(/(\bR-[A-Za-z0-9]+-\d+\b)/)) {
-        if (/^R-[A-Za-z0-9]+-\d+$/.test(part)) why.appendChild(h('span', 'ask-shipcard-id', part));
-        else if (part) why.appendChild(doc.createTextNode(part));
+    const notes = sr.findings && Array.isArray(sr.findings.items) ? sr.findings.items : [];
+    const noteRows = buildCheckRows(doc, { items: notes.map((n) => {
+      const act = `ship-ack-${n.id}`;
+      let action = null;
+      if (!n.ack) {
+        action = h('button', 'btn btn-sm', 'Acknowledge'); action.type = 'button'; action.dataset.act = act;
+        action.disabled = !!confirming;
+        action.addEventListener('click', () => acknowledge(n.id, act));
       }
+      return { label: n.text, pass: !!n.ack, ariaLabel: n.ack ? 'acknowledged' : 'waiting',
+        note: n.ack ? `acknowledged${clock(n.ack.at) ? ` · ${clock(n.ack.at)}` : ''}` : 'from the Verifier', ...(action ? { action } : {}) };
+    }) });
+    notes.forEach((n, i) => { if (!n.ack) noteRows[i].replaceChild(checkMark(doc, 'wait'), noteRows[i].querySelector('.plan-check-mark')); });
+    notesEl.replaceChildren(...noteRows);
+    if (!noteRows.length) notesEl.remove();
+    else if (notesEl.parentNode !== body) body.insertBefore(notesEl, careEl);
+    careEl.replaceChildren(careRow());
+    const open = sr.findings && sr.findings.open > 0 ? sr.findings.open : 0;
+    // The notes are all that blocks: the state line says so once and describes Create; no reason line repeats it.
+    const notesOnly = !(sr.unowned && sr.unowned.length) && !!(sr.blocked && open && sr.reason === findingsReason(open));
+    stats.textContent = sr.unowned && sr.unowned.length ? 'Waiting' : sr.blocked
+      ? notesOnly ? findingsState(open) : 'Your turn: mark what only a person can' : 'Ready to ship';
+    // The id is set only while the state line describes Create, so every other card's markup stays as it was.
+    if (notesOnly) stats.id = stateId; else stats.removeAttribute('id');
+    if (notesOnly) {
+      whyEl.replaceChildren();
+      create.setAttribute('aria-describedby', stateId);
+    } else if (sr.blocked && sr.reason) {
+      const why = idLine('ask-shipcard-why', sr.reason); why.id = whyId;
       whyEl.replaceChildren(why);
       create.setAttribute('aria-describedby', whyId);
     } else { whyEl.replaceChildren(); create.removeAttribute('aria-describedby'); }
@@ -470,6 +532,22 @@ function smallRunsShip(doc, h, m, handlers) {
     else err.textContent = (r && r.error) || 'Something went wrong';
     paint();
     focusAct(r && r.ok ? act : drafts.has(id) ? `ship-mark-${id}-text` : act);
+  }
+  async function acknowledge(note, act) {
+    if (confirming) return;
+    err.textContent = '';
+    root.dataset.focus = act;                               // Chromium blurs a disabled button (as `send` above)
+    confirming = note;
+    paint();
+    let r;
+    try { r = handlers.onAcknowledge ? await handlers.onAcknowledge(note) : { ok: false, error: 'Open the feature page to acknowledge it' }; }
+    catch (e) { r = { ok: false, error: errorOf(e) }; }
+    confirming = null;
+    delete root.dataset.focus;
+    if (r && r.ok) { if (r.smallRuns) sr = r.smallRuns; }
+    else err.textContent = (r && r.error) || 'Something went wrong';
+    paint();
+    focusAct(act);
   }
   create.addEventListener('click', () => {
     if (create.disabled) return;

@@ -1256,3 +1256,52 @@ test('R-ux-4, flag off: the feature card\'s stop draws no findings list', async 
   assert.equal(visiblePrimaries(q).length, 1);
   built.dispose();
 });
+
+// ── Slice 7 (D11, D12, R-arch-4): a feature with no chat points to its feature page ─────────────────────────────
+test('s7: homeForRun reads the slice route; featureId only for a run with `owns` (a marked feature, flag on)', async () => {
+  const infos = {
+    plain: { featureId: 'feat_1', threadId: null },
+    marked: { featureId: 'feat_1', threadId: null, owns: [] },
+    chatted: { featureId: 'feat_1', threadId: 't-1', owns: [] },
+    // s19: a Verifier run is no slice, so its answer carries `verifier`, never `owns`.
+    verifier: { verifier: true, featureId: 'feat_1', threadId: null },
+    verifierChatted: { verifier: true, featureId: 'feat_1', threadId: 't-2' },
+    verifierOff: { verifier: false, featureId: 'feat_1', threadId: null },
+  };
+  const ctx = await bootApp({ fetchHandler: (url) => {
+    const m = /^\/api\/shape\/pipelines\/([^/]+)\/slice$/.exec(url);
+    return m && infos[m[1]] ? res(200, infos[m[1]]) : null;
+  } });
+  ctx.wsBox.ws.dispatch('open', {});
+  ctx.dispatch({ type: 'hello', runs: [] });
+  await ctx.settle();
+  const seam = ctx.window.__shapeFeature;
+  assert.equal(typeof seam.homeForRun, 'function', 'the app-side builder sits beside threadForRun');
+  assert.deepEqual(await seam.homeForRun({ pipelineId: 'plain' }), { threadId: null, featureId: null });
+  assert.deepEqual(await seam.homeForRun({ pipelineId: 'marked' }), { threadId: null, featureId: 'feat_1' });
+  const before = ctx.calls.filter((c) => c.url === '/api/shape/pipelines/chatted/slice').length;
+  assert.equal((await seam.homeForRun({ pipelineId: 'chatted' })).threadId, 't-1');
+  assert.equal(ctx.calls.filter((c) => c.url === '/api/shape/pipelines/chatted/slice').length, before + 1, 'one GET');
+  assert.deepEqual(await seam.homeForRun({ pipelineId: 'verifier' }), { threadId: null, featureId: 'feat_1' }, 's19 R-arch-4: a Verifier\'s run names its feature');
+  assert.equal((await seam.homeForRun({ pipelineId: 'verifierChatted' })).threadId, 't-2', 's19: its chat is still the first home');
+  assert.deepEqual(await seam.homeForRun({ pipelineId: 'verifierOff' }), { threadId: null, featureId: null }, 's19: only verifier === true counts');
+});
+
+test('s7 R-arch-4: the run panel\'s Prototype stop of a chat-less feature run links to its feature page', async () => {
+  let n = 0;
+  const open = async (info) => {
+    const pid = `p-rr${n += 1}`;                    // the shared app remembers a run's home: each case asks for its own
+    const ctx = await bootApp({ fetchHandler: (url) => (url === `/api/shape/pipelines/${pid}/slice` ? res(info ? 200 : 404, info || {}) : null) });
+    ctx.wsBox.ws.dispatch('open', {});
+    ctx.dispatch({ type: 'hello', runs: [{ ...reqRun({ id: 'proto-1', kind: 'prototype', prototype: { moment: 'offered',
+      offer: { primary: 'build', menu: 'skip', review: false }, requirements: [{ id: 'R-ux-1', text: 'The editor shows a preview' }] } }), pipelineId: pid }] });
+    ctx.go('chat/new/run/run-rr');
+    await ctx.settle(14);
+    const screen = ctx.window.document.querySelector('[data-chat-panel] .crp-host > .rd');
+    assert.ok(screen.querySelector('.qpanel .proto-body'), 'the step is drawn');
+    return [...screen.querySelectorAll('.qpanel a.link')].map((a) => a.getAttribute('href'));
+  };
+  assert.deepEqual(await open({ featureId: 'feat_1', threadId: null, owns: [] }), ['#feature/feat_1']);
+  assert.deepEqual(await open({ featureId: 'feat_1', threadId: 't-1', owns: [] }), [], 'a feature with a chat answers on its card there');
+  assert.deepEqual(await open(null), [], 'no known home: no link');
+});

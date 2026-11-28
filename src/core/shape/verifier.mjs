@@ -1,8 +1,9 @@
 // src/core/shape/verifier.mjs — Shaper small runs C5 (flag shaperSmallRuns): the Verifier, one check of a marked feature as
 // a whole once its last run is done. The check is its own run (wf_shape_verify) chained after the chain head; its record
-// is `outline.verify = { checks: [...] }` on the feature (no column, no migration). Each gap becomes a small change run
-// through C4's writer, started without asking; when they are done the Verifier checks again, up to Care's fix cycles,
-// then the person decides through C3's stop on the Verifier run. Pure rules live in src/shared/shape/verifier.mjs.
+// is `outline.verify = { checks: [...] }` on the feature (no column, no migration). Slice 8: every round with a gap asks
+// the person on the Verifier run (the C3 stop, form gaps); each gap is answered with a fix run, shipped with a reason,
+// or a changed requirement (the C4 change path), and the runs are added only then, through the C4 writer, started without
+// asking. When they are done the Verifier checks again. Pure rules live in src/shared/shape/verifier.mjs.
 // Imports features.mjs, chain.mjs and measure.mjs, which import this module back: only function declarations called at
 // runtime cross the cycle, never a value read while the modules evaluate.
 import { execFileSync } from 'node:child_process';
@@ -14,12 +15,12 @@ import { MERGE_BACK_WAIT_MS, createTicket, getTicket, previousBranchesOf } from 
 import { featureView, featureOfPipeline, changeAgreedRequirementsIn, finishedSlices } from './features.mjs';
 import { latestFinishedSlice } from './chain.mjs';
 import { recordFeatureFigures } from './measure.mjs';
-import { runNow } from './changes.mjs';
+import { runNow, planRequirementChange } from './changes.mjs';
 import { roundOrigin } from './rounds.mjs';
 import { shaperSmallRunsOn, smallRunsOfFeature, careOfFeature } from './small-runs.mjs';
-import { shipLocked } from './ship-lock.mjs';
+import { refuseWhileShipping, shipLocked } from './ship-lock.mjs';
 import { requirementKindsOf, careRunPlan } from '../../shared/shape/feature-record.mjs';
-import { verifyPrompt, verifyRoundPlan, gapsFoundOf, fenceSafe } from '../../shared/shape/verifier.mjs';
+import { verifyPrompt, verifyRoundPlan, verifyStop, verifyGateAnswer, gapsFoundOf, fenceSafe, findingsOf, answeredByOf, kindField, verifierRunTitle } from '../../shared/shape/verifier.mjs';
 import { oneLineText } from '../../shared/shape/req-change.mjs';
 import { SHAPE_VERIFY_WORKFLOW_ID } from '../graph/builtin-workflows.mjs';
 import { CHALLENGE_FILE_MAX_BYTES } from './split-step.mjs';
@@ -142,8 +143,9 @@ export function shipStopped(featureId, cover, probes, prs, failed = null) {
   const own = checksOf(f.outline).at(-1)?.shipSha;
   const same = Object.entries(tipsOf(f)).every(([pid, sha]) => !sha || sha === cover[pid] || sha === own);
   if (same && featureView(f.id, probes)?.ship.ready) return null;
+  const why = failed ? ` (${failed})` : '';
   return { status: 409, body: { code: 'NOT_READY', prs,
-    error: `the work changed while it was shipping, so Ship stopped${failed ? ` (${failed})` : ''}. Ship again once the Verifier has checked it, or Resume, if the card reads Stopped.` } };
+    error: `the work changed while it was shipping, so Ship stopped${why}. Ship again once the Verifier has checked it, or Resume on the feature page, if it reads Stopped.` } };
 }
 
 /**
@@ -178,13 +180,18 @@ export function startVerifyCheck(featureId, { by = null, now = Date.now(), finis
     const round = retry ? retry.round : series ? latest.round + 1 : 1;
     const extra = retry ? retry.extra || 0 : series ? latest.extra || 0 : 0;
     const fixCycles = fixCyclesOf(f.id);
+    // Slice 8 (D11): the texts the check judges (the gate offers them for a change), and the gaps shipped earlier in
+    // this series (never asked again).
+    const texts = Object.fromEntries(owned.map((o) => [o.id, o.text]));
+    const shipped = shippedCarried(checks, round);
     const { model, ...top } = f.base || {};
     const internal = { ...(by ? { startedBy: by } : {}), ...(model ? { model } : {}) };
-    const title = `${f.title} · Verifier`;
+    const title = verifierRunTitle(f.title, round);
     const t = createTicket({
       title, projectDir: f.project_dir,
       request: { projectDir: f.project_dir, prompt: verifyPrompt({ owned, round }), title, workflowId: SHAPE_VERIFY_WORKFLOW_ID, ...top,
-        shape: { verify: { featureId: f.id, round, fixCycles, extra, owned: owned.map((o) => o.id), head: { index: head.index, pipelineId: head.pipelineId } } },
+        shape: { verify: { featureId: f.id, round, fixCycles, extra, owned: owned.map((o) => o.id), head: { index: head.index, pipelineId: head.pipelineId },
+          texts, ...(shipped.length ? { shipped } : {}) } },
         internal },
       after: { kind: 'pipeline', id: head.pipelineId }, afterPolicy: 'done', sourceFromPrevious: true, createdBy: by, now,
     });
@@ -193,6 +200,13 @@ export function startVerifyCheck(featureId, { by = null, now = Date.now(), finis
     out = { round, ticketId: t.id };
   });
   return out;
+}
+
+/** Slice 8 (D9): the gaps shipped earlier in the series a check of `round` belongs to: the `shipped` of the check before
+ *  it when that one is a `gaps` check of the same series, else none. */
+function shippedCarried(checks, round) {
+  const prev = round > 1 ? checks.at(-1) : null;
+  return prev && prev.state === 'gaps' && Array.isArray(prev.shipped) ? prev.shipped.map(({ id, reason }) => ({ id, reason })) : [];
 }
 
 /** The check a Verifier pipeline runs: its ticket by pipeline id, then the marked feature whose check names it. A run
@@ -221,17 +235,44 @@ function gapGoal(g, text) {
     + `\`\`\`text\n${fenceSafe(`${g.id}: ${oneLineText(text)}`)}\n${fenceSafe(`What is missing: ${oneLineText(g.why)}`)}\n\`\`\``;
 }
 
+const notFinished = () => Object.assign(new Error('a requirement can only change here while the run that owns it is finished'),
+  { code: 'CHANGE_NOT_FINISHED', status: 409 });
+
 /**
- * Record a Verifier run's result, once (a check with a result is returned unchanged, `added: []`). One tx (D5): `clean`
- * → clean; `runs`, or a stop answered `another` → one change run per gap through the split C4 writer, state `gaps`
- * (extra + 1 after `another`); a stop answered `continue` → accepted. `afterAppend` (test seam) runs inside the tx, after
- * the append and before the `outline.verify` write. → {check, added, fresh} | null
+ * Slice 8 (D6, D10): the decision of a result file → {answers, legacy} | null. Every open gap needs an answer, as the
+ * validator of the gate stop decides (the `from` of a change is the text it replaces); anything less, or none, is null.
+ * A file written before the gate reads as before: `another` is every open gap fixed, `continue` shipped with no reason.
+ * Slice 10 (D6): `answeredBy` (gap id → `away` | `you`) is re-checked against the open gaps; legacy decisions carry none.
+ */
+function decisionOf(decision, open) {
+  if (!open.length) return { answers: [], legacy: null, answeredBy: {} };
+  if (decision === 'another') return { answers: open.map((g) => ({ id: g.id, answer: 'fix' })), legacy: 'another', answeredBy: {} };
+  if (decision === 'continue') return { answers: [], legacy: 'continue', answeredBy: {} };
+  if (!decision || typeof decision !== 'object' || !Array.isArray(decision.answers)) return null;
+  const from = Object.fromEntries(decision.answers.filter((a) => a && a.answer === 'change' && typeof a.id === 'string')
+    .map((a) => [a.id.trim(), typeof a.from === 'string' ? a.from : '']));
+  const r = verifyGateAnswer(verifyStop({ gaps: open, texts: from }), decision);
+  return r.ok ? { answers: r.answer.answers, legacy: null, answeredBy: answeredByOf(decision, open) } : null;
+}
+
+/**
+ * Record a Verifier run's result, once (a check with a result is returned unchanged, `added: []`). One tx (D5, slice 8
+ * D6): no gap → clean. With an open gap (one not shipped earlier in the series) and no complete decision nothing is
+ * written and the answer is null: no run is added without an answer. Otherwise each `fix` adds a change run (the title and
+ * goal of the gap), each `change` writes the new text and adds a change run per finished owner (the C4 planner and writer,
+ * in the same call), each `ship` is recorded with its reason. Every run added builds on the last run before them.
+ * State `gaps` when any run was added, else `accepted`. A change whose owner is no longer finished throws
+ * CHANGE_NOT_FINISHED, a text that moved since throws STALE, a Ship in flight throws SHIPPING: the tx rolls back. `afterAppend` (test seam) runs inside the
+ * tx, after the append and before the `outline.verify` write. → {check, added, fresh} | null
  */
 export function recordVerifyResult(featureId, round, { result, headSha = null, decision = null }, { by = null, now = Date.now(), afterAppend = null, pipelineId = null } = {}) {
   let out = null;
   tx(() => {
     const f0 = rowOf(featureId);
     if (!f0) return;
+    // A Ship in flight: the result rewrites no requirement and adds no run (409 SHIPPING); the check reads halted and the
+    // next settle or Resume checks again.
+    refuseWhileShipping(f0.id);
     const checks0 = checksOf(f0.outline);
     // Rounds start again at 1 with a new series: a Verifier run's result is only ever its own check's.
     const i = checks0.findLastIndex((c) => c.round === round && (!pipelineId || pipelineOfCheck(c) === pipelineId));
@@ -239,29 +280,92 @@ export function recordVerifyResult(featureId, round, { result, headSha = null, d
     const c0 = checks0[i];
     if (c0.result) { out = { check: c0, added: [], fresh: false }; return; }
     const gaps = Array.isArray(result && result.gaps) ? result.gaps : [];
+    // Slice 9 (D3): the run-dir file is a trust boundary, so its notes are re-checked here.
+    const findings = findingsOf(result && result.findings);
     const fixCycles = Number.isInteger(c0.fixCycles) ? c0.fixCycles : fixCyclesOf(featureId);
-    const plan = verifyRoundPlan({ round, fixCycles, extra: c0.extra || 0, gaps });
     let state = 'clean';
     let extra = c0.extra || 0;
     let added = [];
-    if (plan !== 'clean' && decision === 'continue') state = 'accepted';
-    else if (plan !== 'clean') {
-      const texts = new Map((f0.outline.agreed || []).map((a) => [a.id, a.text]));
-      const owner = new Map(ownedOf(f0).map((o) => [o.id, o.run]));
-      const appendFor = gaps.map((g) => ({ ownerIndex: owner.get(g.id) ?? null, title: g.title, goal: gapGoal(g, texts.get(g.id)), ids: [g.id] }));
-      added = changeAgreedRequirementsIn(f0.id, { changes: [], appendFor, by, now }).added;
-      if (afterAppend) afterAppend(added);
-      state = 'gaps';
-      if (plan === 'stop' && decision === 'another') extra += 1;
+    let record = {};
+    if (verifyRoundPlan({ round, fixCycles, extra, gaps }) !== 'clean') {
+      const carried = shippedCarried(checks0.slice(0, i), round);
+      const carriedIds = new Set(carried.map((g) => g.id));
+      const open = gaps.filter((g) => !carriedIds.has(g.id));
+      const d = decisionOf(decision, open);
+      if (!d) return;
+      if (d.legacy === 'continue') state = 'accepted';
+      else {
+        const texts = new Map((f0.outline.agreed || []).map((a) => [a.id, a.text]));
+        const owner = new Map(ownedOf(f0).map((o) => [o.id, o.run]));
+        const gapOf = new Map(open.map((g) => [g.id, g]));
+        const fixes = d.answers.filter((a) => a.answer === 'fix').map(({ id }) => {
+          const g = gapOf.get(id);
+          return { ownerIndex: owner.get(id) ?? null, title: g.title, goal: gapGoal(g, texts.get(id)), ids: [id] };
+        });
+        const changes = d.answers.filter((a) => a.answer === 'change').map((a) => ({ id: a.id, from: a.from, to: a.text }));
+        const slices0 = f0.outline.slices || [];
+        const { plan, after } = planRequirementChange(featureView(f0.id)?.slices || [], changes,
+          { source: { kind: 'verify', round }, at: iso(now), by, firstIndex: slices0.length + 1 + fixes.length });
+        if (plan.restart.length || after.live.length || after.paused.length || plan.entries.some((e) => e.case !== 'finished')) throw notFinished();
+        // D8: every run this answer adds builds on the last run before them, so each starts with all the work so far.
+        const dependsOn = slices0.length ? [slices0.at(-1).id] : [];
+        const appendFor = [...fixes, ...plan.appendFor].map((a) => ({ ...a, dependsOn }));
+        if (appendFor.length || changes.length) {
+          added = changeAgreedRequirementsIn(f0.id, { changes: plan.changes, entries: plan.entries, appendFor, by, now }).added;
+          if (afterAppend) afterAppend(added);
+        }
+        const shipped = [...carried, ...d.answers.filter((a) => a.answer === 'ship').map(({ id, reason }) => ({ id, reason }))];
+        state = added.length ? 'gaps' : 'accepted';
+        if (d.legacy === 'another') {
+          if (round > fixCycles + extra) extra += 1;   // the bound stop answered before the gate
+        } else {
+          const gapRunOf = {};
+          appendFor.forEach((a, k) => { for (const id of a.ids) gapRunOf[id] = added[k].index; });
+          record = { answers: d.answers, shipped, gapRunOf, ...(Object.keys(d.answeredBy).length ? { answeredBy: d.answeredBy } : {}) };
+        }
+      }
     }
     const f = rowOf(featureId);
     const checks = checksOf(f.outline);
     const check = { ...checks[i], pipelineId: pipelineId || checks[i].pipelineId || null, headSha: headSha || null,
-      state, result: { held: [...(result && Array.isArray(result.held) ? result.held : [])], gaps: gaps.map(({ id, why, title }) => ({ id, why, title })) },
-      gapRuns: added.map((a) => a.index), extra };
+      state, result: { held: [...(result && Array.isArray(result.held) ? result.held : [])], gaps: gaps.map(({ id, why, title, kind }) => ({ id, why, title, ...kindField(kind) })),
+        ...(findings.length ? { findings } : {}) },
+      gapRuns: added.map((a) => a.index), extra, ...record };
     checks[i] = check;
     writeChecks(f, checks, now);
     out = { check, added, fresh: true };
+  });
+  return out;
+}
+
+const ackRefusal = (status, code, error) => ({ ok: false, status, code, error });
+
+/**
+ * Slice 9 (D10): a person acknowledges one of the Verifier's notes on the latest check. One tx, a Ship in flight refused
+ * first (throws SHIPPING); only `acks[note]` of that check is written, and an acknowledged note keeps its first
+ * `{by, at}`. `checkAt` is the check the person read: a newer check is STALE. The person-only HTTP route is its one
+ * caller. → {ok:true, fresh} | {ok:false, status, code?, error}
+ */
+export function acknowledgeFinding(featureId, { checkAt, note, by = null, now = Date.now() } = {}) {
+  let out = null;
+  tx(() => {
+    const f = rowOf(featureId);
+    if (!f) { out = { ok: false, status: 404, error: 'unknown feature' }; return; }
+    refuseWhileShipping(f.id);
+    const checks = checksOf(f.outline);
+    const c = checks.at(-1);
+    const notes = c && ENDED.has(c.state) && c.result && Array.isArray(c.result.findings) ? c.result.findings : [];
+    if (!notes.length) { out = ackRefusal(409, 'NO_FINDINGS', 'the Verifier left no note to acknowledge'); return; }
+    if (checkAt !== c.at) { out = ackRefusal(409, 'STALE', 'the Verifier checked again: read its notes, then acknowledge'); return; }
+    if (!notes.some((n) => n && n.id === note)) {
+      out = ackRefusal(400, 'UNKNOWN_NOTE', `${oneLineText(note).slice(0, 40)} is not a note of this check`);
+      return;
+    }
+    const acks = c.acks && typeof c.acks === 'object' ? c.acks : {};
+    if (acks[note]) { out = { ok: true, fresh: false }; return; }
+    checks[checks.length - 1] = { ...c, acks: { ...acks, [note]: { by, at: iso(now) } } };
+    writeChecks(f, checks, now);
+    out = { ok: true, fresh: true };
   });
   return out;
 }
@@ -373,6 +477,50 @@ function viewState(f, c, pipelineId, live, slices, finishing, shipped) {
   return s === 'halted' && shaperSmallRunsOn() && slices && allRunsDone({ slices }) && stillFinishing(slices, finishing) ? 'verifying' : s;
 }
 
+const FAILED_RUN = new Set(['error', 'failed']);
+const STOPPED_RUN = new Set(['stopped', 'aborted']);
+/** Slice 11 (D4, D5, D14): one round's row state, first match wins: the live run (its stop, paused), the run status, then
+ *  the stored check. `gaps` is the stored result's count, else the live stop's, else null. */
+function checkRowState(c, status, l) {
+  const stored = c && c.result && Array.isArray(c.result.gaps) ? c.result.gaps.length : null;
+  const gaps = stored !== null ? stored : l && l.stop && Number.isInteger(l.stop.gapCount) ? l.stop.gapCount : null;
+  const state = l && l.stop ? 'asking'
+    : (l && l.status === 'paused') || PAUSED_RUN.has(status) ? 'paused'
+      : FAILED_RUN.has(status) ? 'failed'
+        : STOPPED_RUN.has(status) ? 'stopped'
+          : c && c.state === 'gaps' ? 'gaps'
+            : c && ENDED.has(c.state) ? 'passed' : 'verifying';
+  return { state, gaps };
+}
+
+/**
+ * Slice 11 (D3, D4): the Verifier rounds of a feature as its group's check rows. `priced` is the group's
+ * `cost.checks` ({ [pipelineId]: {round, at, status} }, run-groups.mjs groupCost), so a listed round is always a priced
+ * one. Each pipeline is matched to its stored check (pipelineOfCheck) in the outline of the feature or of a feature it
+ * `replaces`, each parsed once; `live` is the server's runs overlay by pipeline id. DB reads only; a malformed outline
+ * reads as no stored check. → [{round, pipelineId, at, state, gaps}] (state one of CHECK_ROW_STATES), oldest `at` first.
+ */
+export function checkRowsOf(featureId, priced, { live = () => null } = {}) {
+  const entries = Object.entries(priced && typeof priced === 'object' ? priced : {});
+  if (!entries.length) return [];
+  const byPipeline = new Map();
+  const seen = new Set();
+  for (let id = featureId ? String(featureId) : null; id && !seen.has(id);) {
+    seen.add(id);
+    const r = getDb().prepare('SELECT outline, replaces FROM shape_features WHERE id = ?').get(id);
+    if (!r) break;
+    for (const c of checksOf(j(r.outline, {}))) {
+      const pid = c && typeof c === 'object' ? pipelineOfCheck(c) : null;
+      if (pid && !byPipeline.has(pid)) byPipeline.set(pid, c);
+    }
+    id = r.replaces ? String(r.replaces) : null;
+  }
+  return entries.map(([pipelineId, p]) => {
+    const { state, gaps } = checkRowState(byPipeline.get(pipelineId) || null, p.status || null, live(pipelineId));
+    return { round: p.round, pipelineId, at: p.at, state, gaps };
+  }).sort((a, b) => String(a.at).localeCompare(String(b.at)) || a.round - b.round);
+}
+
 /** The rule holds for a marked feature while the flag is on. */
 export function shipRuleOn(f) {
   return shaperSmallRunsOn() && smallRunsOfFeature(f.id);
@@ -397,8 +545,26 @@ export function verifyView(f, live = () => null, slices = null, finishing = () =
     state, round: c.round, fixCycles: Number.isInteger(c.fixCycles) ? c.fixCycles : fixCyclesOf(f.id),
     held: c.result && Array.isArray(c.result.held) ? c.result.held.length : 0,
     owned: ownedOf(f).length,
-    gaps: gaps.map((g, i) => ({ id: g.id, why: g.why, run: Number.isInteger(c.gapRuns?.[i]) ? c.gapRuns[i] : null })),
+    // Slice 8 (D11): the run of each gap by id; a check stored before the gate aligns them by position.
+    gaps: gaps.map((g, i) => {
+      const run = c.gapRunOf && typeof c.gapRunOf === 'object' ? c.gapRunOf[g.id] : c.gapRuns?.[i];
+      return { id: g.id, why: g.why, run: Number.isInteger(run) ? run : null };
+    }),
+    ...(Array.isArray(c.shipped) ? { shipped: c.shipped } : {}),
     gapsFound: gapsFoundOf({ checks }), head: c.head || null, headSha: c.headSha || null, pipelineId, ticketId: c.ticketId || null,
     ...(l && l.stop ? { stop: l.stop } : {}),
+    // Slice 9 (D7): the check's notes, each with its acknowledgement or null, and the check they belong to.
+    ...checkFindings(c),
   };
+}
+
+/** Slice 9 (D7): a stored check's notes as the view reads them, `{findings: [{id, text, ack}], checkAt}`, each ack
+ *  `{by, at}` or null; `{}` when the check has none. */
+export function checkFindings(c) {
+  const notes = c && c.result && Array.isArray(c.result.findings) ? c.result.findings.filter((n) => n && n.id) : [];
+  return notes.length ? { findings: notes.map((n) => ({ id: n.id, text: n.text, ack: ackOf(c, n.id) })), checkAt: c.at || null } : {};
+}
+function ackOf(c, id) {
+  const a = c.acks && typeof c.acks === 'object' ? c.acks[id] : null;
+  return a && typeof a === 'object' ? { by: a.by ?? null, at: a.at ?? null } : null;
 }

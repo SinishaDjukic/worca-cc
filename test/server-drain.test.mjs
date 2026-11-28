@@ -16,6 +16,7 @@ import { seedPipeline } from './helpers/db-seed.mjs';
 import { graphResumePoint } from './helpers/graph-templates.mjs';
 import { withEnv } from './helpers/with-env.mjs';
 import { busySliceOf, createSliceFeature, featureOfPipeline } from '../src/core/shape/features.mjs';
+import { heldStopTurn } from '../src/core/shape/chain.mjs';
 import {
   drainTimeoutMs, sigtermGraceMs, autoResumeMode, autoResumeCandidates, DRAIN_TIMEOUT_DEFAULT_MS,
 } from '../src/core/drain.mjs';
@@ -357,6 +358,76 @@ test("S7: a stub resume answering {ok: true, held: true} leaves the pid out of r
   const audit = getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ?').all(id).map((r) => r.text);
   assert.deepEqual(audit.filter((t) => /resumed automatically/i.test(t)), []);
   assert.deepEqual(_testing.bootResumingIds(), []);
+}));
+
+// ── A4 (R-qa-2): a stop inside the boot-resume window releases the turn at once ────────────────────────────────────
+test('A4 (R-qa-2): a run stopped in the boot-resume window frees the turn before its automatic resume is refused, and the next run takes it', () => withDrained(['a4-blocker', 'a4-four', 'a4-six'], async ([blocker, four, six]) => {
+  // The boot resumes in start order: a run of another project first, so run 4 waits its turn in the loop.
+  const startedAt = getDb().prepare('UPDATE pipelines SET started_at = ? WHERE id = ?');
+  [blocker, four, six].forEach((id, i) => startedAt.run(`2026-01-0${i + 1}T00:00:00.000Z`, id));
+  const f = await markedFeature({ 4: four, 6: six });
+  quietTickets();   // no tick of this test starts runs 2, 3 or 5
+  let open;
+  const gate = new Promise((r) => { open = r; });
+  const atFour = [];
+  const resume = async (pid, opts) => {
+    if (pid === blocker) await gate;
+    if (pid !== four) return { ok: true, runId: `stub-${pid}` };
+    atFour.push({ due: heldStopTurn(f.id, 6, { live: _testing.liveSliceOf }).due, heldResumeOf: _testing.heldStops.heldResumeOf(six) });
+    return _testing.resumeRun(pid, opts);
+  };
+  const sixEntry = () => [...runs.values()].find((e) => e.pipelineId === six) || null;
+  await withEnv(ON, async () => {
+    const boot = _testing.autoResumeOnBoot({ env: {}, mock: true, resume });
+    try {
+      assert.ok(_testing.bootResumingIds().includes(four), 'run 4 is marked as being resumed');
+      assert.ok(_testing.heldStops.heldResumeOf(six), 'run 6 is held behind run 4');
+      // Stop run 4 inside the window.
+      await _testing.stopPausedPipeline(four);
+      assert.equal(status(four), 'stopped');
+      assert.ok(!_testing.bootResumingIds().includes(four), 'the stopped run is no longer marked as being resumed');
+      assert.notEqual(_testing.liveSliceOf(four)?.resuming, true);
+      await _testing.heldStops.deliver();
+      assert.equal(_testing.heldStops.heldResumeOf(six), null, 'run 6 takes the turn');
+      assert.ok(sixEntry(), 'run 6 was resumed');
+      assert.notEqual(sixEntry().status, 'paused');
+      open();
+      const out = await boot;
+      assert.match(out.failed.find((r) => r.pipelineId === four)?.error || '', /not resumable/);
+      assert.deepEqual(atFour, [{ due: true, heldResumeOf: null }], 'the turn was free before the automatic resume of run 4 was refused');
+    } finally {
+      _testing.heldStops.dropResume(six);
+      open();
+      await boot;
+      const e = sixEntry();
+      if (e && !['done', 'stopped', 'error'].includes(String(e.status))) await request('POST', '/api/stop', { host: 'localhost', body: { runId: e.id } });
+      quietTickets();
+    }
+  });
+}));
+
+test('A4 (R-qa-2): a refused stop in the boot window keeps the mark and the turn', () => withDrained(['a4-live-four', 'a4-live-six'], async ([four, six]) => {
+  await markedFeature({ 4: four, 6: six });
+  quietTickets();
+  // A resume of run 4 that is already live: the stop of the paused run is refused.
+  const entry = { id: 'a4-live', pipelineId: four, status: 'running', orch: { state: {} }, events: [], pendingQuestion: null };
+  await withEnv(ON, async () => {
+    try {
+      _testing.markBootResumes(_testing.bootResumePicks({ env: {} }));
+      assert.ok(_testing.bootResumingIds().includes(four));
+      assert.deepEqual(_testing.heldStops.heldResumeOf(six), { after: 4 });
+      runs.set(entry.id, entry);
+      await assert.rejects(_testing.stopPausedPipeline(four), (e) => e.code === 'LIVE');
+      assert.equal(status(four), 'paused');
+      assert.ok(_testing.bootResumingIds().includes(four), 'the mark stays');
+      await _testing.heldStops.deliver();
+      assert.deepEqual(_testing.heldStops.heldResumeOf(six), { after: 4 }, 'run 6 still waits');
+    } finally {
+      runs.delete(entry.id);
+      _testing.heldStops.dropResume(six);
+      quietTickets();
+    }
+  });
 }));
 
 // ── B2: /api/drain is not for anyone on the network ─────────────────────────

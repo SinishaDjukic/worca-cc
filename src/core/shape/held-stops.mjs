@@ -5,9 +5,10 @@
 // only wires it (re-exported by chain.mjs).
 import { stopAnswerOk, stopOptionOf, heldRefusal, answeredRefusal, sendingRefusal } from '../../shared/shape/run-stops.mjs';
 import { featureOfPipeline, turnOrder, liveSliceHeldResume, liveSliceResuming, liveSliceFrom } from './features.mjs';
-import { heldStopTurn, fireSourceOf } from './chain.mjs';
+import { heldStopTurn, fireSourceOf, mergingBackSliceOf, takeInClashAudit } from './chain.mjs';
 import { shaperSmallRunsOn, smallRunsOfFeature } from './small-runs.mjs';
 import { requirementChangedFeedback } from '../../shared/shape/req-change.mjs';
+import { verifyGateAnswer } from '../../shared/shape/verifier.mjs';
 
 /**
  * deps: { runs: Map of runs-map entries, liveSliceOf(id), broadcastFeature(featureId), resolvePending(entry, {id, reason}),
@@ -15,8 +16,11 @@ import { requirementChangedFeedback } from '../../shared/shape/req-change.mjs';
  * takeIn?(entry) → {ok, merged} | {ok:false, wait, after} | {ok:false, refused, reason} (slice 3: the run takes in the
  * finished work before its answer goes on; without it every answer is today's synchronous path),
  * resume?(pipelineId, opts) → Promise<{ok, runId?} | {ok:true, held:true, …}> (slice 7: the server's resumeRun; without
- * it no resume is held), refuse?(status, body) → Error (the server's ResumeError), audit?(pipelineId, text, by) }.
- * → { answer, deliver, clear, holdResume, heldResumeOf, overlay, dropResume, splitBootPicks, claimed, watchSkips }
+ * it no resume is held), refuse?(status, body) → Error (the server's ResumeError), audit?(pipelineId, text, by),
+ * resumeTakeIn?(pipelineId) → Promise<takeInVerdict result> (slice 3, R-po-6: the take-in verdict a resume reads before
+ * it starts; without it every resume goes on as today) }.
+ * → { answer, deliver, clear, holdResume, takeInBeforeResume, heldResumeOf, overlay, dropResume, splitBootPicks, claimed,
+ *     watchSkips }
  */
 /** A runs-map entry's feature and run number: its slice when it carries one, else its pipeline's feature row. */
 export function entryFeatureOf(entry) {
@@ -26,7 +30,7 @@ export function entryFeatureOf(entry) {
   return at ? { featureId: at.featureId, index: at.idx } : null;
 }
 
-export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePending, applyChange = null, takeIn = null, resume = null, refuse = null, audit = null, now = Date.now }) {
+export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePending, applyChange = null, takeIn = null, resume = null, refuse = null, audit = null, resumeTakeIn = null, now = Date.now }) {
   const featureOf = entryFeatureOf;
   const turnOf = (at) => (at ? heldStopTurn(at.featureId, at.index, { live: liveSliceOf, now: now() }) : { due: true });
   const repaint = (at) => { if (at) broadcastFeature(at.featureId); };
@@ -43,17 +47,24 @@ export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePe
     return stopOptionOf(pq.stop, payload)?.value !== 'change';
   }
 
-  /** Slice 3 (D4): the run number of another run of the entry's feature, on any base (the take-in takes in every
-   *  finished run), that is done but still committing its work (its teardown has not settled), or null. A run with no
-   *  recorded fire-time base takes in nothing, so nothing holds it. */
-  function settlingSiblingOf(entry, at) {
-    if (!at || fireSourceOf(entry.pipelineId) == null) return null;
+  /** Slice 3 (D4): the run number of another run (not pipeline `pipelineId`) of feature `at`, on any base (the take-in
+   *  takes in every finished run), that is done but still committing its work (its teardown has not settled), or null.
+   *  A run with no recorded fire-time base takes in nothing, so nothing holds it. */
+  function settlingSiblingOf(pipelineId, at) {
+    if (!at || fireSourceOf(pipelineId) == null) return null;
     for (const e of runs.values()) {
-      if (!e || e === entry || e.status !== 'done' || e.settled === true) continue;
+      if (!e || e.pipelineId === pipelineId || e.status !== 'done' || e.settled === true) continue;
       const o = featureOf(e);
       if (o && o.featureId === at.featureId) return o.index;
     }
     return null;
+  }
+
+  /** Slice 1 (A1, D3): the run a resume of `pipelineId` waits for: one still saving its work in memory, else one still
+   *  merging back (the resume's take-in runs after the run started, so it must not find a `wait`), or null. */
+  function savingRunOf(pipelineId, at) {
+    if (!at || fireSourceOf(pipelineId) == null) return null;
+    return settlingSiblingOf(pipelineId, at) ?? mergingBackSliceOf(at.featureId, { exclude: pipelineId });
   }
 
   /** Take the work in for `entry` (marked as going while it runs, D13). → takeIn's answer */
@@ -78,7 +89,16 @@ export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePe
       entry.orch.answer(id, payload, by);
       return undefined;
     }
-    if (!stopAnswerOk(pq.stop, payload)) {
+    if (pq.stop.form === 'gaps') {
+      // Slice 8 (D4): a Verifier gap stop takes only a complete answer; the refusal names the gap. The run gets the
+      // normalized answer (one per gap, in the stop's order).
+      const r = verifyGateAnswer(pq.stop, payload);
+      if (!r.ok) {
+        throw Object.assign(new Error(r.error), { code: 'INVALID_ANSWER', status: 422, errors: [{ field: 'answers',
+          path: r.id ? `answers.${r.id}` : 'answers', code: r.code.toLowerCase(), message: r.error }] });
+      }
+      payload = r.answer;
+    } else if (!stopAnswerOk(pq.stop, payload)) {
       throw Object.assign(new Error('invalid answer'), { code: 'INVALID_ANSWER',
         errors: [{ field: 'decision', path: 'decision', code: 'invalid', message: "not one of this stop's options" }] });
     }
@@ -96,7 +116,7 @@ export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePe
     const turn = turnOf(at);
     if (!turn.due) return hold(turn.after);
     if (!takeInApplies(entry, pq, payload)) return hand();
-    const settling = settlingSiblingOf(entry, at);
+    const settling = settlingSiblingOf(entry.pipelineId, at);
     if (settling != null) return hold(settling);
     return (async () => {
       const r = await takingIn(entry, id);
@@ -162,7 +182,7 @@ export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePe
       const turn = turnOf(at);
       if (!turn.due) { keepHeld(entry, h, turn.after, at); return undefined; }
       if (takeInApplies(entry, entry.pendingQuestion, h.payload)) {
-        const settling = settlingSiblingOf(entry, at);
+        const settling = settlingSiblingOf(entry.pipelineId, at);
         if (settling != null) { keepHeld(entry, h, settling, at); return undefined; }
         return deliverTakenIn(entry, h, at);
       }
@@ -185,7 +205,8 @@ export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePe
     : Object.assign(new Error('this run is being resumed'), { code: 'RESUME_IN_FLIGHT', status: 409 }));
 
   /** Hold a resume of paused `pipelineId` while another run of its marked feature is going (flag on). → null (go on
-   *  now; a hold whose turn has come is dropped) | {ok:true, held:true, pipelineId, after}. While the pipeline is
+   *  now; a hold whose turn has come is dropped) | {ok:true, held:true, pipelineId, after} (plus `saving: true` when it
+   *  waits for a finished run's save, slice 16). While the pipeline is
    *  being resumed, its own held delivery (`opts.heldDelivery`) goes on and any other resume throws 409. When the turn
    *  is due and `ticket` is given, the pipeline is claimed (`ticket.claimed`) until `claimed` releases it. */
   function holdResume(pipelineId, opts = {}, ticket = null) {
@@ -198,8 +219,11 @@ export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePe
       if (opts.heldDelivery === true) return null;
       throw inFlight();
     }
-    const turn = turnOf({ featureId: at.featureId, index: at.idx });
-    if (turn.due) {
+    const where = { featureId: at.featureId, index: at.idx };
+    const turn = turnOf(where);
+    const after = turn.due ? savingRunOf(pipelineId, where) : turn.after;   // A1: a due turn still waits for a save
+    const saving = turn.due && after != null;     // slice 16 (D2): the hold waits for a finished run's save
+    if (after == null) {
       const had = resumes.delete(pipelineId);
       if (ticket) { delivering.add(pipelineId); ticket.claimed = true; }
       if (had || ticket) paintFeature(at.featureId);
@@ -207,9 +231,42 @@ export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePe
     }
     const { heldDelivery, ...kept } = opts;
     const was = resumes.get(pipelineId);
-    resumes.set(pipelineId, { pipelineId, featureId: at.featureId, index: at.idx, opts: kept, after: turn.after });
-    if (!was || was.after !== turn.after) paintFeature(at.featureId);   // a ticket re-held each tick repaints once
-    return { ok: true, held: true, pipelineId, after: turn.after };
+    resumes.set(pipelineId, { pipelineId, featureId: at.featureId, index: at.idx, opts: kept, after, saving });
+    if (!was || was.after !== after) paintFeature(at.featureId);   // a ticket re-held each tick repaints once
+    return saving ? { ok: true, held: true, pipelineId, after, saving: true } : { ok: true, held: true, pipelineId, after };
+  }
+
+  /** Slice 3 (R-po-6, A5): the take-in check of a resume of paused `pipelineId`, before the run starts (after
+   *  holdResume let it go on). A clash refuses the resume as a clashing answer refuses a stop: the run stays paused,
+   *  says why (`resumeRefused`, until the next Resume), the audit gets the clash line, and it throws 409
+   *  TAKE_IN_REFUSED. A run still merging back holds the resume behind it. Anything else (none, clean, no-branch, an
+   *  error, a check that throws) goes on as today. → null (go on) | {ok:true, held:true, pipelineId, after} */
+  async function takeInBeforeResume(pipelineId, opts = {}) {
+    if (!resumeTakeIn || !pipelineId || !shaperSmallRunsOn()) return null;
+    const at = featureOfPipeline(pipelineId);
+    if (!at || !smallRunsOfFeature(at.featureId)) return null;
+    let v;
+    try { v = await resumeTakeIn(pipelineId); } catch (err) {
+      console.error(`[worca-ui] resume take-in check failed: ${err && err.message ? err.message : err}`);
+      return null;
+    }
+    if (v && v.status === 'wait') {
+      const { heldDelivery, ...kept } = opts;
+      // Slice 16 (D2): merging back counts as saving.
+      resumes.set(pipelineId, { pipelineId, featureId: at.featureId, index: at.idx, opts: kept, after: v.after, saving: true });
+      paintFeature(at.featureId);
+      return { ok: true, held: true, pipelineId, after: v.after, saving: true };
+    }
+    if (!v || v.status !== 'clash') return null;
+    refusedResumes.set(pipelineId, { code: 'TAKE_IN_REFUSED', error: v.reason });
+    try {
+      const line = takeInClashAudit(v, v.branch);
+      if (line && audit) audit(pipelineId, line, null);
+    } catch { /* the audit line is best-effort */ }
+    console.error(`[worca-ui] resume not started: ${v.reason}`);
+    paintFeature(at.featureId);
+    const body = { error: v.reason, code: 'TAKE_IN_REFUSED' };
+    throw refuse ? refuse(409, body) : Object.assign(new Error(v.reason), { code: 'TAKE_IN_REFUSED', status: 409 });
   }
 
   /** Run one resume `fn(ticket)` of `pipelineId`; a claim holdResume made on its ticket is released once it settles
@@ -227,8 +284,10 @@ export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePe
 
   const heldResumeOf = (pipelineId) => { const r = resumes.get(pipelineId); return r ? { after: r.after } : null; };
   /** Whether an unattended resume (the network watch) leaves `pipelineId` alone: its resume is held, being delivered,
-   *  or a person dropped its hold with Pause. */
-  const watchSkips = (pipelineId) => resumes.has(pipelineId) || delivering.has(pipelineId) || pausedHolds.has(pipelineId);
+   *  a person dropped its hold with Pause, or its resume was refused on a take-in clash (slice 3, until the next Resume;
+   *  other refusals, such as cost, are retried). */
+  const watchSkips = (pipelineId) => resumes.has(pipelineId) || delivering.has(pipelineId) || pausedHolds.has(pipelineId)
+    || refusedResumes.get(pipelineId)?.code === 'TAKE_IN_REFUSED';
 
   /** D9: the live slice as every turn reader sees it: `resuming` while delivering, `heldResume` while held, and
    *  `resumeRefused: {code, error}` once a held resume was refused at its turn (until the next Resume). */
@@ -297,8 +356,9 @@ export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePe
     if (resumes.get(pid) !== rec) return undefined;
     if (check) {
       const turn = turnOf(rec);
-      if (!turn.due) {
-        if (turn.after !== rec.after) { rec.after = turn.after; paintFeature(rec.featureId); }
+      const after = turn.due ? savingRunOf(pid, rec) : turn.after;   // A1: a due turn still waits for a save
+      if (after != null) {
+        if (after !== rec.after) { rec.after = after; paintFeature(rec.featureId); }
         return undefined;
       }
     }
@@ -384,5 +444,5 @@ export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePe
     try { repaint(featureOf(entry)); } catch { /* the repaint is best-effort */ }
   }
 
-  return { answer, deliver, clear, holdResume, heldResumeOf, overlay, dropResume, splitBootPicks, claimed, watchSkips };
+  return { answer, deliver, clear, holdResume, takeInBeforeResume, heldResumeOf, overlay, dropResume, splitBootPicks, claimed, watchSkips };
 }
